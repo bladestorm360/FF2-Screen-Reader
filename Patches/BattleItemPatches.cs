@@ -1,0 +1,277 @@
+using System;
+using System.Reflection;
+using HarmonyLib;
+using MelonLoader;
+using UnityEngine;
+using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Utils;
+
+// Type aliases for IL2CPP types
+using BattleItemInfomationController = Il2CppLast.UI.KeyInput.BattleItemInfomationController;
+using BattleItemInfomationContentController = Il2CppLast.UI.KeyInput.BattleItemInfomationContentController;
+using BattleCommandSelectController = Il2CppLast.UI.KeyInput.BattleCommandSelectController;
+using ItemListContentData = Il2CppLast.UI.ItemListContentData;
+using GameCursor = Il2CppLast.UI.Cursor;
+
+namespace FFII_ScreenReader.Patches
+{
+    /// <summary>
+    /// Manual patch application for battle item menu.
+    /// </summary>
+    public static class BattleItemPatchesApplier
+    {
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                MelonLogger.Msg("[Battle Item] Applying battle item menu patches...");
+
+                var controllerType = typeof(BattleItemInfomationController);
+
+                MethodInfo selectContentMethod = null;
+                var methods = controllerType.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Public);
+
+                foreach (var m in methods)
+                {
+                    if (m.Name == "SelectContent")
+                    {
+                        var parameters = m.GetParameters();
+                        if (parameters.Length >= 1 && parameters[0].ParameterType.Name == "Cursor")
+                        {
+                            selectContentMethod = m;
+                            MelonLogger.Msg($"[Battle Item] Found SelectContent with Cursor parameter");
+                            break;
+                        }
+                    }
+                }
+
+                if (selectContentMethod != null)
+                {
+                    var postfix = typeof(BattleItemSelectContent_Patch)
+                        .GetMethod("Postfix", BindingFlags.Public | BindingFlags.Static);
+
+                    harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Battle Item] Patched SelectContent successfully");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Battle Item] SelectContent method not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Item] Error applying patches: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// State tracking for battle item menu.
+    /// </summary>
+    public static class BattleItemMenuState
+    {
+        public static bool IsActive { get; set; } = false;
+
+        // State machine offsets for BattleCommandSelectController
+        private const int OFFSET_STATE_MACHINE = 0x48;
+        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
+        private const int OFFSET_STATE_TAG = 0x10;
+
+        private const int STATE_NORMAL = 1;
+        private const int STATE_EXTRA = 2;
+
+        public static bool ShouldSuppress()
+        {
+            if (!IsActive) return false;
+
+            try
+            {
+                var itemController = UnityEngine.Object.FindObjectOfType<BattleItemInfomationController>();
+                if (itemController == null || !itemController.gameObject.activeInHierarchy)
+                {
+                    Reset();
+                    return false;
+                }
+
+                var cmdController = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
+                if (cmdController != null && cmdController.gameObject.activeInHierarchy)
+                {
+                    int state = GetCommandState(cmdController);
+                    if (state == STATE_NORMAL || state == STATE_EXTRA)
+                    {
+                        Reset();
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch
+            {
+                Reset();
+                return false;
+            }
+        }
+
+        private static int GetCommandState(BattleCommandSelectController controller)
+        {
+            try
+            {
+                IntPtr ptr = controller.Pointer;
+                if (ptr == IntPtr.Zero) return -1;
+
+                unsafe
+                {
+                    IntPtr smPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_STATE_MACHINE);
+                    if (smPtr == IntPtr.Zero) return -1;
+
+                    IntPtr currentPtr = *(IntPtr*)((byte*)smPtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
+                    if (currentPtr == IntPtr.Zero) return -1;
+
+                    return *(int*)((byte*)currentPtr.ToPointer() + OFFSET_STATE_TAG);
+                }
+            }
+            catch { return -1; }
+        }
+
+        private static string lastAnnouncement = "";
+        private static float lastAnnouncementTime = 0f;
+
+        public static bool ShouldAnnounce(string announcement)
+        {
+            float currentTime = UnityEngine.Time.time;
+            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
+                return false;
+
+            lastAnnouncement = announcement;
+            lastAnnouncementTime = currentTime;
+            return true;
+        }
+
+        public static void Reset()
+        {
+            IsActive = false;
+            lastAnnouncement = "";
+            lastAnnouncementTime = 0f;
+        }
+    }
+
+    /// <summary>
+    /// Patch for battle item selection.
+    /// </summary>
+    public static class BattleItemSelectContent_Patch
+    {
+        public static void Postfix(object __instance, GameCursor targetCursor)
+        {
+            try
+            {
+                if (__instance == null || targetCursor == null)
+                    return;
+
+                var controller = __instance as BattleItemInfomationController;
+                if (controller == null)
+                    return;
+
+                int cursorIndex = targetCursor.Index;
+                MelonLogger.Msg($"[Battle Item] SelectContent called, cursor index: {cursorIndex}");
+
+                string announcement = TryGetItemFromContentList(controller, cursorIndex);
+
+                if (string.IsNullOrEmpty(announcement))
+                {
+                    MelonLogger.Msg("[Battle Item] Could not get item from content list");
+                    return;
+                }
+
+                if (!BattleItemMenuState.ShouldAnnounce(announcement))
+                    return;
+
+                FFII_ScreenReaderMod.ClearOtherMenuStates("BattleItem");
+                BattleItemMenuState.IsActive = true;
+
+                MelonLogger.Msg($"[Battle Item] Announcing: {announcement}");
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Item] Error in SelectContent patch: {ex.Message}");
+            }
+        }
+
+        private static string TryGetItemFromContentList(BattleItemInfomationController controller, int cursorIndex)
+        {
+            try
+            {
+                var allContentControllers = UnityEngine.Object.FindObjectsOfType<BattleItemInfomationContentController>();
+                if (allContentControllers != null && allContentControllers.Length > 0)
+                {
+                    MelonLogger.Msg($"[Battle Item] Found {allContentControllers.Length} content controllers in scene");
+
+                    foreach (var cc in allContentControllers)
+                    {
+                        if (cc == null || !cc.gameObject.activeInHierarchy)
+                            continue;
+
+                        var data = cc.Data;
+                        if (data != null && data.IsFocus)
+                        {
+                            return FormatItemAnnouncement(data);
+                        }
+                    }
+
+                    if (cursorIndex >= 0 && cursorIndex < allContentControllers.Length)
+                    {
+                        var cc = allContentControllers[cursorIndex];
+                        if (cc != null && cc.Data != null)
+                        {
+                            return FormatItemAnnouncement(cc.Data);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Item] Error getting item from content list: {ex.Message}");
+            }
+
+            return null;
+        }
+
+        private static string FormatItemAnnouncement(ItemListContentData data)
+        {
+            try
+            {
+                string name = data.Name;
+                if (string.IsNullOrEmpty(name))
+                    return null;
+
+                name = TextUtils.StripIconMarkup(name);
+                if (string.IsNullOrEmpty(name))
+                    return null;
+
+                string announcement = name;
+
+                try
+                {
+                    string description = data.Description;
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        description = TextUtils.StripIconMarkup(description);
+                        if (!string.IsNullOrWhiteSpace(description))
+                        {
+                            announcement += ": " + description;
+                        }
+                    }
+                }
+                catch { }
+
+                return announcement;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Item] Error formatting announcement: {ex.Message}");
+                return null;
+            }
+        }
+    }
+}

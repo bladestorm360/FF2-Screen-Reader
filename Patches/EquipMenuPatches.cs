@@ -1,0 +1,398 @@
+using System;
+using HarmonyLib;
+using MelonLoader;
+using UnityEngine;
+using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Utils;
+using Il2CppLast.Management;
+
+// Type aliases for IL2CPP types
+using KeyInputEquipmentInfoWindowController = Il2CppLast.UI.KeyInput.EquipmentInfoWindowController;
+using KeyInputEquipmentSelectWindowController = Il2CppLast.UI.KeyInput.EquipmentSelectWindowController;
+using EquipSlotType = Il2CppLast.Defaine.EquipSlotType;
+using EquipUtility = Il2CppLast.Systems.EquipUtility;
+using GameCursor = Il2CppLast.UI.Cursor;
+using CustomScrollViewWithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
+
+namespace FFII_ScreenReader.Patches
+{
+    /// <summary>
+    /// State tracker for equipment menu - prevents duplicate cursor announcements.
+    /// Part of the Active State Pattern ported from FF3.
+    /// </summary>
+    public static class EquipMenuState
+    {
+        /// <summary>
+        /// Flag indicating if the equipment menu is active and handling announcements.
+        /// </summary>
+        public static bool IsActive { get; private set; } = false;
+
+        private static string lastAnnouncement = "";
+        private static float lastAnnouncementTime = 0f;
+
+        /// <summary>
+        /// Called when equipment menu activates (slot or item list focused).
+        /// Clears other menu states to prevent conflicts.
+        /// </summary>
+        public static void SetActive()
+        {
+            FFII_ScreenReaderMod.ClearOtherMenuStates("Equip");
+            IsActive = true;
+            lastAnnouncement = "";
+            lastAnnouncementTime = 0f;
+        }
+
+        /// <summary>
+        /// Check if GenericCursor announcements should be suppressed.
+        /// Returns false if controller is gone (auto-resets stuck flags).
+        /// </summary>
+        public static bool ShouldSuppress()
+        {
+            if (!IsActive) return false;
+
+            try
+            {
+                // Validate that equipment controllers are still active
+                var infoController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentInfoWindowController>();
+                var selectController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentSelectWindowController>();
+
+                bool infoActive = infoController != null && infoController.gameObject.activeInHierarchy;
+                bool selectActive = selectController != null && selectController.gameObject.activeInHierarchy;
+
+                if (!infoActive && !selectActive)
+                {
+                    // Auto-clear state when menu closes
+                    ClearState();
+                    return false;
+                }
+
+                return true;
+            }
+            catch
+            {
+                ClearState();
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Clear state when menu closes or switching to another menu.
+        /// </summary>
+        public static void ClearState()
+        {
+            IsActive = false;
+            lastAnnouncement = "";
+            lastAnnouncementTime = 0f;
+        }
+
+        /// <summary>
+        /// Deduplication helper - returns true if announcement should proceed.
+        /// </summary>
+        public static bool ShouldAnnounce(string announcement)
+        {
+            float currentTime = UnityEngine.Time.time;
+            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.1f)
+                return false;
+
+            lastAnnouncement = announcement;
+            lastAnnouncementTime = currentTime;
+            return true;
+        }
+
+        /// <summary>
+        /// Get localized slot name from EquipSlotType.
+        /// </summary>
+        public static string GetSlotName(EquipSlotType slot)
+        {
+            try
+            {
+                string messageId = EquipUtility.GetSlotMessageId(slot);
+                if (!string.IsNullOrEmpty(messageId))
+                {
+                    var messageManager = MessageManager.Instance;
+                    if (messageManager != null)
+                    {
+                        string localizedName = messageManager.GetMessage(messageId);
+                        if (!string.IsNullOrWhiteSpace(localizedName))
+                            return localizedName;
+                    }
+                }
+            }
+            catch
+            {
+                // Fall through to defaults
+            }
+
+            // Fallback to English slot names
+            return slot switch
+            {
+                EquipSlotType.Slot1 => "Right Hand",
+                EquipSlotType.Slot2 => "Left Hand",
+                EquipSlotType.Slot3 => "Head",
+                EquipSlotType.Slot4 => "Body",
+                EquipSlotType.Slot5 => "Accessory",
+                EquipSlotType.Slot6 => "Accessory 2",
+                _ => $"Slot {(int)slot}"
+            };
+        }
+
+        /// <summary>
+        /// Reset state (for testing or scene changes). Alias for ClearState.
+        /// </summary>
+        public static void Reset()
+        {
+            ClearState();
+        }
+    }
+
+    /// <summary>
+    /// Patches for equipment menu announcements.
+    /// Ported from FF3 screen reader.
+    /// </summary>
+    public static class EquipMenuPatches
+    {
+        /// <summary>
+        /// Apply all equipment menu patches manually.
+        /// </summary>
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                MelonLogger.Msg("[EquipMenu] Applying equipment menu patches...");
+
+                // Patch EquipmentInfoWindowController.SelectContent for slot selection
+                var selectContentSlotMethod = AccessTools.Method(
+                    typeof(KeyInputEquipmentInfoWindowController),
+                    "SelectContent",
+                    new Type[] { typeof(GameCursor) }
+                );
+                if (selectContentSlotMethod != null)
+                {
+                    var postfix = AccessTools.Method(typeof(EquipMenuPatches), nameof(EquipmentInfoWindowController_SelectContent_Postfix));
+                    harmony.Patch(selectContentSlotMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[EquipMenu] Patched EquipmentInfoWindowController.SelectContent");
+                }
+
+                // Patch EquipmentSelectWindowController.SelectContent for item selection
+                var selectContentItemMethod = AccessTools.Method(
+                    typeof(KeyInputEquipmentSelectWindowController),
+                    "SelectContent",
+                    new Type[] { typeof(GameCursor), typeof(CustomScrollViewWithinRangeType) }
+                );
+                if (selectContentItemMethod != null)
+                {
+                    var postfix = AccessTools.Method(typeof(EquipMenuPatches), nameof(EquipmentSelectWindowController_SelectContent_Postfix));
+                    harmony.Patch(selectContentItemMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[EquipMenu] Patched EquipmentSelectWindowController.SelectContent");
+                }
+
+                MelonLogger.Msg("[EquipMenu] Equipment menu patches applied successfully");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[EquipMenu] Error applying patches: {ex.Message}");
+            }
+        }
+
+        #region EquipmentInfoWindowController - Slot Selection
+
+        public static void EquipmentInfoWindowController_SelectContent_Postfix(
+            KeyInputEquipmentInfoWindowController __instance,
+            GameCursor targetCursor)
+        {
+            try
+            {
+                if (targetCursor == null) return;
+
+                // Mark equipment menu as active (suppresses generic cursor)
+                EquipMenuState.SetActive();
+
+                int index = targetCursor.Index;
+
+                // Access contentList directly (IL2CppInterop exposes private fields)
+                var contentList = __instance.contentList;
+                if (contentList == null || contentList.Count == 0)
+                {
+                    MelonLogger.Warning("[Equipment Slot] contentList is null or empty");
+                    return;
+                }
+
+                if (index < 0 || index >= contentList.Count)
+                {
+                    MelonLogger.Warning($"[Equipment Slot] Index {index} out of range (count={contentList.Count})");
+                    return;
+                }
+
+                var contentView = contentList[index];
+                if (contentView == null)
+                {
+                    MelonLogger.Warning("[Equipment Slot] Content view is null");
+                    return;
+                }
+
+                // Get slot name from partText
+                string slotName = null;
+                if (contentView.partText != null)
+                {
+                    slotName = contentView.partText.text;
+                }
+
+                // Fallback to localized slot name if partText is empty
+                if (string.IsNullOrWhiteSpace(slotName))
+                {
+                    EquipSlotType slotType = contentView.Slot;
+                    slotName = EquipMenuState.GetSlotName(slotType);
+                }
+
+                // Get equipped item from Data property
+                string equippedItem = null;
+                var itemData = contentView.Data;
+                if (itemData != null)
+                {
+                    try
+                    {
+                        equippedItem = itemData.Name;
+
+                        // Add parameter message (ATK +12, DEF +5, etc.)
+                        string paramMsg = itemData.ParameterMessage;
+                        if (!string.IsNullOrWhiteSpace(paramMsg))
+                        {
+                            equippedItem += ", " + paramMsg;
+                        }
+                    }
+                    catch { }
+                }
+
+                // Build announcement
+                string announcement = "";
+                if (!string.IsNullOrWhiteSpace(slotName))
+                {
+                    announcement = slotName;
+                }
+
+                if (!string.IsNullOrWhiteSpace(equippedItem))
+                {
+                    if (!string.IsNullOrWhiteSpace(announcement))
+                    {
+                        announcement += ": " + equippedItem;
+                    }
+                    else
+                    {
+                        announcement = equippedItem;
+                    }
+                }
+                else
+                {
+                    announcement += ": Empty";
+                }
+
+                if (string.IsNullOrWhiteSpace(announcement))
+                {
+                    return;
+                }
+
+                // Strip icon markup
+                announcement = TextUtils.StripIconMarkup(announcement);
+
+                // Skip duplicates
+                if (!EquipMenuState.ShouldAnnounce(announcement))
+                    return;
+
+                MelonLogger.Msg($"[Equipment Slot] {announcement}");
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in EquipmentInfoWindowController.SelectContent patch: {ex.Message}");
+            }
+        }
+
+        #endregion
+
+        #region EquipmentSelectWindowController - Item Selection
+
+        public static void EquipmentSelectWindowController_SelectContent_Postfix(
+            KeyInputEquipmentSelectWindowController __instance,
+            GameCursor targetCursor)
+        {
+            try
+            {
+                if (targetCursor == null) return;
+
+                // Mark equipment menu as active (suppresses generic cursor)
+                EquipMenuState.SetActive();
+
+                int index = targetCursor.Index;
+
+                // Access ContentDataList (public property)
+                var contentDataList = __instance.ContentDataList;
+                if (contentDataList == null || contentDataList.Count == 0)
+                {
+                    return; // Empty list is normal for empty slots
+                }
+
+                if (index < 0 || index >= contentDataList.Count)
+                {
+                    return;
+                }
+
+                var itemData = contentDataList[index];
+                if (itemData == null)
+                {
+                    return;
+                }
+
+                // Get item name - handle empty/remove entries
+                string itemName = itemData.Name;
+                if (string.IsNullOrWhiteSpace(itemName))
+                {
+                    // This might be a "Remove" or empty entry
+                    itemName = "Remove";
+                }
+
+                // Strip icon markup from name
+                itemName = TextUtils.StripIconMarkup(itemName);
+
+                // Build announcement with item details
+                string announcement = itemName;
+
+                // Add parameter info (ATK +15, DEF +8, etc.)
+                try
+                {
+                    string paramMessage = itemData.ParameterMessage;
+                    if (!string.IsNullOrWhiteSpace(paramMessage))
+                    {
+                        paramMessage = TextUtils.StripIconMarkup(paramMessage);
+                        announcement += $", {paramMessage}";
+                    }
+                }
+                catch { }
+
+                // Add description
+                try
+                {
+                    string description = itemData.Description;
+                    if (!string.IsNullOrWhiteSpace(description))
+                    {
+                        description = TextUtils.StripIconMarkup(description);
+                        announcement += $", {description}";
+                    }
+                }
+                catch { }
+
+                // Skip duplicates
+                if (!EquipMenuState.ShouldAnnounce(announcement))
+                    return;
+
+                MelonLogger.Msg($"[Equipment Item] {announcement}");
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in EquipmentSelectWindowController.SelectContent patch: {ex.Message}");
+            }
+        }
+
+        #endregion
+    }
+}

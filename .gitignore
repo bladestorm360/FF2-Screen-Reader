@@ -1,0 +1,8 @@
+**/.claude/
+**/bin/
+**/obj/
+**/Releases/
+build_log.txt
+NUL
+nul
+NUL.*
