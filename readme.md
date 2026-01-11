@@ -11,6 +11,7 @@ Secret passages, even when opened, do not show properly on the pathfinder. Can u
 H in battle announces statistics for all characters, not active character.
 Pop-ups are not reading, usually context-sensative yes or no dialogues such as load game or learn spell. Yes or no options read but not the pop-up text.
 Vehicle state and landing detection may not be working properly.
+Area transition triggers (area boundary) only announce that the player is moving to a new area. No apparent way to get destination information. Map Exits are named.
 
 ## Install
 
