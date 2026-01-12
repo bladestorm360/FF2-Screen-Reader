@@ -250,6 +250,21 @@ namespace FFII_ScreenReader.Core
                 VehicleLandingPatches.ResetState();
                 MoveStateMonitor.ResetState();
 
+                // Clear all battle state flags when leaving battle (any scene transition from battle)
+                // This ensures flags are cleared on flee, defeat, or any other non-victory battle exit
+                if (IsInBattle)
+                {
+                    LoggerInstance.Msg("[Scene] Clearing battle state on scene transition");
+                    ClearBattleActive();
+                    BattleCommandState.ClearState();
+                    BattleTargetPatches.SetTargetSelectionActive(false);
+                    BattleCommandPatches.ResetTurnState();
+                    BattleCommandPatches.ResetCommandCursorState();
+                    BattleMagicMenuState.Reset();
+                    BattleItemMenuState.Reset();
+                    BattleMessagePatches.ResetState();
+                }
+
                 // Delay entity scan for scene initialization
                 CoroutineManager.StartManaged(DelayedInitialScan());
             }
@@ -804,11 +819,18 @@ namespace FFII_ScreenReader.Core
         }
 
         /// <summary>
-        /// Clears all menu state flags.
+        /// Clears all menu state flags including battle state.
         /// Called when returning to main menu level to ensure no stuck suppression flags.
         /// </summary>
         public static void ClearAllMenuStates()
         {
+            // Clear battle state
+            ClearBattleActive();
+            BattleCommandPatches.ResetTurnState();
+            BattleCommandPatches.ResetCommandCursorState();
+            BattleMessagePatches.ResetState();
+
+            // Clear all menu flags
             EquipMenuState.ClearState();
             BattleCommandState.ClearState();
             BattleTargetPatches.SetTargetSelectionActive(false);
@@ -895,6 +917,64 @@ namespace FFII_ScreenReader.Core
     public static class ManualPatches
     {
         /// <summary>
+        /// Check if the cursor is at the main menu command bar level.
+        /// This indicates we've exited battle or submenus and should clear stuck states.
+        /// </summary>
+        private static bool IsAtMainMenuCommandBar(GameCursor cursor)
+        {
+            try
+            {
+                if (cursor?.transform == null) return false;
+
+                // Check cursor's parent hierarchy for main menu indicators
+                var current = cursor.transform;
+                int depth = 0;
+                while (current != null && depth < 15)
+                {
+                    string name = current.name;
+
+                    // Main menu command bar indicators
+                    if (name.Contains("CommandMenu") ||
+                        name.Contains("MainMenu") ||
+                        name == "CommandContent" ||
+                        name == "CommandList")
+                    {
+                        // Also verify MainMenuController exists and is open
+                        var mainMenuKeyInput = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.MainMenuController>();
+                        if (mainMenuKeyInput != null)
+                        {
+                            return mainMenuKeyInput.IsOpne; // Note: game has typo "IsOpne"
+                        }
+
+                        var mainMenuTouch = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.Touch.MainMenuController>();
+                        if (mainMenuTouch != null)
+                        {
+                            return mainMenuTouch.IsOpne;
+                        }
+
+                        // If we found command menu structure but no controller, assume main menu
+                        return true;
+                    }
+
+                    // Battle-specific indicators - NOT at main menu
+                    if (name.Contains("Battle") || name.Contains("Target"))
+                    {
+                        return false;
+                    }
+
+                    current = current.parent;
+                    depth++;
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error checking main menu: {ex.Message}");
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// Postfix for cursor navigation methods.
         /// Uses the Active State Pattern to check if specialized patches handle announcements.
         /// </summary>
@@ -907,6 +987,18 @@ namespace FFII_ScreenReader.Core
                 {
                     MelonLogger.Warning("Cursor is null in postfix");
                     return;
+                }
+
+                // === MAIN MENU DETECTION & STATE RESET ===
+                // If battle state or menu states are stuck, check if we're at main menu level
+                // and clear all stuck flags
+                if (FFII_ScreenReaderMod.IsInBattle || FFII_ScreenReaderMod.AnyMenuStateActive())
+                {
+                    if (IsAtMainMenuCommandBar(cursor))
+                    {
+                        MelonLogger.Msg("[CursorNav] Detected main menu command bar - clearing all stuck states");
+                        FFII_ScreenReaderMod.ClearAllMenuStates();
+                    }
                 }
 
                 // === BATTLE UI CONTEXT CHECK ===

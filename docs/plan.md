@@ -22,7 +22,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster, enabling bl
 | Battle Results | Working | Gil, weapon/magic skill level-ups, stat gains, items |
 | Field Navigation | Working | Entity scan, pathfinding, wall bump |
 | Title Menu | Working | New Game, Continue, Options |
-| Keyword System | Working | NPC dialogue (Ask/Learn/Key Items/Cancel), Words menu |
+| Keyword System | Partial | NPC dialogue (Ask/Learn/Key Items) works with descriptions; Words menu (main menu) reads keyword name only |
 
 ## Documentation
 
@@ -63,7 +63,7 @@ See [port.md](port.md) for full details.
 7. ~~**Title Menu** (P6)~~ ✓ DONE - New Game, Continue, Options navigation
 8. ~~**Stat Gain Announcements**~~ ✓ DONE - HP/Evasion/etc. in ShowStatusUpInit phase
 9. ~~**Vehicle/Movement** (P5)~~ ✓ DONE - Movement speech, vehicle landing
-10. ~~**Keyword System** (P7)~~ ✓ DONE - NPC dialogue keywords (Ask/Remember/Item), Words menu
+10. **Keyword System** (P7) - Partial - NPC dialogue keywords work; Words menu description not reading
 11. **Popup Patches** (P8) - Pending - Popup message announcements
 
 ## Key Issues
@@ -71,13 +71,15 @@ See [port.md](port.md) for full details.
 See [debug.md](debug.md) for details.
 
 - ~~**Battle Result Phase 1**: `ShowPointsInit` patch not firing~~ ✓ FIXED - moved to Show_Postfix
+- ~~**Weapon Skill Percentages**: Progress % not working~~ ✓ FIXED - formula: `exp % 100`
+- ~~**Spell Level Calculation**: Incorrect levels displayed~~ ✓ FIXED - formula: `level = (rawExp / 100) + 1`
 
 ## FF2-Specific Features
 
 Unlike FF3's job/XP system, FF2 uses:
 - **Usage-based growth**: Stats increase through use (HP from damage, skills from attacks) - ✓ Announced in ShowStatusUpInit phase
-- **Weapon skill levels**: 1-16 per weapon type - ✓ Announced with percentage/level-ups
-- **Spell proficiency**: 1-16 per spell, increases with casting - ✓ Announced with level-ups
+- **Weapon skill levels**: 1-16 per weapon type - ✓ Levels and percentages working
+- **Spell proficiency**: 1-16 per spell, increases with casting - ✓ Level calculation fixed
 - **Keyword system**: Learn/use keywords in dialogue - ✓ Implemented (see [debug.md](debug.md#keyword-system-state-machine))
 
 ---

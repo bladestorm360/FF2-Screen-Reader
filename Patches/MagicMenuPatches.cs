@@ -292,6 +292,8 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Gets spell proficiency level (1-16) from OwnedAbility.
         /// FF2 specific: spells level up through use.
+        /// OwnedAbility.SkillLevel stores raw exp, not actual level.
+        /// Formula: level = (rawExp / 100) + 1, clamped to 1-16
         /// </summary>
         public static int GetSpellProficiency(OwnedAbility ability)
         {
@@ -300,11 +302,17 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                return ability.SkillLevel;
+                // OwnedAbility.SkillLevel stores raw exp value, not the level
+                // Formula from decompiled BattleUtility.GetSkillLevel: level = (exp / 100) + 1
+                int rawExp = ability.SkillLevel;
+                int level = (rawExp / 100) + 1;
+                if (level < 1) level = 1;
+                if (level > 16) level = 16;
+                return level;
             }
             catch { }
 
-            return 0;
+            return 1;
         }
 
         /// <summary>
@@ -988,17 +996,18 @@ namespace FFII_ScreenReader.Patches
                 string announcement = spellName;
 
                 // Add proficiency level (FF2 specific: spells level up 1-16 with use)
+                // NOTE: Spell level calculation not working correctly - see Known Issues
                 int proficiency = MagicMenuState.GetSpellProficiency(ability);
                 if (proficiency > 0)
                 {
-                    announcement += $", Level {proficiency}";
+                    announcement += $" lv{proficiency}";
                 }
 
                 // Add MP cost (FF2 specific)
                 int mpCost = MagicMenuState.GetMPCost(ability);
                 if (mpCost > 0)
                 {
-                    announcement += $", MP cost {mpCost}";
+                    announcement += $", MP {mpCost}";
                 }
 
                 // Add description

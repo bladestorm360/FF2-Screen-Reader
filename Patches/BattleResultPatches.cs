@@ -18,6 +18,7 @@ using PlayerCharacterParameter = Il2CppLast.Data.PlayerCharacterParameter;
 using SkillLevelTarget = Il2CppLast.Defaine.SkillLevelTarget;
 using ExpUtility = Il2CppLast.Systems.ExpUtility;
 using ExpTableType = Il2CppLast.Defaine.Master.ExpTableType;
+using BattleUtility = Il2CppLast.Battle.BattleUtility;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -365,6 +366,7 @@ namespace FFII_ScreenReader.Patches
         ///
         /// NOTE: GrouthWeaponSkillList only contains skills that LEVELED UP, not all skills that gained exp.
         /// So we compare BeforData vs AfterData SkillLevelTargets to find ALL skills that gained exp.
+        /// Uses BattleUtility.GetSkillLevel for accurate level calculation.
         /// </summary>
         private static void AnnounceWeaponSkillProgress(BattleResultCharacterData charResult)
         {
@@ -400,6 +402,15 @@ namespace FFII_ScreenReader.Patches
                     try
                     {
                         var skillTarget = kvp.Key;
+
+                        // Skip evasion skills - they don't have exp bars, only stat gains
+                        // Evasion gains are announced separately in ShowStatusUpInit phase
+                        if (skillTarget == SkillLevelTarget.PhysicalAvoidance ||
+                            skillTarget == SkillLevelTarget.AbilityAvoidance)
+                        {
+                            continue;
+                        }
+
                         int afterExp = kvp.Value;
                         int beforeExp = 0;
 
@@ -415,40 +426,29 @@ namespace FFII_ScreenReader.Patches
                         string skillName = GetWeaponSkillName(skillTarget);
                         int expGained = afterExp - beforeExp;
 
-                        MelonLogger.Msg($"[BattleResult] {charName} {skillName}: {beforeExp} -> {afterExp} (+{expGained})");
+                        // Use BattleUtility.GetSkillLevel for accurate level calculation
+                        int beforeLevel = beforeData != null ? BattleUtility.GetSkillLevel(beforeData, skillTarget) : 1;
+                        int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
 
-                        // Calculate before and after levels using FF2's formula:
-                        // Level = exp / 100 + 1 (levels 1-16)
-                        // Progress within level = exp % 100 (0-99%)
-                        int beforeLevel = (beforeExp / 100) + 1;
-                        int afterLevel = (afterExp / 100) + 1;
+                        MelonLogger.Msg($"[BattleResult] {charName} {skillName}: {beforeExp} -> {afterExp} (+{expGained}), level {beforeLevel}->{afterLevel}");
+
+                        // Calculate percentage for display
+                        // Each level requires 100 exp, so exp % 100 gives 0-99 directly as percentage
                         int beforePercent = beforeExp % 100;
                         int afterPercent = afterExp % 100;
-
-                        MelonLogger.Msg($"[BattleResult] {charName} {skillName}: beforeLevel={beforeLevel}, afterLevel={afterLevel}, beforePercent={beforePercent}, afterPercent={afterPercent}");
 
                         // Check if level increased
                         bool leveledUp = afterLevel > beforeLevel;
 
                         if (leveledUp)
                         {
-                            // Announce level up
-                            string levelUpAnnouncement = $"{charName} {skillName} leveled up to {afterLevel}";
-                            MelonLogger.Msg($"[Victory] {levelUpAnnouncement}");
-                            FFII_ScreenReaderMod.SpeakText(levelUpAnnouncement, interrupt: false);
-
-                            // If there's progress in the new level, also announce that
-                            if (afterPercent > 0)
-                            {
-                                string progressAnnouncement = $"{charName} {skillName}: {afterPercent} percent";
-                                MelonLogger.Msg($"[Victory] {progressAnnouncement}");
-                                FFII_ScreenReaderMod.SpeakText(progressAnnouncement, interrupt: false);
-                            }
+                            // Level-ups are announced in AnnounceWeaponSkillLevelUps during stat gain phase
+                            // Just log here for debugging
+                            MelonLogger.Msg($"[BattleResult] {charName} {skillName} leveled up to {afterLevel} (will announce in stat phase)");
                         }
                         else
                         {
                             // No level up - announce percentage gained
-                            // For same level, delta = afterPercent - beforePercent
                             int percentDelta = afterPercent - beforePercent;
                             MelonLogger.Msg($"[BattleResult] {charName} {skillName}: percentDelta={percentDelta}");
                             if (percentDelta > 0)
@@ -496,37 +496,12 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Calculate percentage progress within a level.
-        /// Returns a float to support decimal percentages for small gains.
+        /// Each level requires 100 exp, so exp % 100 gives 0-99 directly as percentage.
         /// </summary>
-        private static float CalculatePercentInLevel(int exp, int level)
+        private static int CalculatePercentInLevel(int exp)
         {
-            try
-            {
-                int currentLevelTotalExp = ExpUtility.GetLevelExp(level, ExpTableType.SkillExp);
-                int nextLevelTotalExp = ExpUtility.GetNextTotalExp(1, exp, ExpTableType.SkillExp);
-
-                MelonLogger.Msg($"[BattleResult] CalculatePercentInLevel: exp={exp}, level={level}, currentLevelExp={currentLevelTotalExp}, nextLevelExp={nextLevelTotalExp}");
-
-                if (nextLevelTotalExp > currentLevelTotalExp)
-                {
-                    int expInCurrentLevel = exp - currentLevelTotalExp;
-                    int expNeededForLevel = nextLevelTotalExp - currentLevelTotalExp;
-                    float percentage = (float)expInCurrentLevel / expNeededForLevel * 100f;
-                    if (percentage < 0) percentage = 0;
-                    if (percentage > 100) percentage = 100;
-                    MelonLogger.Msg($"[BattleResult] Calculated: expInLevel={expInCurrentLevel}, expNeeded={expNeededForLevel}, percent={percentage:F1}");
-                    return percentage;
-                }
-                else
-                {
-                    MelonLogger.Msg($"[BattleResult] nextLevelTotalExp ({nextLevelTotalExp}) <= currentLevelTotalExp ({currentLevelTotalExp}), returning 0");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in CalculatePercentInLevel: {ex.Message}");
-            }
-            return 0f;
+            // Simple formula: each level is 100 exp, so modulo gives percentage
+            return exp % 100;
         }
 
         private static string GetWeaponSkillName(SkillLevelTarget target)
@@ -636,8 +611,9 @@ namespace FFII_ScreenReader.Patches
                         }
 
                         // Check if this ability leveled up by comparing before/after
-                        int afterLevel = ability.SkillLevel;
-                        int beforeLevel = 0;
+                        // OwnedAbility.SkillLevel stores raw exp, formula: level = (exp / 100) + 1
+                        int afterExp = ability.SkillLevel;
+                        int beforeExp = 0;
 
                         if (beforeAbilities != null)
                         {
@@ -646,16 +622,22 @@ namespace FFII_ScreenReader.Patches
                             {
                                 if (beforeAbility != null && beforeAbility.MesIdName == mesIdName)
                                 {
-                                    beforeLevel = beforeAbility.SkillLevel;
+                                    beforeExp = beforeAbility.SkillLevel;
                                     break;
                                 }
                             }
                         }
 
+                        // Convert raw exp to actual level
+                        int afterLevel = (afterExp / 100) + 1;
+                        int beforeLevel = (beforeExp / 100) + 1;
+                        if (afterLevel > 16) afterLevel = 16;
+                        if (beforeLevel < 1) beforeLevel = 1;
+
                         // Only announce if level actually increased
                         if (afterLevel > beforeLevel)
                         {
-                            string announcement = $"{charName}, {abilityName} level up!";
+                            string announcement = $"{charName}, {abilityName} lv{afterLevel}!";
                             MelonLogger.Msg($"[Victory] {announcement}");
                             FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                         }
@@ -749,7 +731,8 @@ namespace FFII_ScreenReader.Patches
         #region ShowStatusUpInit - Stat Gains (HP, Evasion, Magic Evasion, etc.)
 
         /// <summary>
-        /// Announce stat gains for all characters with IsStatusUp flag.
+        /// Announce stat gains and weapon skill level-ups for all characters.
+        /// Combined format: "Firion: Sword lv2, Strength +1, HP +5"
         /// </summary>
         private static void AnnounceAllStatGains(BattleResultData data)
         {
@@ -766,14 +749,6 @@ namespace FFII_ScreenReader.Patches
                 foreach (var charResult in characterList)
                 {
                     if (charResult == null) continue;
-
-                    // Only announce for characters that actually had stat gains
-                    if (!charResult.IsStatusUp)
-                    {
-                        MelonLogger.Msg($"[BattleResult] Character has no status up, skipping");
-                        continue;
-                    }
-
                     AnnounceCharacterStatGains(charResult);
                 }
             }
@@ -784,8 +759,111 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Announce stat gains for a single character by comparing BeforData vs AfterData parameters.
-        /// Format: "Maria: HP +5, Magic Evasion +1"
+        /// Get weapon skill level-ups for a character using BattleUtility.GetSkillLevel for accurate level calculation.
+        /// Returns list of strings like "Sword lv2" for each skill that leveled up.
+        /// </summary>
+        private static List<string> GetWeaponSkillLevelUps(BattleResultCharacterData charResult)
+        {
+            var levelUps = new List<string>();
+
+            try
+            {
+                var afterData = charResult.AfterData;
+                var beforeData = charResult.BeforData;
+                if (afterData == null || beforeData == null) return levelUps;
+
+                // Use GrouthWeaponSkillList if available - it contains the exact skills that leveled up
+                var grouthList = charResult.GrouthWeaponSkillList;
+                if (grouthList != null && grouthList.Count > 0)
+                {
+                    MelonLogger.Msg($"[BattleResult] Using GrouthWeaponSkillList with {grouthList.Count} skills");
+                    foreach (var skillTarget in grouthList)
+                    {
+                        try
+                        {
+                            // Skip evasion skills - they don't have exp bars/level-ups
+                            if (skillTarget == SkillLevelTarget.PhysicalAvoidance ||
+                                skillTarget == SkillLevelTarget.AbilityAvoidance)
+                            {
+                                continue;
+                            }
+
+                            // Use BattleUtility.GetSkillLevel for accurate level
+                            int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
+                            string skillName = GetWeaponSkillName(skillTarget);
+                            MelonLogger.Msg($"[BattleResult] {skillName} leveled up to {afterLevel}");
+                            levelUps.Add($"{skillName} lv{afterLevel}");
+                        }
+                        catch (Exception ex)
+                        {
+                            MelonLogger.Warning($"Error getting skill level: {ex.Message}");
+                        }
+                    }
+                    return levelUps;
+                }
+
+                // Fallback: compare before/after skill exp using BattleUtility
+                var afterSkills = afterData.SkillLevelTargets;
+                var beforeSkills = beforeData.SkillLevelTargets;
+
+                if (afterSkills == null || beforeSkills == null) return levelUps;
+
+                // Check each skill for level-ups
+                foreach (var kvp in afterSkills)
+                {
+                    try
+                    {
+                        var skillTarget = kvp.Key;
+
+                        // Skip evasion skills - they don't have exp bars/level-ups
+                        if (skillTarget == SkillLevelTarget.PhysicalAvoidance ||
+                            skillTarget == SkillLevelTarget.AbilityAvoidance)
+                        {
+                            continue;
+                        }
+
+                        int afterExp = kvp.Value;
+                        int beforeExp = 0;
+
+                        if (beforeSkills.ContainsKey(skillTarget))
+                        {
+                            beforeExp = beforeSkills[skillTarget];
+                        }
+
+                        // Only check skills that gained exp
+                        if (afterExp <= beforeExp) continue;
+
+                        // Use BattleUtility.GetSkillLevel for accurate levels
+                        int beforeLevel = BattleUtility.GetSkillLevel(beforeData, skillTarget);
+                        int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
+
+                        string skillName = GetWeaponSkillName(skillTarget);
+                        MelonLogger.Msg($"[BattleResult] {skillName}: exp {beforeExp}->{afterExp}, level {beforeLevel}->{afterLevel}");
+
+                        // Add if level increased
+                        if (afterLevel > beforeLevel)
+                        {
+                            levelUps.Add($"{skillName} lv{afterLevel}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"Error checking skill level-up: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[BattleResult] Error in GetWeaponSkillLevelUps: {ex.Message}");
+            }
+
+            return levelUps;
+        }
+
+        /// <summary>
+        /// Announce stat gains and weapon level-ups for a single character.
+        /// Format: "Firion: Sword lv2, Strength +1, HP +5"
+        /// Weapon level-ups come first, then stat changes.
         /// </summary>
         private static void AnnounceCharacterStatGains(BattleResultCharacterData charResult)
         {
@@ -807,56 +885,58 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                var beforeParam = beforeData.Parameter;
-                var afterParam = afterData.Parameter;
+                // Build combined list: weapon level-ups first, then stat changes
+                var allChanges = new List<string>();
 
-                if (beforeParam == null || afterParam == null)
+                // Get weapon skill level-ups first
+                var weaponLevelUps = GetWeaponSkillLevelUps(charResult);
+                allChanges.AddRange(weaponLevelUps);
+
+                // Only check stat changes if IsStatusUp flag is set
+                if (charResult.IsStatusUp)
                 {
-                    MelonLogger.Warning($"[BattleResult] {charName}: Parameter is null");
-                    return;
+                    var beforeParam = beforeData.Parameter;
+                    var afterParam = afterData.Parameter;
+
+                    if (beforeParam != null && afterParam != null)
+                    {
+                        // Check all relevant stats
+                        // Base stats
+                        CheckStatChange(allChanges, "HP", beforeParam.AddtionalMaxHp, afterParam.AddtionalMaxHp);
+                        CheckStatChange(allChanges, "MP", beforeParam.AddtionalMaxMp, afterParam.AddtionalMaxMp);
+                        CheckStatChange(allChanges, "Strength", beforeParam.AddtionalPower, afterParam.AddtionalPower);
+                        CheckStatChange(allChanges, "Vitality", beforeParam.AddtionalVitality, afterParam.AddtionalVitality);
+                        CheckStatChange(allChanges, "Agility", beforeParam.AddtionalAgility, afterParam.AddtionalAgility);
+                        CheckStatChange(allChanges, "Intelligence", beforeParam.AddtionalIntelligence, afterParam.AddtionalIntelligence);
+                        CheckStatChange(allChanges, "Spirit", beforeParam.AddtionalSpirit, afterParam.AddtionalSpirit);
+
+                        // Derived combat stats
+                        CheckStatChange(allChanges, "Accuracy", beforeParam.AddtionalAccuracyRate, afterParam.AddtionalAccuracyRate);
+                        CheckStatChange(allChanges, "Defense", beforeParam.AddtionalDefense, afterParam.AddtionalDefense);
+
+                        // Evasion uses "Nx Y%" format on victory screen - track both count and rate
+                        CheckStatChange(allChanges, "Evasion Count", beforeParam.AddtionalEvasionCount, afterParam.AddtionalEvasionCount);
+                        CheckStatChange(allChanges, "Evasion", beforeParam.AddtionalEvasionRate, afterParam.AddtionalEvasionRate);
+
+                        // Magic Defense uses "Nx Y%" format on victory screen - track both count and rate
+                        CheckStatChange(allChanges, "Magic Defense Count", beforeParam.AddtionalMagicDefenseCount, afterParam.AddtionalMagicDefenseCount);
+                        CheckStatChange(allChanges, "Magic Defense", beforeParam.AddtionalAbilityDefenseRate, afterParam.AddtionalAbilityDefenseRate);
+
+                        // Magic Evasion
+                        CheckStatChange(allChanges, "Magic Evasion", beforeParam.AddtionalAbilityEvasionRate, afterParam.AddtionalAbilityEvasionRate);
+                    }
                 }
 
-                // Build list of stat changes
-                var statChanges = new List<string>();
-
-                // Check all relevant stats
-                // Base stats
-                CheckStatChange(statChanges, "HP", beforeParam.AddtionalMaxHp, afterParam.AddtionalMaxHp);
-                CheckStatChange(statChanges, "MP", beforeParam.AddtionalMaxMp, afterParam.AddtionalMaxMp);
-                CheckStatChange(statChanges, "Strength", beforeParam.AddtionalPower, afterParam.AddtionalPower);
-                CheckStatChange(statChanges, "Vitality", beforeParam.AddtionalVitality, afterParam.AddtionalVitality);
-                CheckStatChange(statChanges, "Agility", beforeParam.AddtionalAgility, afterParam.AddtionalAgility);
-                CheckStatChange(statChanges, "Intelligence", beforeParam.AddtionalIntelligence, afterParam.AddtionalIntelligence);
-                CheckStatChange(statChanges, "Spirit", beforeParam.AddtionalSpirit, afterParam.AddtionalSpirit);
-
-                // Derived combat stats
-                CheckStatChange(statChanges, "Accuracy", beforeParam.AddtionalAccuracyRate, afterParam.AddtionalAccuracyRate);
-                CheckStatChange(statChanges, "Defense", beforeParam.AddtionalDefense, afterParam.AddtionalDefense);
-
-                // Evasion uses "Nx Y%" format on victory screen - track both count and rate
-                CheckStatChange(statChanges, "Evasion Count", beforeParam.AddtionalEvasionCount, afterParam.AddtionalEvasionCount);
-                CheckStatChange(statChanges, "Evasion", beforeParam.AddtionalEvasionRate, afterParam.AddtionalEvasionRate);
-
-                // Magic Defense uses "Nx Y%" format on victory screen - track both count and rate
-                CheckStatChange(statChanges, "Magic Defense Count", beforeParam.AddtionalMagicDefenseCount, afterParam.AddtionalMagicDefenseCount);
-                CheckStatChange(statChanges, "Magic Defense", beforeParam.AddtionalAbilityDefenseRate, afterParam.AddtionalAbilityDefenseRate);
-
-                // Note: AddtionalAbilityDefense is flat magic defense value, not the rate shown on screen
-                // Magic Evasion may also appear - keeping for now
-                CheckStatChange(statChanges, "Magic Evasion", beforeParam.AddtionalAbilityEvasionRate, afterParam.AddtionalAbilityEvasionRate);
-
-                // Note: Other derived stats to potentially add later after visual confirmation:
-                // AddionalAccuracyCount (typo in game), AddtionalDefenseCount, AddtionalAttack, AddtionalMagic
-
-                if (statChanges.Count > 0)
+                if (allChanges.Count > 0)
                 {
-                    string announcement = $"{charName}: {string.Join(", ", statChanges)}";
+                    // Format: "Firion: Sword lv2, Strength +1, HP +5"
+                    string announcement = $"{charName}: {string.Join(", ", allChanges)}";
                     MelonLogger.Msg($"[Victory] {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
                 else
                 {
-                    MelonLogger.Msg($"[BattleResult] {charName}: IsStatusUp but no stat changes detected");
+                    MelonLogger.Msg($"[BattleResult] {charName}: No level-ups or stat changes");
                 }
             }
             catch (Exception ex)
@@ -867,6 +947,7 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Check if a stat changed and add to the list if it did.
+        /// Format: "Strength +1" for use in "Firion: Strength +1, HP +5"
         /// </summary>
         private static void CheckStatChange(List<string> changes, string statName, int before, int after)
         {
@@ -911,8 +992,12 @@ namespace FFII_ScreenReader.Patches
                 // Announce gil directly (ShowPointsInit doesn't fire reliably)
                 AnnounceGilGained(data);
 
-                // NOTE: Weapon skills are announced in ShowSkillLevelsInit_Postfix_Generic
-                // because GrouthWeaponSkillList is not populated until that phase
+                // Announce weapon skill percentage gains
+                if (!announcedWeaponSkills)
+                {
+                    announcedWeaponSkills = true;
+                    AnnounceAllWeaponSkills(data);
+                }
             }
             catch (Exception ex)
             {

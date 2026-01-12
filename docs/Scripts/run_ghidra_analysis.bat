@@ -7,6 +7,7 @@ REM   script:
 REM     pathfinding  - Decompile pathfinding and map functions (default)
 REM     magic        - Decompile magic/ability growth functions
 REM     weapon_skill - Decompile weapon skill growth functions
+REM     skill_level  - Decompile skill level calculation functions (spell level fix)
 REM   mode:
 REM     import  - Create new project and import GameAssembly.dll (first time)
 REM     analyze - Re-run analysis on existing project (subsequent runs)
@@ -17,6 +18,7 @@ REM   run_ghidra_analysis.bat magic                 - Import + decompile magic
 REM   run_ghidra_analysis.bat weapon_skill          - Import + decompile weapon skills
 REM   run_ghidra_analysis.bat magic analyze         - Re-analyze existing project for magic
 REM   run_ghidra_analysis.bat pathfinding analyze
+REM   run_ghidra_analysis.bat skill_level          - Import + decompile skill level functions
 
 setlocal enabledelayedexpansion
 
@@ -42,6 +44,8 @@ if /i "%~1"=="magic" set "SCRIPT_TYPE=magic"
 if /i "%~1"=="pathfinding" set "SCRIPT_TYPE=pathfinding"
 if /i "%~1"=="weapon_skill" set "SCRIPT_TYPE=weapon_skill"
 if /i "%~1"=="weapon" set "SCRIPT_TYPE=weapon_skill"
+if /i "%~1"=="skill_level" set "SCRIPT_TYPE=skill_level"
+if /i "%~1"=="skill" set "SCRIPT_TYPE=skill_level"
 if /i "%~1"=="analyze" (
     set "MODE=analyze"
     goto :skip_second_arg
@@ -67,6 +71,10 @@ if "%SCRIPT_TYPE%"=="magic" (
     set "SCRIPT_FILE=%SCRIPT_DIR%decompile_weapon_skill.py"
     set "OUTPUT_FILE=%SCRIPT_DIR%decompiled_weapon_skill.c"
     set "SCRIPT_NAME=decompile_weapon_skill.py"
+) else if "%SCRIPT_TYPE%"=="skill_level" (
+    set "SCRIPT_FILE=%SCRIPT_DIR%decompile_skill_level.py"
+    set "OUTPUT_FILE=%SCRIPT_DIR%decompiled_skill_level.c"
+    set "SCRIPT_NAME=decompile_skill_level.py"
 ) else (
     set "SCRIPT_FILE=%SCRIPT_DIR%decompile_pathfinding.py"
     set "OUTPUT_FILE=%SCRIPT_DIR%decompiled_pathfinding.c"

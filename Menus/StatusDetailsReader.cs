@@ -4,6 +4,9 @@ using MelonLoader;
 using UnityEngine.UI;
 using Il2CppLast.Data.User;
 using Il2CppLast.Defaine;
+using Il2CppLast.Defaine.Master;
+using Il2CppLast.Systems;
+using Il2CppLast.Battle;
 using FFII_ScreenReader.Core;
 
 // Type alias for status details controller
@@ -227,7 +230,7 @@ namespace FFII_ScreenReader.Menus
         Vitals,         // HP, MP
         Attributes,     // Strength, Agility, Stamina, Intellect, Spirit
         CombatStats,    // Attack, Accuracy, Defense, Evasion, Magic Defense, Magic Evasion
-        WeaponSkills,   // Sword, Knife, Spear, Axe, Staff, Bow, Shield, Unarmed, Evasion, Magic Evasion
+        WeaponSkills,   // Sword, Knife, Spear, Axe, Staff, Bow, Shield, Unarmed (no evasion - it's a stat, not a weapon skill)
     }
 
     /// <summary>
@@ -776,8 +779,7 @@ namespace FFII_ScreenReader.Menus
         #region Weapon Skill Readers
 
         /// <summary>
-        /// Read a weapon skill level and progress.
-        /// FF2 formula: level = (exp / 100) + 1, progress = exp % 100
+        /// Read a weapon skill level and progress using BattleUtility.GetSkillLevel for accurate calculation.
         /// Format: "skill name lv(level): (progress) percent"
         /// </summary>
         private static string ReadWeaponSkill(OwnedCharacterData data, SkillLevelTarget skillType, string skillName)
@@ -786,18 +788,20 @@ namespace FFII_ScreenReader.Menus
             {
                 if (data == null) return $"{skillName}: N/A";
 
+                // Use BattleUtility.GetSkillLevel for accurate level (same method game uses internally)
+                int level = BattleUtility.GetSkillLevel(data, skillType);
+
+                // Get exp for percentage within level
+                int exp = 0;
                 var skillTargets = data.SkillLevelTargets;
-                if (skillTargets == null || !skillTargets.ContainsKey(skillType))
+                if (skillTargets != null && skillTargets.ContainsKey(skillType))
                 {
-                    return $"{skillName} lv1: 0 percent";
+                    exp = skillTargets[skillType];
                 }
 
-                int exp = skillTargets[skillType];
-                int level = (exp / 100) + 1;
+                // Calculate progress within current level
+                // Each level requires 100 exp, so exp % 100 gives 0-99 directly as percentage
                 int progress = exp % 100;
-
-                // Cap level at 16 (max in FF2)
-                if (level > 16) level = 16;
 
                 return $"{skillName} lv{level}: {progress} percent";
             }
@@ -848,15 +852,8 @@ namespace FFII_ScreenReader.Menus
             return ReadWeaponSkill(data, SkillLevelTarget.WeaponWrestle, "Fist");
         }
 
-        private static string ReadEvasionSkill(OwnedCharacterData data)
-        {
-            return ReadWeaponSkill(data, SkillLevelTarget.PhysicalAvoidance, "Evasion Skill");
-        }
-
-        private static string ReadMagicEvasionSkill(OwnedCharacterData data)
-        {
-            return ReadWeaponSkill(data, SkillLevelTarget.AbilityAvoidance, "Magic Evasion Skill");
-        }
+        // Note: Evasion skills (PhysicalAvoidance, AbilityAvoidance) are intentionally NOT included
+        // as weapon skills. They don't have exp bars - only stat gains announced in battle results.
 
         #endregion
     }

@@ -143,9 +143,12 @@ namespace FFII_ScreenReader.Patches
             {
                 if (__instance == null) return;
 
-                // SUPPRESSION: If targeting is active, do not announce commands
+                // FIX: When SetCursor is called on the command menu, we're back in command selection.
+                // Clear target selection state to fix the backing out bug where the flag gets stuck.
                 if (BattleTargetPatches.IsTargetSelectionActive)
-                    return;
+                {
+                    BattleTargetPatches.SetTargetSelectionActive(false);
+                }
 
                 // Skip duplicate announcements
                 if (index == lastAnnouncedCommandIndex)

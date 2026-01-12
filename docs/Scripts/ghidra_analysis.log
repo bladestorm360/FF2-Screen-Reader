@@ -1,17 +1,17 @@
-[01/08/2026 Thu 15:06:30.20] Starting Ghidra analysis 
-Script: weapon_skill 
+[01/11/2026 Sun 15:17:37.07] Starting Ghidra analysis 
+Script: skill_level 
 Mode: import 
  
 INFO  Using log config file: jar:file:/D:/Games/Dev/ghidra/Ghidra/Framework/Generic/lib/Generic.jar!/generic.log4j.xml (LoggingInitialization)  
 INFO  Using log file: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\application.log (LoggingInitialization)  
 INFO  Loading user preferences: C:\Users\pmoen\AppData\Roaming\ghidra\ghidra_11.2.1_PUBLIC\preferences (Preferences)  
 INFO  Searching for classes... (ClassSearcher)  
-INFO  Class search complete (1237 ms) (ClassSearcher)  
+INFO  Class search complete (1372 ms) (ClassSearcher)  
 INFO  Initializing SSL Context (SSLContextInitializer)  
 INFO  Initializing Random Number Generator... (SecureRandomFactory)  
 INFO  Random Number Generator initialization complete: SHA1PRNG (SecureRandomFactory)  
 INFO  Trust manager disabled, cacerts have not been set (ApplicationTrustManagerFactory)  
-INFO  Headless startup complete (3791 ms) (AnalyzeHeadless)  
+INFO  Headless startup complete (9968 ms) (AnalyzeHeadless)  
 INFO  Class searcher loaded 57 extension points (18 false positives) (ClassSearcher)  
 INFO  HEADLESS Script Paths:
     D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\Scripts
@@ -155,49 +155,49 @@ INFO  Evicting 29 filesystems from cache (FileSystemInstanceManager)
 INFO  Applied data type archive: windows_vs12_64 (ApplyDataArchiveAnalyzer)  
 INFO  Applied data type archive: windows_vs12_64 (ApplyDataArchiveAnalyzer)  
 INFO  -----------------------------------------------------
-    ASCII Strings                              2.457 secs
-    Apply Data Archives                        0.504 secs
-    Call Convention ID                         1.081 secs
-    Call-Fixup Installer                      21.224 secs
-    Create Address Tables                     10.872 secs
-    Create Address Tables - One Time          53.348 secs
-    Create Function                           21.196 secs
-    Data Reference                            35.288 secs
-    Decompiler Switch Analysis               200.776 secs
-    Demangler Microsoft                        0.344 secs
-    Disassemble                               83.099 secs
-    Disassemble Entry Points                   3.440 secs
-    Disassemble Entry Points - One Time        0.051 secs
-    Embedded Media                             0.273 secs
-    External Entry References                  0.002 secs
-    Function ID                               39.236 secs
-    Function Start Search                      0.876 secs
-    Non-Returning Functions - Discovered      25.748 secs
-    Non-Returning Functions - Known            0.005 secs
-    PDB Universal                              0.013 secs
-    Reference                                 44.605 secs
-    Scalar Operand References                 42.257 secs
-    Shared Return Calls                       22.378 secs
-    Stack                                    190.961 secs
-    Subroutine References                     36.654 secs
-    Subroutine References - One Time           0.013 secs
-    Windows x86 PE Exception Handling          2.859 secs
-    Windows x86 PE RTTI Analyzer               5.116 secs
-    Windows x86 Thread Environment Block (TEB) Analyzer     0.015 secs
-    WindowsResourceReference                   0.561 secs
-    x86 Constant Reference Analyzer          227.286 secs
+    ASCII Strings                              2.517 secs
+    Apply Data Archives                        0.532 secs
+    Call Convention ID                         1.038 secs
+    Call-Fixup Installer                      20.063 secs
+    Create Address Tables                     10.701 secs
+    Create Address Tables - One Time          50.001 secs
+    Create Function                           20.414 secs
+    Data Reference                            33.447 secs
+    Decompiler Switch Analysis               203.602 secs
+    Demangler Microsoft                        0.328 secs
+    Disassemble                               79.659 secs
+    Disassemble Entry Points                   3.351 secs
+    Disassemble Entry Points - One Time        0.048 secs
+    Embedded Media                             0.249 secs
+    External Entry References                  0.001 secs
+    Function ID                               37.069 secs
+    Function Start Search                      0.750 secs
+    Non-Returning Functions - Discovered      24.635 secs
+    Non-Returning Functions - Known            0.010 secs
+    PDB Universal                              0.019 secs
+    Reference                                 43.002 secs
+    Scalar Operand References                 40.367 secs
+    Shared Return Calls                       21.945 secs
+    Stack                                    171.973 secs
+    Subroutine References                     35.236 secs
+    Subroutine References - One Time           0.010 secs
+    Windows x86 PE Exception Handling          2.749 secs
+    Windows x86 PE RTTI Analyzer               4.964 secs
+    Windows x86 Thread Environment Block (TEB) Analyzer     0.014 secs
+    WindowsResourceReference                   0.700 secs
+    x86 Constant Reference Analyzer          216.836 secs
 -----------------------------------------------------
-     Total Time   1072 secs
+     Total Time   1026 secs
 -----------------------------------------------------
  (AutoAnalysisManager)  
 INFO  REPORT: Analysis succeeded for file: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY II PR/GameAssembly.dll (HeadlessAnalyzer)  
-INFO  SCRIPT: D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\Scripts\decompile_weapon_skill.py (HeadlessAnalyzer)  
+INFO  SCRIPT: D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\Scripts\decompile_skill_level.py (HeadlessAnalyzer)  
 ======================================================================
-FF2 Weapon Skill Growth Decompiler
+FF2 Skill Level Calculation Decompiler
 ======================================================================
 Program: GameAssembly.dll
 Image Base: 0x180000000
-Output: D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\scripts\decompiled_weapon_skill.c
+Output: D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\Scripts\decompiled_skill_level.c
 
 ----------------------------------------------------------------------
 STEP 1: Parsing IL2CPP type definitions
@@ -222,89 +222,79 @@ STEP 3: Decompiling target functions
 ----------------------------------------------------------------------
 Initializing decompiler...
 
-Decompiling: BattleResultCharacterData$$IsGrowthSkillLevel
-  RVA: 0x4A6870 -> Absolute: 0x1804A6870
-    Creating function at 0x1804A6870...
+Decompiling: BattleUtility$$GetSkillLevel
+  RVA: 0x913900 -> Absolute: 0x180913900
   SUCCESS
 
-Decompiling: BattleResultCharacterData$$WeaponSkillLevelUp
-  RVA: 0x4A67E0 -> Absolute: 0x1804A67E0
+Decompiling: CommonGauge$$GetFillAmount
+  RVA: 0x3D6090 -> Absolute: 0x1803D6090
+    Creating function at 0x1803D6090...
   SUCCESS
 
-Decompiling: BattleResultCharacterData$$get_IsWeaponSkillLevelUp
-  RVA: 0x4130B0 -> Absolute: 0x1804130B0
-    Creating function at 0x1804130B0...
+Decompiling: CommonGauge$$SetFillAmount
+  RVA: 0x3D6100 -> Absolute: 0x1803D6100
+    Creating function at 0x1803D6100...
+  FAILED: Could not create function at 0x1803D6100
+
+Decompiling: KeyInput_AbilityContentListController$$UpdateAbilitySkillLevel
+  RVA: 0x4DDCE0 -> Absolute: 0x1804DDCE0
+    Creating function at 0x1804DDCE0...
   SUCCESS
 
-Decompiling: BattleResultProvider$$Genelate
-  RVA: 0x379320 -> Absolute: 0x180379320
-    Creating function at 0x180379320...
+Decompiling: KeyInput_BattleAbilityInfomationContentController$$SetSkillLevel
+  RVA: 0x4E14C0 -> Absolute: 0x1804E14C0
+    Creating function at 0x1804E14C0...
   SUCCESS
 
-Decompiling: BattleSkillUpInformation$$get_AP
-  RVA: 0x31E230 -> Absolute: 0x18031E230
-    Creating function at 0x18031E230...
+Decompiling: KeyInput_BattleAbilityInfomationContentController$$SetSkillLevelGauge
+  RVA: 0x4E14A0 -> Absolute: 0x1804E14A0
+    Creating function at 0x1804E14A0...
   SUCCESS
 
-Decompiling: BattleSkillUpInformation$$get_BattleActLogDataList
-  RVA: 0x272330 -> Absolute: 0x180272330
+Decompiling: KeyInput_BattleAbilityInfomationContentController$$UpdateAbilitySkillLevel
+  RVA: 0x4E1500 -> Absolute: 0x1804E1500
   SUCCESS
 
-Decompiling: BattleSkillUpInformation$$get_MagicPoint
-  RVA: 0x298C00 -> Absolute: 0x180298C00
+Decompiling: KeyInput_BattleAbilityInfomationContentController$$UpdateView_OwnedAbility
+  RVA: 0x4E1640 -> Absolute: 0x1804E1640
   SUCCESS
 
-Decompiling: BattleSkillUpInformation$$get_MonsterAverageRank
-  RVA: 0x29C1A0 -> Absolute: 0x18029C1A0
-    Creating function at 0x18029C1A0...
+Decompiling: OwnedAbilitySaveData$$get_SkillLevel
+  RVA: 0x67B080 -> Absolute: 0x18067B080
+    Creating function at 0x18067B080...
+  FAILED: Could not create function at 0x18067B080
+
+Decompiling: OwnedAbilitySaveData$$set_SkillLevel
+  RVA: 0x67B0A0 -> Absolute: 0x18067B0A0
+    Creating function at 0x18067B0A0...
   SUCCESS
 
-Decompiling: StatusUpProvider$$.cctor
-  RVA: 0x478370 -> Absolute: 0x180478370
+Decompiling: ParameterProvider$$GetSkillLevel
+  RVA: 0x6A0570 -> Absolute: 0x1806A0570
   SUCCESS
 
-Decompiling: StatusUpProvider$$CalcAdditionalParameterValue
-  RVA: 0x474A00 -> Absolute: 0x180474A00
+Decompiling: SkillLevelProvider$$SettingSkillLevel
+  RVA: 0x6FC630 -> Absolute: 0x1806FC630
   SUCCESS
 
-Decompiling: StatusUpProvider$$Execution
-  RVA: 0x477620 -> Absolute: 0x180477620
-    Creating function at 0x180477620...
+Decompiling: Touch_AbilityContentListController$$UpdateAbilitySkillLevel
+  RVA: 0x6EBE90 -> Absolute: 0x1806EBE90
+    Creating function at 0x1806EBE90...
   SUCCESS
 
-Decompiling: StatusUpProvider$$ExecutionParameterUp
-  RVA: 0x4751F0 -> Absolute: 0x1804751F0
+Decompiling: Touch_BattleAbilityInfomationContentController$$UpdateAbilitySkillLevel
+  RVA: 0x6F0B70 -> Absolute: 0x1806F0B70
   SUCCESS
 
-Decompiling: StatusUpProvider$$ExecutionParameterUpHp
-  RVA: 0x474B40 -> Absolute: 0x180474B40
-  SUCCESS
-
-Decompiling: StatusUpProvider$$ExecutionParameterUpMp
-  RVA: 0x474ED0 -> Absolute: 0x180474ED0
-  SUCCESS
-
-Decompiling: StatusUpProvider$$ExecutionSkillUpAbilityAvoidance
-  RVA: 0x4759A0 -> Absolute: 0x1804759A0
-  SUCCESS
-
-Decompiling: StatusUpProvider$$ExecutionSkillUpPhysicalAvoidance
-  RVA: 0x476980 -> Absolute: 0x180476980
-  SUCCESS
-
-Decompiling: StatusUpProvider$$ExecutionSkillUpWeapon
-  RVA: 0x476C30 -> Absolute: 0x180476C30
-  SUCCESS
-
-Decompiling: StatusUpProvider$$GetSkillUpWeaponTarget
-  RVA: 0x4779F0 -> Absolute: 0x1804779F0
+Decompiling: Touch_BattleAbilityInfomationContentController$$UpdateView_OwnedAbility
+  RVA: 0x6F0D30 -> Absolute: 0x1806F0D30
   SUCCESS
 
 ======================================================================
 Decompilation complete!
-  Success: 18
-  Failed:  0
-  Output:  D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\scripts\decompiled_weapon_skill.c
+  Success: 13
+  Failed:  2
+  Output:  D:\Games\Dev\Unity\FFPR\ff2\ff2-screen-reader\docs\Scripts\decompiled_skill_level.c
 ======================================================================
 INFO  ANALYZING changes made by post scripts: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY II PR/GameAssembly.dll (HeadlessAnalyzer)  
 INFO  REPORT: Post-analysis succeeded for file: file:///D:/Games/SteamLibrary/steamapps/common/FINAL FANTASY II PR/GameAssembly.dll (HeadlessAnalyzer)  

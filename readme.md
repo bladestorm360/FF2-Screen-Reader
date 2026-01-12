@@ -12,6 +12,8 @@ H in battle announces statistics for all characters, not active character.
 Pop-ups are not reading, usually context-sensative yes or no dialogues such as load game or learn spell. Yes or no options read but not the pop-up text.
 Vehicle state and landing detection may not be working properly.
 Area transition triggers (area boundary) only announce that the player is moving to a new area. No apparent way to get destination information. Map Exits are named.
+Key terms menu reads item names but not descriptions.
+Weapon skill percentages may or may not be working correctly, level appears to be. Spells do not yet show progress.
 
 ## Install
 
