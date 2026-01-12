@@ -198,33 +198,47 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        // Offset for displayDataList in KeyInput.BattleItemInfomationController (from dump.cs line 432825)
+        // This is List<ItemListContentData> which directly contains the data we need
+        private const int OFFSET_DISPLAY_DATA_LIST = 0xE0;
+
         private static string TryGetItemFromContentList(BattleItemInfomationController controller, int cursorIndex)
         {
             try
             {
-                var allContentControllers = UnityEngine.Object.FindObjectsOfType<BattleItemInfomationContentController>();
-                if (allContentControllers != null && allContentControllers.Length > 0)
+                // Access displayDataList via pointer offset (List<ItemListContentData> at 0xE0)
+                var displayDataList = GetDisplayDataList(controller);
+                if (displayDataList != null && displayDataList.Count > 0)
                 {
-                    MelonLogger.Msg($"[Battle Item] Found {allContentControllers.Length} content controllers in scene");
+                    MelonLogger.Msg($"[Battle Item] displayDataList found with {displayDataList.Count} items, cursor index: {cursorIndex}");
 
-                    foreach (var cc in allContentControllers)
+                    if (cursorIndex >= 0 && cursorIndex < displayDataList.Count)
                     {
-                        if (cc == null || !cc.gameObject.activeInHierarchy)
-                            continue;
-
-                        var data = cc.Data;
-                        if (data != null && data.IsFocus)
+                        var data = displayDataList[cursorIndex];
+                        if (data != null)
                         {
                             return FormatItemAnnouncement(data);
                         }
                     }
+                }
+                else
+                {
+                    MelonLogger.Msg("[Battle Item] displayDataList is null or empty, trying fallback...");
 
-                    if (cursorIndex >= 0 && cursorIndex < allContentControllers.Length)
+                    // Fallback: search scene for content controllers with IsFocus
+                    var allContentControllers = UnityEngine.Object.FindObjectsOfType<BattleItemInfomationContentController>();
+                    if (allContentControllers != null && allContentControllers.Length > 0)
                     {
-                        var cc = allContentControllers[cursorIndex];
-                        if (cc != null && cc.Data != null)
+                        foreach (var cc in allContentControllers)
                         {
-                            return FormatItemAnnouncement(cc.Data);
+                            if (cc == null || !cc.gameObject.activeInHierarchy)
+                                continue;
+
+                            var data = cc.Data;
+                            if (data != null && data.IsFocus)
+                            {
+                                return FormatItemAnnouncement(data);
+                            }
                         }
                     }
                 }
@@ -235,6 +249,36 @@ namespace FFII_ScreenReader.Patches
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Gets the displayDataList from the controller using pointer offset.
+        /// KeyInput.BattleItemInfomationController has displayDataList at 0xE0.
+        /// </summary>
+        private static Il2CppSystem.Collections.Generic.List<ItemListContentData> GetDisplayDataList(BattleItemInfomationController controller)
+        {
+            try
+            {
+                IntPtr controllerPtr = controller.Pointer;
+                if (controllerPtr == IntPtr.Zero)
+                    return null;
+
+                unsafe
+                {
+                    // Read displayDataList pointer at offset 0xE0
+                    IntPtr listPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_DISPLAY_DATA_LIST);
+                    if (listPtr == IntPtr.Zero)
+                        return null;
+
+                    // Convert to managed List<ItemListContentData>
+                    return new Il2CppSystem.Collections.Generic.List<ItemListContentData>(listPtr);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Battle Item] Error accessing displayDataList: {ex.Message}");
+                return null;
+            }
         }
 
         private static string FormatItemAnnouncement(ItemListContentData data)

@@ -55,7 +55,11 @@ namespace FFII_ScreenReader.Menus
             menuText = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index);
             if (menuText != null) return menuText;
 
-            // Strategy 1: Walk up parent hierarchy looking for direct text components
+            // Strategy 1: Shop command menu (Buy/Sell/Equipment/Back)
+            menuText = ShopCommandReader.TryReadShopCommand(cursor.transform, cursor.Index);
+            if (menuText != null) return menuText;
+
+            // Strategy 2: Walk up parent hierarchy looking for direct text components
             menuText = TryDirectTextSearch(cursor.transform);
             if (menuText != null) return menuText;
 

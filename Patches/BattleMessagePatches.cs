@@ -12,6 +12,7 @@ using BattlePlayerData = Il2Cpp.BattlePlayerData;
 using BattleUtility = Il2CppLast.Battle.BattleUtility;
 using BattleController = Il2CppLast.Battle.BattleController;
 using BattlePlugManager = Il2CppLast.Battle.BattlePlugManager;
+using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -230,7 +231,22 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                // Try to get the ability name first (spells, skills)
+                // Try to get item name first (for Item command)
+                var itemList = battleActData.itemList;
+                if (itemList != null && itemList.Count > 0)
+                {
+                    var ownedItem = itemList[0];
+                    if (ownedItem != null)
+                    {
+                        string itemName = GetItemName(ownedItem);
+                        if (!string.IsNullOrEmpty(itemName))
+                        {
+                            return itemName;
+                        }
+                    }
+                }
+
+                // Try to get the ability name (spells, skills)
                 var abilityList = battleActData.abilityList;
                 if (abilityList != null && abilityList.Count > 0)
                 {
@@ -269,6 +285,32 @@ namespace FFII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error getting action name: {ex.Message}");
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Gets the localized name of an item from OwnedItemData.
+        /// </summary>
+        private static string GetItemName(OwnedItemData ownedItem)
+        {
+            try
+            {
+                // OwnedItemData has a Name property that returns the localized name
+                string itemName = ownedItem.Name;
+                if (!string.IsNullOrEmpty(itemName))
+                {
+                    // Strip icon markup (e.g., "[ICB]") from item name
+                    itemName = TextUtils.StripIconMarkup(itemName);
+                    if (!string.IsNullOrEmpty(itemName))
+                    {
+                        return itemName;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error getting item name: {ex.Message}");
             }
             return null;
         }

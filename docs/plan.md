@@ -4,7 +4,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster, enabling bl
 
 ## Current Status
 
-**Game is playable.** All core menu systems ported and working. Some battle result issues remain.
+**Game is playable.** All core menu systems ported and working.
 
 | System | Status | Notes |
 |--------|--------|-------|
@@ -13,12 +13,12 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster, enabling bl
 | Status Menu | Working | Character selection with HP/MP (no jobs) |
 | Magic Menu | Working | Spell list with proficiency level and MP cost |
 | Config Menu | Working | Config options with current values |
-| Shop Menu | Working | Buy/sell lists with prices and stats |
+| Shop Menu | Working | Buy/sell lists with prices and stats, command menu navigation |
 | Equipment Menu | Working | Slot/item selection with stat comparison |
 | Dialogue | Working | NPC dialogue, fade/scroll messages |
 | Battle Commands | Working | Turn, command, target announcements |
 | Battle Items/Magic | Working | Item and spell selection during battle |
-| Battle Messages | Working | Damage, healing, status effects |
+| Battle Messages | Working | Damage, healing, status effects, item/spell names on use |
 | Battle Results | Working | Gil, weapon/magic skill level-ups, stat gains, items |
 | Field Navigation | Working | Entity scan, pathfinding, wall bump |
 | Title Menu | Working | New Game, Continue, Options |

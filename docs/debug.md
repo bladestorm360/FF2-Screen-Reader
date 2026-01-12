@@ -260,6 +260,9 @@ Commands: 0=Ask, 1=Remember/Learn, 2=Key Items, 3=Cancel
 - [x] Missing entity detection (springs, events, interactive objects) - DONE 2026-01-12
 - [x] Entity scanner cycling stuck in All category - FIXED 2026-01-12
 - [x] Pathfinding filter toggle (Shift+P/\) - DONE 2026-01-12
+- [x] Battle item menu reading wrong item - FIXED 2026-01-12
+- [x] Battle item usage announcing "Items" instead of item name - FIXED 2026-01-12
+- [x] Shop command menu not reading after closing buy/sell - FIXED 2026-01-12
 
 ---
 
@@ -561,3 +564,47 @@ if (FFII_ScreenReaderMod.IsInBattle || FFII_ScreenReaderMod.AnyMenuStateActive()
 - `IsInBattle` flag
 - All battle state resets (turn state, command cursor, message state)
 - All menu state flags (Equip, Item, Status, Magic, Config, Shop, BattleItem, BattleMagic, Keyword, Words, Popup)
+
+### 5. Battle Item Menu Reading Wrong Item - FIXED 2026-01-12
+**Problem**: Battle item menu was reading the wrong item when navigating.
+
+**Root Cause**: Code used `FindObjectsOfType<BattleItemInfomationContentController>()` which returns objects in undefined order (not UI order). Using `cursorIndex` directly on this unordered array gave incorrect items.
+
+**Fix in `BattleItemPatches.cs`**:
+- Changed from `FindObjectsOfType` to direct pointer access of controller's `displayDataList` at offset 0xE0
+- KeyInput.BattleItemInfomationController has `displayDataList` (List<ItemListContentData>) at 0xE0
+- Index into `displayDataList[cursorIndex]` which is properly ordered
+- Kept `IsFocus` fallback only if direct access fails
+
+### 6. Battle Item Usage Announcing "Items" Instead of Item Name - FIXED 2026-01-12
+**Problem**: When using an item in battle, it announced "Firion: Items" instead of "Firion: Phoenix Down".
+
+**Root Cause**: `GetActionName()` in `BattleMessagePatches.cs` only checked `abilityList` and fell back to command name. It was missing the `itemList` check.
+
+**Fix**: Added `itemList` check at the beginning of `GetActionName()` (matching FF3's approach):
+```csharp
+var itemList = battleActData.itemList;
+if (itemList != null && itemList.Count > 0)
+{
+    var ownedItem = itemList[0];
+    string itemName = GetItemName(ownedItem);
+    if (!string.IsNullOrEmpty(itemName))
+        return itemName;
+}
+```
+Added `GetItemName()` helper to extract localized name from `OwnedItemData`.
+
+### 7. Shop Command Menu Not Reading After Closing Buy/Sell - FIXED 2026-01-12
+**Problem**: When backing out from buy/sell list to shop command menu (Buy/Sell/Equipment/Back), nothing was announced.
+
+**Root Cause**: `ShopCommandReader.cs` existed but wasn't being called from `MenuTextDiscovery.TryAllStrategies()`.
+
+**Fix in `MenuTextDiscovery.cs`**:
+Added call to ShopCommandReader early in the strategy chain:
+```csharp
+// Strategy 1: Shop command menu (Buy/Sell/Equipment/Back)
+menuText = ShopCommandReader.TryReadShopCommand(cursor.transform, cursor.Index);
+if (menuText != null) return menuText;
+```
+
+`ShopCommandReader` uses cursor index to look up command from `ShopCommandMenuController.contentList` and translates `ShopCommandId` enum to text (Buy/Sell/Equipment/Back).
