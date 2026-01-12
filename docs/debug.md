@@ -7,7 +7,7 @@
 | Menu Text Reading | Working | Generic cursor + MenuTextDiscovery |
 | New Game Naming | Working | Character slots, name cycling |
 | Dialogue | Working | NPC dialogue, fade/scroll messages |
-| Field Navigation | Working | Entity scan, pathfinding, wall bump, focus preservation |
+| Field Navigation | Working | Entity scan, pathfinding, wall bump, category cycling |
 | Battle Commands | Working | Turn, command, target announcements |
 | Battle Messages | Working | Damage, healing, status effects, encounter types, escape |
 | Battle State Mgmt | Working | Proper flag clearing on flee/defeat, main menu reset |
@@ -83,24 +83,42 @@ public static class MenuState {
 **Key**: `GrouthWeaponSkillList` is empty in Show_Postfix - must patch ShowSkillLevelsInit phase.
 
 ### FF2 Weapon Skill Level Reading
-Uses `BattleUtility.GetSkillLevel(OwnedCharacterData, SkillLevelTarget)` for accurate level calculation.
-This is the game's internal method for determining weapon skill levels.
+**STATUS: WORKING**
+
+StatusDetailsReader uses game utility methods for accurate weapon skill level and progress calculation.
+
+**Methods Used**:
+- `BattleUtility.GetSkillLevel(OwnedCharacterData, SkillLevelTarget)` - returns display level (1-16)
+- `data.SkillLevelTargets[skillType]` - raw exp value for the skill
+- `ExpUtility.GetNextExp(1, exp, ExpTableType.LevelExp)` - exp remaining to next level
+- `ExpUtility.GetExpDifference(1, exp, ExpTableType.LevelExp)` - total exp for current level
+- Progress: `1.0 - (nextExp / expDiff)` gives gauge fill amount (0.0-1.0)
+
+**Max level is 16** for weapon skills (same as spells).
+
+**SkillLevelTarget Enum Values**:
+- WeaponSword=0, WeaponKnife=1, WeaponSpear=2, WeaponAxe=3
+- WeaponCane=4, WeaponBow=5, WeaponShield=6, WeaponWrestle=7
+- PhysicalAvoidance=8, AbilityAvoidance=9
 
 For battle results:
 - `BattleResultCharacterData.GrouthWeaponSkillList` contains skills that leveled up
 - Uses `BattleUtility.GetSkillLevel(charResult.AfterData, skillTarget)` for accurate level
-
-Max level is 16. Percentage progress uses `exp % 100` formula.
+- **TODO**: Weapon skill percentage gained not yet implemented in battle results
 
 **Important**: Evasion skills (PhysicalAvoidance, AbilityAvoidance) are NOT weapon skills - they only have stat gains, no exp bars. They are filtered out of weapon skill announcements.
 
 ### FF2 Spell Level Storage
-**STATUS: FIXED**
+**STATUS: WORKING**
 
 `OwnedAbility.SkillLevel` stores raw exp, NOT the display level.
-Formula from decompiled `BattleUtility.GetSkillLevel`: `level = (rawExp / 100) + 1`, clamped to 1-16.
 
-`SkillLevelProvider.SettingSkillLevel` uses the same formula internally to display level in UI.
+Game uses `ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp)` for level conversion (exp table lookup).
+
+For progress/gauge display, game uses:
+- `ExpUtility.GetNextExp(1, exp, LevelExp)` - exp remaining to next level
+- `ExpUtility.GetExpDifference(1, exp, LevelExp)` - total exp for current level
+- `progress = 1.0 - (nextExp / expDiff)` - gauge fill amount (0.0-1.0)
 
 ### Status Details Stat Methods
 | Stat | Method |
@@ -180,17 +198,22 @@ Commands: 0=Ask, 1=Remember/Learn, 2=Key Items, 3=Cancel
 
 ## Known Issues
 
-### Spell Level Calculation - FIXED
+### Spell Level Calculation - FIXED (v2 2026-01-12)
 - `OwnedAbility.SkillLevel` stores raw exp, not actual level
-- Formula discovered from decompiled `BattleUtility.GetSkillLevel`: `level = (rawExp / 100) + 1`
-- Fixed in `MagicMenuPatches.GetSpellProficiency`, `BattleMagicPatches`, and `BattleResultPatches`
+- Game uses `ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp)` for level calculation
+- Old formula `(rawExp / 100) + 1` was incorrect - game uses exp table lookup
+- Fixed in `MagicMenuPatches.GetSpellProficiency` and `BattleMagicPatches.FormatAbilityAnnouncement`
 - Decompiled functions in `docs/Scripts/decompiled_skill_level.c`
+- **Verification**: Spell level should equal MP cost in FF2 (e.g., Fire Lv1 = 1 MP)
 
-### Weapon Skill Progress Percentages - FIXED
-- Weapon skill levels announce correctly using `BattleUtility.GetSkillLevel`
-- Progress percentage formula: `exp % 100` (each level requires 100 exp)
-- Fixed in `StatusDetailsReader.ReadWeaponSkill` and `BattleResultPatches.AnnounceWeaponSkillProgress`
-- Old incorrect formula was `(exp % 10) * 10` assuming 10 exp per level
+### Weapon/Spell Progress Percentages - FIXED (v2 2026-01-12)
+- Game uses `ExpUtility` methods for accurate gauge fill calculation:
+  - `ExpUtility.GetNextExp(1, exp, LevelExp)` - exp remaining to next level
+  - `ExpUtility.GetExpDifference(1, exp, LevelExp)` - total exp span for current level
+  - Formula: `progress = 1.0 - (expToNext / expDifference)`
+- Old formula `exp % 100` was incorrect - assumed flat 100 exp per level
+- Fixed in `StatusDetailsReader.ReadWeaponSkill` and `BattleResultPatches.CalculatePercentInLevel`
+- Weapon levels use `BattleUtility.GetSkillLevel` (unchanged, already correct)
 
 ### Shop: Unaffordable Items Not Announced
 - Affordable items trigger `SetFocus(true)` - works correctly
@@ -233,10 +256,126 @@ Commands: 0=Ask, 1=Remember/Learn, 2=Key Items, 3=Cancel
 - [x] Battle state flag clearing on flee/defeat - DONE 2026-01-11
 - [x] Target selection backing out bug - DONE 2026-01-11
 - [x] Main menu state reset for stuck flags - DONE 2026-01-11
+- [x] Treasure box opened/unopened state - DONE 2026-01-12
+- [x] Missing entity detection (springs, events, interactive objects) - DONE 2026-01-12
+- [x] Entity scanner cycling stuck in All category - FIXED 2026-01-12
+- [x] Pathfinding filter toggle (Shift+P/\) - DONE 2026-01-12
 
 ---
 
 ## Key Fixes Reference
+
+### Treasure Box Opened State - FIXED 2026-01-12
+**Problem**: Treasure boxes always showed `opened=False` even when opened.
+
+**Root Cause**: Original code used generic reflection looking for `isOpened` property, but:
+- The actual field is `private bool isOpen` (no 'd')
+- Located at IL2CPP offset 0x159 in `FieldTresureBox` (from dump.cs:301492)
+
+**Fix**:
+1. Added `FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox` import
+2. Use `TryCast<FieldTresureBox>()` before name-based detection
+3. New `GetTreasureBoxOpenedState(FieldTresureBox)` method:
+   - First tries reflection on private `isOpen` field
+   - Falls back to IL2CPP pointer offset access at 0x159
+
+**Announcement format**: "Treasure Chest" (opened) or "Treasure Chest" (unopened)
+
+### Pathfinding Debug Logging - ADDED 2026-01-12
+**Issue**: Pathfinding fails on Deist Cavern B2 (map 184) and possibly other dungeon floors.
+
+**Logs added to `FieldNavigationHelper.FindPathTo()`**:
+- Map dimensions
+- Player world position and cell coordinates
+- Target world position and cell coordinates
+- Player layer (Unity layer) and Z offset
+- Player collision state
+- Each Z-layer search attempt result (0, 1, 2)
+- Adjacent tile fallback attempts with direction names
+- Final success/failure with path description
+
+**Log prefixes**: `[Pathfinding]` for all pathfinding debug output.
+
+### Missing Entity Detection - FIXED 2026-01-12
+**Problem**: Springs, pendants, and other interactive objects were not detected in entity scanner.
+
+**Root Causes**:
+1. Skip filter incorrectly filtered out `"mapobject"` - this excluded `FieldMapObjectDefault` and `FieldMapObjectAnimDefault` entities (springs, interactive objects)
+2. Skip filter incorrectly filtered out `"trigger"` - this excluded valid `EventTriggerEntity` objects
+3. Missing `EventTriggerEntity` TryCast check
+4. Missing `SavePointEventEntity` TryCast check
+5. Missing `GetEntityNameFromProperty()` helper for name resolution
+
+**Fixes applied to `EntityScanner.cs`**:
+1. Removed `"mapobject"` and `"trigger"` from skip filter
+2. Added `EventTriggerEntity` import and TryCast check (before NPC checks)
+3. Added `SavePointEventEntity` import and TryCast check (before EventTrigger check)
+4. Added `GetEntityNameFromProperty()` method - reads `PropertyEntity.Name` and resolves via MessageManager or formats underscore names
+5. Added `FormatAssetNameAsReadable()` method - converts "recovery_spring" → "Recovery Spring"
+6. Added debug logging for skipped entities: `[Entity] SKIP (visual/unidentified): TypeName / GameObjectName`
+7. Updated `IInteractiveEntity` fallback to use `GetEntityNameFromProperty()`
+
+**Log prefixes**:
+- `[Entity] Processing:` - Every entity logged with type/name/position
+- `[Entity] -> Event (TryCast):` - EventTriggerEntity detected
+- `[Entity] -> SavePoint (TryCast):` - SavePointEventEntity detected
+- `[Entity] -> Interactive (TryCast):` - IInteractiveEntity detected
+- `[Entity] -> Generic (fallback):` - Unidentified entity included as Event
+- `[Entity] SKIP (player):` - Player entity filtered
+- `[Entity] SKIP (party member):` - Party member filtered
+- `[Entity] SKIP (inactive):` - Inactive object filtered
+- `[Entity] SKIP (visual/trigger):` - Visual effects or door triggers filtered
+
+### Entity Scanner Cycling Fix - FIXED 2026-01-12
+**Problem**: Entity scanner got stuck on one entity (e.g., pendant) when cycling in "All" category, but worked correctly in specific categories.
+
+**Root Cause**: The `ApplyFilter()` method had restoration logic that tried to find and restore focus to the previously selected entity after re-sorting by distance. This interfered with normal cycling, especially when combined with periodic rescans (every 5 seconds).
+
+**Fix in `EntityScanner.ApplyFilter()`**:
+- Removed `FindEntityByIdentifier()` restoration logic
+- Now just clamps index to valid bounds after filtering/sorting
+- Entity cycling works correctly across all categories
+
+**Related**: Removed unused `SaveSelectedEntityIdentifier()` tracking that was no longer needed.
+
+### Entity Detection Improvements - FIXED 2026-01-12
+**Problem**: Springs, pendants, and other interactive objects were being filtered out or not detected.
+
+**Fixes**:
+1. Changed "unidentified" entity handling from skip to include as generic Events
+2. Added logging for ALL entities at start of `ConvertToNavigableEntity()` for debugging
+3. Added logging for silent filters (player, party members, inactive objects)
+4. Keep filtering OpenTrigger (door activation zones) since we have GotoMap exits
+5. Keep filtering visual effects (pointin, tileanim, scroll, effect)
+
+**Entity inclusion flow**:
+- All entities logged with type/name/position
+- Skip: player, party members, inactive, visual effects, opentrigger
+- Include: Everything else as appropriate category or generic Event
+
+### Pathfinding Filter Toggle - DONE 2026-01-12
+**Feature**: Toggle pathfinding filter with Shift+P or Shift+\
+
+**Behavior**:
+- **Filter OFF (default)**: All entities in current category are shown, regardless of path accessibility
+- **Filter ON**: Only entities with valid paths from player position are shown when cycling
+
+**Implementation**:
+- Preference saved between sessions (`PathfindingFilter` in MelonPreferences)
+- Toggle announces "Pathfinding filter on/off"
+- Log shows `Filter enabled: True/False` when cycling entities
+
+**Code flow**:
+- `NextEntity()`/`PreviousEntity()` check `pathfindingFilter.IsEnabled`
+- If OFF: simple index increment/decrement
+- If ON: loop through entities, skip those failing `PathfindingFilter.PassesFilter()`
+
+### Pathfinding Debug Enhancements - ADDED 2026-01-12
+**Additional logging in `FieldNavigationHelper.FindPathTo()`**:
+- Cell bounds validation with early exit if out of bounds
+
+**Additional logging in `PathfindingFilter.PassesFilter()`**:
+- Entity layer and position for each entity checked
 
 ### Map Exit Resolution
 - Use `PropertyGotoMap.MapId` for destination (not `TmeId` which is source map)

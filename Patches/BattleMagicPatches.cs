@@ -8,6 +8,8 @@ using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using Il2CppLast.Management;
 using Il2CppLast.Battle;
+using Il2CppLast.Systems;
+using ExpTableType = Il2CppLast.Defaine.Master.ExpTableType;
 
 // Type aliases for IL2CPP types
 // FF2 uses BattleQuantityAbilityInfomationController (MP-based) instead of FF3's BattleFrequencyAbilityInfomationController (charges)
@@ -417,9 +419,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 catch { }
 
-                // FF2 specific: Get spell level from character's actual OwnedAbilityList
-                // OwnedAbility.SkillLevel stores raw exp, not actual level
-                // Formula: level = (rawExp / 100) + 1, clamped to 1-16
+                // FF2 specific: Get spell level using ExpUtility.GetExpLevel for accuracy
                 int spellLevel = 1;
                 try
                 {
@@ -458,10 +458,14 @@ namespace FFII_ScreenReader.Patches
                         MelonLogger.Msg($"[Battle Magic] Using dataList ability rawExp={rawExp}");
                     }
 
-                    // Convert raw exp to level: level = (rawExp / 100) + 1
-                    spellLevel = (rawExp / 100) + 1;
+                    // Use game's ExpUtility.GetExpLevel for accurate level calculation
+                    spellLevel = ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp);
+                    MelonLogger.Msg($"[Battle Magic] rawExp={rawExp} -> level={spellLevel}");
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    MelonLogger.Warning($"[Battle Magic] Error getting spell level: {ex.Message}");
+                }
 
                 // Clamp level to valid range (1-16)
                 if (spellLevel < 1) spellLevel = 1;

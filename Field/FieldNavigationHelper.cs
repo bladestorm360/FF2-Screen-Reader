@@ -153,6 +153,7 @@ namespace FFII_ScreenReader.Field
             if (mapHandle == null)
             {
                 pathInfo.ErrorMessage = "Map handle not available";
+                MelonLogger.Msg("[Pathfinding] FAIL: Map handle is null");
                 return pathInfo;
             }
 
@@ -160,6 +161,11 @@ namespace FFII_ScreenReader.Field
             {
                 int mapWidth = mapHandle.GetCollisionLayerWidth();
                 int mapHeight = mapHandle.GetCollisionLayerHeight();
+
+                // Log map info
+                MelonLogger.Msg($"[Pathfinding] Map dimensions: {mapWidth}x{mapHeight}");
+                MelonLogger.Msg($"[Pathfinding] Player world pos: ({playerWorldPos.x:F1}, {playerWorldPos.y:F1}, {playerWorldPos.z:F1})");
+                MelonLogger.Msg($"[Pathfinding] Target world pos: ({targetWorldPos.x:F1}, {targetWorldPos.y:F1}, {targetWorldPos.z:F1})");
 
                 // Convert world coordinates to cell coordinates
                 Vector3 startCell = new Vector3(
@@ -174,10 +180,28 @@ namespace FFII_ScreenReader.Field
                     0
                 );
 
+                MelonLogger.Msg($"[Pathfinding] Start cell: ({startCell.x:F0}, {startCell.y:F0}, {startCell.z:F0})");
+                MelonLogger.Msg($"[Pathfinding] Dest cell (initial): ({destCell.x:F0}, {destCell.y:F0}, {destCell.z:F0})");
+
+                // Validate cell bounds
+                bool startInBounds = startCell.x >= 0 && startCell.x < mapWidth && startCell.y >= 0 && startCell.y < mapHeight;
+                bool destInBounds = destCell.x >= 0 && destCell.x < mapWidth && destCell.y >= 0 && destCell.y < mapHeight;
+                MelonLogger.Msg($"[Pathfinding] Bounds check: start={startInBounds}, dest={destInBounds}");
+
+                if (!startInBounds || !destInBounds)
+                {
+                    pathInfo.ErrorMessage = "Cells out of bounds";
+                    MelonLogger.Msg("[Pathfinding] FAIL: Start or dest cell out of bounds");
+                    return pathInfo;
+                }
+
                 if (player != null)
                 {
-                    float layerZ = player.gameObject.layer - 9;
+                    int playerLayer = player.gameObject.layer;
+                    float layerZ = playerLayer - 9;
                     startCell.z = layerZ;
+                    MelonLogger.Msg($"[Pathfinding] Player layer: {playerLayer}, Z offset: {layerZ}");
+                    MelonLogger.Msg($"[Pathfinding] Start cell (with Z): ({startCell.x:F0}, {startCell.y:F0}, {startCell.z:F0})");
                 }
 
                 Il2CppSystem.Collections.Generic.List<Vector3> pathPoints = null;
@@ -185,6 +209,7 @@ namespace FFII_ScreenReader.Field
                 if (player != null)
                 {
                     bool playerCollisionState = player._IsOnCollision_k__BackingField;
+                    MelonLogger.Msg($"[Pathfinding] Player collision state: {playerCollisionState}");
 
                     // Try pathfinding with different destination layers until one succeeds
                     for (int tryDestZ = 2; tryDestZ >= 0; tryDestZ--)
@@ -192,8 +217,12 @@ namespace FFII_ScreenReader.Field
                         destCell.z = tryDestZ;
                         pathPoints = MapRouteSearcher.Search(mapHandle, startCell, destCell, playerCollisionState);
 
+                        int pointCount = pathPoints?.Count ?? 0;
+                        MelonLogger.Msg($"[Pathfinding] Try Z={tryDestZ}: Search returned {pointCount} points");
+
                         if (pathPoints != null && pathPoints.Count > 0)
                         {
+                            MelonLogger.Msg($"[Pathfinding] SUCCESS at Z={tryDestZ}");
                             break;
                         }
                     }
@@ -201,6 +230,8 @@ namespace FFII_ScreenReader.Field
                     // If direct path failed, try adjacent tiles
                     if (pathPoints == null || pathPoints.Count == 0)
                     {
+                        MelonLogger.Msg("[Pathfinding] Direct path failed, trying adjacent tiles...");
+
                         Vector3[] adjacentOffsets = new Vector3[] {
                             new Vector3(0, 16, 0),    // north
                             new Vector3(16, 0, 0),    // east
@@ -211,6 +242,9 @@ namespace FFII_ScreenReader.Field
                             new Vector3(-16, -16, 0), // southwest
                             new Vector3(-16, 16, 0)   // northwest
                         };
+
+                        string[] dirNames = { "N", "E", "S", "W", "NE", "SE", "SW", "NW" };
+                        int dirIndex = 0;
 
                         foreach (var offset in adjacentOffsets)
                         {
@@ -229,23 +263,30 @@ namespace FFII_ScreenReader.Field
 
                                 if (pathPoints != null && pathPoints.Count > 0)
                                 {
+                                    MelonLogger.Msg($"[Pathfinding] SUCCESS via adjacent {dirNames[dirIndex]} at Z={tryDestZ}");
                                     break;
                                 }
                             }
 
                             if (pathPoints != null && pathPoints.Count > 0)
                                 break;
+
+                            dirIndex++;
                         }
                     }
                 }
                 else
                 {
+                    MelonLogger.Msg("[Pathfinding] No player reference, using SearchSimple");
                     pathPoints = MapRouteSearcher.SearchSimple(mapHandle, startCell, destCell);
+                    int pointCount = pathPoints?.Count ?? 0;
+                    MelonLogger.Msg($"[Pathfinding] SearchSimple returned {pointCount} points");
                 }
 
                 if (pathPoints == null || pathPoints.Count == 0)
                 {
                     pathInfo.ErrorMessage = "No path found";
+                    MelonLogger.Msg("[Pathfinding] FAIL: No path found after all attempts");
                     return pathInfo;
                 }
 
@@ -259,11 +300,13 @@ namespace FFII_ScreenReader.Field
                 pathInfo.StepCount = pathPoints.Count > 0 ? pathPoints.Count - 1 : 0;
                 pathInfo.Description = DescribePath(pathInfo.WorldPath);
 
+                MelonLogger.Msg($"[Pathfinding] SUCCESS: {pathInfo.StepCount} steps - {pathInfo.Description}");
                 return pathInfo;
             }
             catch (Exception ex)
             {
                 pathInfo.ErrorMessage = $"Pathfinding error: {ex.Message}";
+                MelonLogger.Warning($"[Pathfinding] EXCEPTION: {ex.Message}");
                 return pathInfo;
             }
         }

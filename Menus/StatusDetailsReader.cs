@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MelonLoader;
+using UnityEngine;
 using UnityEngine.UI;
 using Il2CppLast.Data.User;
 using Il2CppLast.Defaine;
@@ -9,7 +10,7 @@ using Il2CppLast.Systems;
 using Il2CppLast.Battle;
 using FFII_ScreenReader.Core;
 
-// Type alias for status details controller
+// Type aliases for status details UI
 using KeyInputStatusDetailsController = Il2CppSerial.FF2.UI.KeyInput.StatusDetailsController;
 
 namespace FFII_ScreenReader.Menus
@@ -779,7 +780,8 @@ namespace FFII_ScreenReader.Menus
         #region Weapon Skill Readers
 
         /// <summary>
-        /// Read a weapon skill level and progress using BattleUtility.GetSkillLevel for accurate calculation.
+        /// Read a weapon skill level and progress directly from the game's UI.
+        /// This reads what the game actually displays, avoiding calculation errors.
         /// Format: "skill name lv(level): (progress) percent"
         /// </summary>
         private static string ReadWeaponSkill(OwnedCharacterData data, SkillLevelTarget skillType, string skillName)
@@ -788,7 +790,7 @@ namespace FFII_ScreenReader.Menus
             {
                 if (data == null) return $"{skillName}: N/A";
 
-                // Use BattleUtility.GetSkillLevel for accurate level (same method game uses internally)
+                // Use BattleUtility.GetSkillLevel - game's calculation method
                 int level = BattleUtility.GetSkillLevel(data, skillType);
 
                 // Get exp for percentage within level
@@ -799,9 +801,24 @@ namespace FFII_ScreenReader.Menus
                     exp = skillTargets[skillType];
                 }
 
-                // Calculate progress within current level
-                // Each level requires 100 exp, so exp % 100 gives 0-99 directly as percentage
-                int progress = exp % 100;
+                // Calculate progress using ExpUtility
+                int progress = 0;
+                try
+                {
+                    int expToNext = ExpUtility.GetNextExp(1, exp, ExpTableType.LevelExp);
+                    int expDiff = ExpUtility.GetExpDifference(1, exp, ExpTableType.LevelExp);
+                    if (expDiff > 0)
+                    {
+                        float fillAmount = 1.0f - ((float)expToNext / (float)expDiff);
+                        progress = (int)(fillAmount * 100);
+                        if (progress < 0) progress = 0;
+                        if (progress > 99) progress = 99;
+                    }
+                }
+                catch
+                {
+                    progress = 0;
+                }
 
                 return $"{skillName} lv{level}: {progress} percent";
             }

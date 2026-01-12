@@ -11,6 +11,9 @@ using Il2CppLast.Map;
 using Il2CppLast.Management;
 using FieldMap = Il2Cpp.FieldMap;
 using FieldNonPlayer = Il2CppLast.Entity.Field.FieldNonPlayer;
+using FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox;
+using EventTriggerEntity = Il2CppLast.Entity.Field.EventTriggerEntity;
+using SavePointEventEntity = Il2CppLast.Entity.Field.SavePointEventEntity;
 using PropertyEntity = Il2CppLast.Map.PropertyEntity;
 using PropertyGotoMap = Il2CppLast.Map.PropertyGotoMap;
 
@@ -287,6 +290,8 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         private void ApplyFilter()
         {
+            MelonLogger.Msg($"[EntityScanner] ApplyFilter: category={currentCategory}, entities.Count={entities.Count}");
+
             if (currentCategory == EntityCategory.All)
             {
                 filteredEntities = new List<NavigableEntity>(entities);
@@ -296,6 +301,15 @@ namespace FFII_ScreenReader.Field
                 filteredEntities = entities.Where(e => e.Category == currentCategory).ToList();
             }
 
+            MelonLogger.Msg($"[EntityScanner] After filter: filteredEntities.Count={filteredEntities.Count}");
+
+            // Log all filtered entities
+            for (int i = 0; i < filteredEntities.Count; i++)
+            {
+                var e = filteredEntities[i];
+                MelonLogger.Msg($"[EntityScanner]   [{i}] {e.Category}: '{e.Name}'");
+            }
+
             // Sort by distance from player
             var playerPos = GetPlayerPosition();
             if (playerPos.HasValue)
@@ -303,11 +317,11 @@ namespace FFII_ScreenReader.Field
                 filteredEntities = filteredEntities.OrderBy(e => Vector3.Distance(e.Position, playerPos.Value)).ToList();
             }
 
-            // Restore focus to previously selected entity after re-sorting
-            int restoredIndex = FindEntityByIdentifier();
-            if (restoredIndex >= 0)
+            // Just clamp index to valid bounds - don't try to restore previous selection
+            // This prevents getting "stuck" on one entity
+            if (currentIndex >= filteredEntities.Count)
             {
-                currentIndex = restoredIndex;
+                currentIndex = 0;
             }
         }
 
@@ -360,16 +374,25 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         public void NextEntity()
         {
+            MelonLogger.Msg($"[EntityScanner] NextEntity called. Filter enabled: {pathfindingFilter.IsEnabled}, Category: {currentCategory}");
+
             if (filteredEntities.Count == 0)
             {
                 ScanEntities();
                 if (filteredEntities.Count == 0)
+                {
+                    MelonLogger.Msg("[EntityScanner] No entities after scan");
                     return;
+                }
             }
+
+            MelonLogger.Msg($"[EntityScanner] filteredEntities.Count = {filteredEntities.Count}, currentIndex = {currentIndex}");
 
             if (!pathfindingFilter.IsEnabled)
             {
                 currentIndex = (currentIndex + 1) % filteredEntities.Count;
+                var entity = filteredEntities[currentIndex];
+                MelonLogger.Msg($"[EntityScanner] Filter OFF - selected '{entity.Name}' at index {currentIndex}");
                 SaveSelectedEntityIdentifier();
                 return;
             }
@@ -462,19 +485,31 @@ namespace FFII_ScreenReader.Field
 
             string goNameLower = goName.ToLower();
 
+            // Log EVERY entity for debugging - show what we're working with
+            MelonLogger.Msg($"[Entity] Processing: type={typeName}, name={goName}, pos=({position.x:F0},{position.y:F0},{position.z:F0})");
+
             // Skip the player entity
             if (typeName.Contains("FieldPlayer") || goNameLower.Contains("player"))
+            {
+                MelonLogger.Msg($"[Entity] SKIP (player): {typeName} / {goName}");
                 return null;
+            }
 
             // Skip party members following the player
             if (goNameLower.Contains("residentchara"))
+            {
+                MelonLogger.Msg($"[Entity] SKIP (party member): {typeName} / {goName}");
                 return null;
+            }
 
             // Skip inactive objects
             try
             {
                 if (!fieldEntity.gameObject.activeInHierarchy)
+                {
+                    MelonLogger.Msg($"[Entity] SKIP (inactive): {typeName} / {goName}");
                     return null;
+                }
             }
             catch { }
 
@@ -501,13 +536,23 @@ namespace FFII_ScreenReader.Field
                 return new MapExitEntity(fieldEntity, position, "Exit", destMapId, destName);
             }
 
-            // 3. Check for treasure chest
+            // 3. Check for treasure chest - first by type cast (most reliable), then by name
+            var treasureBox = fieldEntity.TryCast<FieldTresureBox>();
+            if (treasureBox != null)
+            {
+                bool isOpened = GetTreasureBoxOpenedState(treasureBox);
+                string name = "Treasure Chest";
+                MelonLogger.Msg($"[Entity] -> Chest (TryCast): {goName}, opened={isOpened}");
+                return new TreasureChestEntity(fieldEntity, position, name, isOpened);
+            }
+
+            // Fallback: Check for treasure chest by name patterns
             if (typeName.Contains("Treasure") || goNameLower.Contains("treasure") ||
                 goNameLower.Contains("chest") || goNameLower.Contains("box"))
             {
                 string name = CleanObjectName(goName, "Treasure Chest");
                 bool isOpened = CheckIfTreasureOpened(fieldEntity);
-                MelonLogger.Msg($"[Entity] -> Chest: {name}, opened={isOpened}");
+                MelonLogger.Msg($"[Entity] -> Chest (name): {name}, opened={isOpened}");
                 return new TreasureChestEntity(fieldEntity, position, name, isOpened);
             }
 
@@ -528,7 +573,28 @@ namespace FFII_ScreenReader.Field
                 return new VehicleEntity(fieldEntity, position, vehicleName, 0);
             }
 
-            // 6. Check for FieldNonPlayer (NPCs) by type casting - most reliable
+            // 6. Check for SavePointEventEntity by type casting
+            var savePointEvent = fieldEntity.TryCast<SavePointEventEntity>();
+            if (savePointEvent != null)
+            {
+                MelonLogger.Msg($"[Entity] -> SavePoint (TryCast): {goName}");
+                return new SavePointEntity(fieldEntity, position, "Save Point");
+            }
+
+            // 7. Check for EventTriggerEntity by type casting
+            var eventTrigger = fieldEntity.TryCast<EventTriggerEntity>();
+            if (eventTrigger != null)
+            {
+                string entityName = GetEntityNameFromProperty(fieldEntity);
+                if (string.IsNullOrEmpty(entityName))
+                {
+                    entityName = CleanObjectName(goName, "Event");
+                }
+                MelonLogger.Msg($"[Entity] -> Event (TryCast): {goName} -> '{entityName}'");
+                return new EventEntity(fieldEntity, position, entityName, "Event");
+            }
+
+            // 8. Check for FieldNonPlayer (NPCs) by type casting - most reliable
             var fieldNonPlayer = fieldEntity.TryCast<FieldNonPlayer>();
             if (fieldNonPlayer != null)
             {
@@ -557,25 +623,40 @@ namespace FFII_ScreenReader.Field
                 return new NPCEntity(fieldEntity, position, name, "", isShop);
             }
 
-            // Skip visual effects, triggers, and non-interactive objects
+            // Skip visual effects and non-interactive objects
+            // Note: Do NOT skip "mapobject" - these are interactive objects like springs
+            // Note: Do NOT skip generic "trigger" - these may be valid EventTriggerEntity objects
+            // Skip "opentrigger" specifically - these are door activation zones (we have GotoMap exits)
             if (goNameLower.Contains("effect") || goNameLower.Contains("tileanim") ||
-                goNameLower.Contains("scroll") || goNameLower.Contains("trigger") ||
-                goNameLower.Contains("pointin") || goNameLower.Contains("mapobject"))
+                goNameLower.Contains("scroll") || goNameLower.Contains("pointin") ||
+                goNameLower.Contains("opentrigger"))
             {
+                MelonLogger.Msg($"[Entity] SKIP (visual/trigger): {typeName} / {goName}");
                 return null;
             }
 
-            // 9. Check for interactive objects (generic fallback)
+            // 11. Check for interactive objects (generic fallback)
             var interactiveEntity = fieldEntity.TryCast<IInteractiveEntity>();
             if (interactiveEntity != null)
             {
-                string name = CleanObjectName(goName, "Interactive Object");
-                MelonLogger.Msg($"[Entity] -> Event/Interactive: {name}");
-                return new EventEntity(fieldEntity, position, name, "Interactive");
+                string entityName = GetEntityNameFromProperty(fieldEntity);
+                if (string.IsNullOrEmpty(entityName))
+                {
+                    entityName = CleanObjectName(goName, "Interactive Object");
+                }
+                MelonLogger.Msg($"[Entity] -> Interactive (TryCast): {goName} -> '{entityName}'");
+                return new EventEntity(fieldEntity, position, entityName, "Interactive");
             }
 
-            // Skip unidentifiable entities
-            return null;
+            // Include ALL remaining entities as generic events
+            // This ensures nothing is filtered out - we can refine the list later
+            string fallbackName = GetEntityNameFromProperty(fieldEntity);
+            if (string.IsNullOrEmpty(fallbackName))
+            {
+                fallbackName = CleanObjectName(goName, typeName);
+            }
+            MelonLogger.Msg($"[Entity] -> Generic (fallback): {typeName} / {goName} -> '{fallbackName}'");
+            return new EventEntity(fieldEntity, position, fallbackName, "Generic");
         }
 
         /// <summary>
@@ -601,21 +682,158 @@ namespace FFII_ScreenReader.Field
         }
 
         /// <summary>
-        /// Checks if a treasure entity has been opened.
+        /// Gets the entity name from PropertyEntity.Name for event/interactive entities.
+        /// Falls back to trying to resolve via MessageManager if name looks like a message ID.
+        /// </summary>
+        private string GetEntityNameFromProperty(FieldEntity fieldEntity)
+        {
+            try
+            {
+                // Access Property directly on the IL2CPP object
+                PropertyEntity property = fieldEntity.Property;
+                if (property == null)
+                {
+                    return null;
+                }
+
+                // Get the Name property
+                string name = property.Name;
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    return null;
+                }
+
+                MelonLogger.Msg($"[EntityScanner] PropertyEntity.Name = '{name}'");
+
+                // Check if name looks like a message ID (e.g., starts with "mes_" or similar patterns)
+                if (name.StartsWith("mes_", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("sys_", StringComparison.OrdinalIgnoreCase) ||
+                    name.StartsWith("field_", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Try to resolve via MessageManager
+                    var messageManager = MessageManager.Instance;
+                    if (messageManager != null)
+                    {
+                        string localizedName = messageManager.GetMessage(name, false);
+                        if (!string.IsNullOrWhiteSpace(localizedName) && localizedName != name)
+                        {
+                            MelonLogger.Msg($"[EntityScanner] Resolved '{name}' -> '{localizedName}'");
+                            return localizedName;
+                        }
+                    }
+                }
+
+                // If name looks like a readable name (not a code), use it directly
+                if (!name.Contains("_") && !name.All(c => char.IsLower(c)))
+                {
+                    return name;
+                }
+
+                // Try to format underscore-separated names into readable form
+                // e.g., "recovery_spring" -> "Recovery Spring"
+                if (name.Contains("_"))
+                {
+                    string formatted = FormatAssetNameAsReadable(name);
+                    if (!string.IsNullOrEmpty(formatted))
+                    {
+                        return formatted;
+                    }
+                }
+
+                return name;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[EntityScanner] Error getting entity name: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Formats an underscore-separated name into a readable form.
+        /// e.g., "recovery_spring" -> "Recovery Spring"
+        /// </summary>
+        private string FormatAssetNameAsReadable(string name)
+        {
+            if (string.IsNullOrEmpty(name))
+                return "";
+
+            // Replace underscores with spaces and title case
+            string[] parts = name.Split('_');
+            for (int i = 0; i < parts.Length; i++)
+            {
+                if (parts[i].Length > 0)
+                {
+                    parts[i] = char.ToUpper(parts[i][0]) + parts[i].Substring(1).ToLower();
+                }
+            }
+            return string.Join(" ", parts);
+        }
+
+        /// <summary>
+        /// Gets the opened state from a FieldTresureBox entity.
+        /// Uses IL2CPP pointer offset to access the private isOpen field at 0x159.
+        /// </summary>
+        private bool GetTreasureBoxOpenedState(FieldTresureBox treasureBox)
+        {
+            try
+            {
+                // FieldTresureBox has private "isOpen" field at offset 0x159 (from dump.cs:301492)
+                // First try reflection
+                var isOpenField = treasureBox.GetType().GetField("isOpen",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (isOpenField != null)
+                {
+                    var value = isOpenField.GetValue(treasureBox);
+                    if (value != null)
+                    {
+                        MelonLogger.Msg($"[TreasureBox] Got isOpen via reflection: {value}");
+                        return (bool)value;
+                    }
+                }
+
+                // Fallback: Try IL2CPP pointer offset access
+                // isOpen is at offset 0x159 in FieldTresureBox
+                unsafe
+                {
+                    IntPtr ptr = treasureBox.Pointer;
+                    if (ptr != IntPtr.Zero)
+                    {
+                        bool isOpen = *(bool*)(ptr + 0x159);
+                        MelonLogger.Msg($"[TreasureBox] Got isOpen via pointer offset: {isOpen}");
+                        return isOpen;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[TreasureBox] Error getting isOpen: {ex.Message}");
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Checks if a treasure entity has been opened (fallback for non-FieldTresureBox entities).
         /// </summary>
         private bool CheckIfTreasureOpened(FieldEntity fieldEntity)
         {
             try
             {
-                // Try to check if it has an "isOpened" property
-                var prop = fieldEntity.GetType().GetProperty("isOpened");
+                // Try to check if it has an "isOpened" or "isOpen" property
+                var prop = fieldEntity.GetType().GetProperty("isOpened") ??
+                           fieldEntity.GetType().GetProperty("isOpen");
                 if (prop != null)
                 {
                     return (bool)prop.GetValue(fieldEntity);
                 }
 
-                // Try to check by checking animation state or visibility
-                // (opened chests may have different visual state)
+                // Try field access
+                var field = fieldEntity.GetType().GetField("isOpen",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (field != null)
+                {
+                    return (bool)field.GetValue(fieldEntity);
+                }
             }
             catch { }
             return false;

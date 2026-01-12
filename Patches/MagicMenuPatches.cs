@@ -7,6 +7,8 @@ using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using Il2CppLast.Management;
+using Il2CppLast.Systems;
+using ExpTableType = Il2CppLast.Defaine.Master.ExpTableType;
 
 // Type aliases for IL2CPP types
 // FF2 uses Il2CppSerial.FF2.UI.KeyInput for magic menu controllers
@@ -292,8 +294,7 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Gets spell proficiency level (1-16) from OwnedAbility.
         /// FF2 specific: spells level up through use.
-        /// OwnedAbility.SkillLevel stores raw exp, not actual level.
-        /// Formula: level = (rawExp / 100) + 1, clamped to 1-16
+        /// Uses ExpUtility.GetExpLevel for accurate level calculation matching game UI.
         /// </summary>
         public static int GetSpellProficiency(OwnedAbility ability)
         {
@@ -302,15 +303,19 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                // OwnedAbility.SkillLevel stores raw exp value, not the level
-                // Formula from decompiled BattleUtility.GetSkillLevel: level = (exp / 100) + 1
+                // OwnedAbility.SkillLevel stores raw exp value
+                // Use game's ExpUtility.GetExpLevel for accurate level calculation
                 int rawExp = ability.SkillLevel;
-                int level = (rawExp / 100) + 1;
+                int level = ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp);
                 if (level < 1) level = 1;
                 if (level > 16) level = 16;
+                MelonLogger.Msg($"[Magic] Spell rawExp={rawExp} -> level={level}");
                 return level;
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Magic] Error getting spell proficiency: {ex.Message}");
+            }
 
             return 1;
         }

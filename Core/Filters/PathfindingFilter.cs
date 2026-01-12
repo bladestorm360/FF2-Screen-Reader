@@ -56,6 +56,18 @@ namespace FFII_ScreenReader.Core.Filters
             Vector3 playerPos = context.PlayerPosition;
             Vector3 targetPos = entity.Position;
 
+            // Log entity info for debugging
+            try
+            {
+                var fieldEntity = entity.GameEntity as FieldEntity;
+                if (fieldEntity != null)
+                {
+                    int entityLayer = fieldEntity.gameObject.layer;
+                    MelonLoader.MelonLogger.Msg($"[PathfindingFilter] Entity '{entity.Name}' layer: {entityLayer}, pos: ({targetPos.x:F1}, {targetPos.y:F1}, {targetPos.z:F1})");
+                }
+            }
+            catch { }
+
             var pathInfo = FieldNavigationHelper.FindPathTo(
                 playerPos,
                 targetPos,

@@ -432,10 +432,10 @@ namespace FFII_ScreenReader.Patches
 
                         MelonLogger.Msg($"[BattleResult] {charName} {skillName}: {beforeExp} -> {afterExp} (+{expGained}), level {beforeLevel}->{afterLevel}");
 
-                        // Calculate percentage for display
-                        // Each level requires 100 exp, so exp % 100 gives 0-99 directly as percentage
-                        int beforePercent = beforeExp % 100;
-                        int afterPercent = afterExp % 100;
+                        // Calculate percentage using ExpUtility (same as game's gauge display)
+                        int beforePercent = CalculatePercentInLevel(beforeExp);
+                        int afterPercent = CalculatePercentInLevel(afterExp);
+                        MelonLogger.Msg($"[BattleResult] {charName} {skillName}: beforePercent={beforePercent}%, afterPercent={afterPercent}%");
 
                         // Check if level increased
                         bool leveledUp = afterLevel > beforeLevel;
@@ -495,12 +495,28 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Calculate percentage progress within a level.
-        /// Each level requires 100 exp, so exp % 100 gives 0-99 directly as percentage.
+        /// Calculate percentage progress within a level using ExpUtility.
+        /// Uses game's actual exp table for accurate gauge fill calculation.
+        /// Formula: progress = 1 - (expToNext / expDifference)
         /// </summary>
         private static int CalculatePercentInLevel(int exp)
         {
-            // Simple formula: each level is 100 exp, so modulo gives percentage
+            try
+            {
+                int expToNext = ExpUtility.GetNextExp(1, exp, ExpTableType.LevelExp);
+                int expDiff = ExpUtility.GetExpDifference(1, exp, ExpTableType.LevelExp);
+                if (expDiff > 0)
+                {
+                    float fillAmount = 1.0f - ((float)expToNext / (float)expDiff);
+                    int progress = (int)(fillAmount * 100);
+                    if (progress < 0) progress = 0;
+                    if (progress > 99) progress = 99;
+                    return progress;
+                }
+            }
+            catch { }
+
+            // Fallback to old formula if ExpUtility fails
             return exp % 100;
         }
 
