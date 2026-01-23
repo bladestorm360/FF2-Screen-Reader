@@ -15,7 +15,7 @@ namespace FFII_ScreenReader.Patches
     /// <summary>
     /// Patches for battle pause menu (spacebar during battle).
     /// Pause menu commands are read via cursor path detection in CursorNavigation_Postfix.
-    /// This class handles popup button reading (e.g., Return to Title confirmation).
+    /// This class handles ALL CommonPopup button reading via UpdateFocus patch.
     /// </summary>
     public static class BattlePausePatches
     {
@@ -76,17 +76,13 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Postfix for CommonPopup.UpdateFocus - reads and announces current button.
-        /// Only active during battle - outside battle, CursorNavigation_Postfix handles popup buttons.
+        /// Handles ALL popup button reading (both in and out of battle).
         /// Uses lastAnnouncedButtonIndex for duplicate prevention.
         /// </summary>
         public static void CommonPopup_UpdateFocus_Postfix(object __instance)
         {
             try
             {
-                // Only handle popups during battle - outside battle, CursorNavigation_Postfix handles it
-                if (!FFII_ScreenReaderMod.IsInBattleUIContext())
-                    return;
-
                 if (__instance == null) return;
 
                 var popup = __instance as KeyInputCommonPopup;

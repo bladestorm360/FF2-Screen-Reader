@@ -234,6 +234,11 @@ The `CommonPopup.UpdateFocus` patch was intended for battle context only (since 
 - Outside battle: Only `CursorNavigation_Postfix` handles popup buttons
 - During battle: Only `CommonPopup.UpdateFocus` patch handles popup buttons (since cursor nav exits early)
 
+### CommonPopup Buttons Not Reading (2026-01-23)
+**Problem**: CommonPopup Yes/No buttons not reading when navigating outside of battle.
+**Cause**: The `IsInBattleUIContext()` guard added to fix duplicates blocked `CommonPopup_UpdateFocus_Postfix` outside battle, relying on `CursorNavigation_Postfix` fallback. The fallback path failed when popup detection didn't set `PopupState` correctly.
+**Fix**: Removed `IsInBattleUIContext()` guard from `CommonPopup_UpdateFocus_Postfix` to align with FF3. Now handles ALL popup button reading directly via `UpdateFocus` patch, with `lastAnnouncedButtonIndex` preventing duplicates.
+
 ## Paginated Dialogue System (2026-01-23)
 
 Ported from FF4 screen reader. Announces dialogue page-by-page as player advances, instead of all pages at once.
