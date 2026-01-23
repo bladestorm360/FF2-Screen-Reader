@@ -126,8 +126,6 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                MelonLogger.Msg("[Item Menu] Applying item menu patches...");
-
                 // Patch ItemListController.SelectContent for item list navigation
                 var itemListSelectContent = AccessTools.Method(
                     typeof(KeyInputItemListController),
@@ -143,7 +141,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(ItemMenuPatches), nameof(ItemListController_SelectContent_Postfix));
                     harmony.Patch(itemListSelectContent, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Item Menu] Patched ItemListController.SelectContent");
                 }
 
                 // Patch ItemUseController.SelectContent for character target selection
@@ -159,14 +156,12 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(ItemMenuPatches), nameof(ItemUseController_SelectContent_Postfix));
                     harmony.Patch(itemUseSelectContent, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Item Menu] Patched ItemUseController.SelectContent");
                 }
 
                 // Patch ItemWindowController.SetNextState for state transition detection
                 TryPatchSetNextState(harmony);
 
                 isPatched = true;
-                MelonLogger.Msg("[Item Menu] Item menu patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -236,12 +231,10 @@ namespace FFII_ScreenReader.Patches
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 ItemMenuState.SetActive();
 
-                MelonLogger.Msg($"[Item Menu] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error in ItemListController.SelectContent patch: {ex.Message}");
             }
         }
 
@@ -331,9 +324,8 @@ namespace FFII_ScreenReader.Patches
                         }
                     }
                 }
-                catch (Exception paramEx)
+                catch
                 {
-                    MelonLogger.Warning($"[Item Target] Error getting character parameters: {paramEx.Message}");
                 }
 
                 // Skip duplicates using centralized deduplication
@@ -343,12 +335,10 @@ namespace FFII_ScreenReader.Patches
                 // Set active state AFTER validation
                 ItemMenuState.SetActive();
 
-                MelonLogger.Msg($"[Item Target] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error in ItemUseController.SelectContent patch: {ex.Message}");
             }
         }
 
@@ -376,16 +366,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(ItemMenuPatches).GetMethod(nameof(SetNextState_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Item Menu] Patched ItemWindowController.SetNextState");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Item Menu] ItemWindowController.SetNextState not found");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Item Menu] Error patching SetNextState: {ex.Message}");
             }
         }
 
@@ -399,7 +383,6 @@ namespace FFII_ScreenReader.Patches
                 // STATE_NONE = 0 (menu closing), STATE_COMMAND_SELECT = 1 (command bar)
                 if ((state == 0 || state == 1) && ItemMenuState.IsActive)
                 {
-                    MelonLogger.Msg($"[Item Menu] SetNextState called with state={state}, clearing IsActive");
                     ItemMenuState.ClearState();
                 }
             }

@@ -78,27 +78,15 @@ namespace FFII_ScreenReader.Field
                     }
                 }
 
-                // Check if we should log transportation debug (once per session until reset)
-                bool shouldLogTransport = !hasLoggedTransportation;
-
                 // Also check for transportation entities
                 if (fieldMap.fieldController.transportation != null)
                 {
                     var transportation = fieldMap.fieldController.transportation;
 
-                    if (shouldLogTransport)
-                    {
-                        MelonLogger.Msg($"[Vehicle Debug] Transportation controller exists, checking for vehicles...");
-                    }
-
                     // Method 1: NeedInteractiveList - returns dynamic vehicle entities that move with the player
                     try
                     {
                         var transportationEntities = transportation.NeedInteractiveList();
-                        if (shouldLogTransport)
-                        {
-                            MelonLogger.Msg($"[Vehicle Debug] NeedInteractiveList returned: {(transportationEntities != null ? transportationEntities.Count.ToString() : "null")} items");
-                        }
 
                         if (transportationEntities != null)
                         {
@@ -106,33 +94,17 @@ namespace FFII_ScreenReader.Field
                             {
                                 if (interactiveEntity == null) continue;
 
-                                if (shouldLogTransport)
-                                {
-                                    MelonLogger.Msg($"[Vehicle Debug] NeedInteractiveList item: {interactiveEntity.GetType().Name}");
-                                }
-
                                 var fieldEntity = interactiveEntity.TryCast<FieldEntity>();
                                 if (fieldEntity != null && !results.Contains(fieldEntity))
                                 {
-                                    if (shouldLogTransport)
-                                    {
-                                        MelonLogger.Msg($"[Vehicle Debug] -> TryCast<FieldEntity> succeeded: {fieldEntity.GetType().Name}");
-                                    }
                                     results.Add(fieldEntity);
-                                }
-                                else if (shouldLogTransport)
-                                {
-                                    MelonLogger.Msg($"[Vehicle Debug] -> TryCast<FieldEntity> failed or duplicate");
                                 }
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
-                        if (shouldLogTransport)
-                        {
-                            MelonLogger.Msg($"[Vehicle Debug] NeedInteractiveList exception: {ex.Message}");
-                        }
+                        // Silently continue
                     }
 
                     // Method 2: Access Transportation.ModelList dictionary via pointer offsets
@@ -143,21 +115,15 @@ namespace FFII_ScreenReader.Field
                         unsafe
                         {
                             IntPtr transportControllerPtr = transportation.Pointer;
-                            if (transportControllerPtr == IntPtr.Zero)
-                            {
-                                if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] TransportationController pointer is null");
-                            }
-                            else
+                            if (transportControllerPtr != IntPtr.Zero)
                             {
                                 // Get infoData (Transportation) at offset 0x18
                                 IntPtr infoDataPtr = *(IntPtr*)(transportControllerPtr + 0x18);
-                                if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] infoData pointer: 0x{infoDataPtr.ToInt64():X}");
 
                                 if (infoDataPtr != IntPtr.Zero)
                                 {
                                     // Get modelList (Dictionary) at offset 0x18 in Transportation
                                     IntPtr modelListPtr = *(IntPtr*)(infoDataPtr + 0x18);
-                                    if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] modelList pointer: 0x{modelListPtr.ToInt64():X}");
 
                                     if (modelListPtr != IntPtr.Zero)
                                     {
@@ -167,8 +133,6 @@ namespace FFII_ScreenReader.Field
 
                                         if (modelDict != null)
                                         {
-                                            if (shouldLogTransport) MelonLogger.Msg($"[Vehicle Debug] ModelList dictionary count: {modelDict.Count}");
-
                                             foreach (var kvp in modelDict)
                                             {
                                                 int transportId = kvp.Key;
@@ -179,11 +143,6 @@ namespace FFII_ScreenReader.Field
                                                 bool enabled = transportInfo.Enable;
                                                 int transportType = transportInfo.Type;
 
-                                                if (shouldLogTransport)
-                                                {
-                                                    MelonLogger.Msg($"[Vehicle Debug] Transport ID={transportId}, Type={transportType}, Enable={enabled}");
-                                                }
-
                                                 // Skip non-vehicle types and disabled vehicles
                                                 // Type 0 = None, Type 1 = Player, Type 4 = Symbol, Type 5 = Content (internal markers)
                                                 if (transportType == 0 || transportType == 1 || transportType == 4 || transportType == 5 || !enabled) continue;
@@ -191,56 +150,29 @@ namespace FFII_ScreenReader.Field
                                                 var mapObject = transportInfo.MapObject;
                                                 if (mapObject != null)
                                                 {
-                                                    string goName = "";
-                                                    try { goName = mapObject.gameObject?.name ?? ""; } catch { }
-
-                                                    if (shouldLogTransport)
-                                                    {
-                                                        MelonLogger.Msg($"[Vehicle Debug] -> MapObject: {mapObject.GetType().Name}, GO: {goName}");
-                                                    }
-
                                                     if (!results.Contains(mapObject))
                                                     {
                                                         results.Add(mapObject);
                                                         // Store the transport type for EntityScanner to use
                                                         VehicleTypeMap[mapObject] = transportType;
-                                                        if (shouldLogTransport)
-                                                        {
-                                                            MelonLogger.Msg($"[Vehicle Debug] -> Added vehicle to results (Type={transportType})");
-                                                        }
                                                     }
                                                 }
-                                                else if (shouldLogTransport)
-                                                {
-                                                    MelonLogger.Msg($"[Vehicle Debug] -> MapObject is null for Transport ID={transportId}");
-                                                }
                                             }
-                                        }
-                                        else if (shouldLogTransport)
-                                        {
-                                            MelonLogger.Msg($"[Vehicle Debug] Failed to cast modelList to Dictionary");
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
-                        if (shouldLogTransport)
-                        {
-                            MelonLogger.Msg($"[Vehicle Debug] ModelList iteration exception: {ex.Message}");
-                        }
+                        // Silently continue
                     }
 
-                    if (shouldLogTransport)
-                    {
-                        hasLoggedTransportation = true;
-                    }
+                    hasLoggedTransportation = true;
                 }
-                else if (shouldLogTransport)
+                else
                 {
-                    MelonLogger.Msg($"[Vehicle Debug] No transportation controller on this map");
                     hasLoggedTransportation = true;
                 }
             }
@@ -315,7 +247,6 @@ namespace FFII_ScreenReader.Field
             if (mapHandle == null)
             {
                 pathInfo.ErrorMessage = "Map handle not available";
-                MelonLogger.Msg("[Pathfinding] FAIL: Map handle is null");
                 return pathInfo;
             }
 
@@ -323,11 +254,6 @@ namespace FFII_ScreenReader.Field
             {
                 int mapWidth = mapHandle.GetCollisionLayerWidth();
                 int mapHeight = mapHandle.GetCollisionLayerHeight();
-
-                // Log map info
-                MelonLogger.Msg($"[Pathfinding] Map dimensions: {mapWidth}x{mapHeight}");
-                MelonLogger.Msg($"[Pathfinding] Player world pos: ({playerWorldPos.x:F1}, {playerWorldPos.y:F1}, {playerWorldPos.z:F1})");
-                MelonLogger.Msg($"[Pathfinding] Target world pos: ({targetWorldPos.x:F1}, {targetWorldPos.y:F1}, {targetWorldPos.z:F1})");
 
                 // Convert world coordinates to cell coordinates
                 Vector3 startCell = new Vector3(
@@ -342,18 +268,13 @@ namespace FFII_ScreenReader.Field
                     0
                 );
 
-                MelonLogger.Msg($"[Pathfinding] Start cell: ({startCell.x:F0}, {startCell.y:F0}, {startCell.z:F0})");
-                MelonLogger.Msg($"[Pathfinding] Dest cell (initial): ({destCell.x:F0}, {destCell.y:F0}, {destCell.z:F0})");
-
                 // Validate cell bounds
                 bool startInBounds = startCell.x >= 0 && startCell.x < mapWidth && startCell.y >= 0 && startCell.y < mapHeight;
                 bool destInBounds = destCell.x >= 0 && destCell.x < mapWidth && destCell.y >= 0 && destCell.y < mapHeight;
-                MelonLogger.Msg($"[Pathfinding] Bounds check: start={startInBounds}, dest={destInBounds}");
 
                 if (!startInBounds || !destInBounds)
                 {
                     pathInfo.ErrorMessage = "Cells out of bounds";
-                    MelonLogger.Msg("[Pathfinding] FAIL: Start or dest cell out of bounds");
                     return pathInfo;
                 }
 
@@ -362,8 +283,6 @@ namespace FFII_ScreenReader.Field
                     int playerLayer = player.gameObject.layer;
                     float layerZ = playerLayer - 9;
                     startCell.z = layerZ;
-                    MelonLogger.Msg($"[Pathfinding] Player layer: {playerLayer}, Z offset: {layerZ}");
-                    MelonLogger.Msg($"[Pathfinding] Start cell (with Z): ({startCell.x:F0}, {startCell.y:F0}, {startCell.z:F0})");
                 }
 
                 Il2CppSystem.Collections.Generic.List<Vector3> pathPoints = null;
@@ -371,7 +290,6 @@ namespace FFII_ScreenReader.Field
                 if (player != null)
                 {
                     bool playerCollisionState = player._IsOnCollision_k__BackingField;
-                    MelonLogger.Msg($"[Pathfinding] Player collision state: {playerCollisionState}");
 
                     // Try pathfinding with different destination layers until one succeeds
                     for (int tryDestZ = 2; tryDestZ >= 0; tryDestZ--)
@@ -379,12 +297,8 @@ namespace FFII_ScreenReader.Field
                         destCell.z = tryDestZ;
                         pathPoints = MapRouteSearcher.Search(mapHandle, startCell, destCell, playerCollisionState);
 
-                        int pointCount = pathPoints?.Count ?? 0;
-                        MelonLogger.Msg($"[Pathfinding] Try Z={tryDestZ}: Search returned {pointCount} points");
-
                         if (pathPoints != null && pathPoints.Count > 0)
                         {
-                            MelonLogger.Msg($"[Pathfinding] SUCCESS at Z={tryDestZ}");
                             break;
                         }
                     }
@@ -392,8 +306,6 @@ namespace FFII_ScreenReader.Field
                     // If direct path failed, try adjacent tiles
                     if (pathPoints == null || pathPoints.Count == 0)
                     {
-                        MelonLogger.Msg("[Pathfinding] Direct path failed, trying adjacent tiles...");
-
                         Vector3[] adjacentOffsets = new Vector3[] {
                             new Vector3(0, 16, 0),    // north
                             new Vector3(16, 0, 0),    // east
@@ -404,9 +316,6 @@ namespace FFII_ScreenReader.Field
                             new Vector3(-16, -16, 0), // southwest
                             new Vector3(-16, 16, 0)   // northwest
                         };
-
-                        string[] dirNames = { "N", "E", "S", "W", "NE", "SE", "SW", "NW" };
-                        int dirIndex = 0;
 
                         foreach (var offset in adjacentOffsets)
                         {
@@ -425,30 +334,23 @@ namespace FFII_ScreenReader.Field
 
                                 if (pathPoints != null && pathPoints.Count > 0)
                                 {
-                                    MelonLogger.Msg($"[Pathfinding] SUCCESS via adjacent {dirNames[dirIndex]} at Z={tryDestZ}");
                                     break;
                                 }
                             }
 
                             if (pathPoints != null && pathPoints.Count > 0)
                                 break;
-
-                            dirIndex++;
                         }
                     }
                 }
                 else
                 {
-                    MelonLogger.Msg("[Pathfinding] No player reference, using SearchSimple");
                     pathPoints = MapRouteSearcher.SearchSimple(mapHandle, startCell, destCell);
-                    int pointCount = pathPoints?.Count ?? 0;
-                    MelonLogger.Msg($"[Pathfinding] SearchSimple returned {pointCount} points");
                 }
 
                 if (pathPoints == null || pathPoints.Count == 0)
                 {
                     pathInfo.ErrorMessage = "No path found";
-                    MelonLogger.Msg("[Pathfinding] FAIL: No path found after all attempts");
                     return pathInfo;
                 }
 
@@ -462,7 +364,6 @@ namespace FFII_ScreenReader.Field
                 pathInfo.StepCount = pathPoints.Count > 0 ? pathPoints.Count - 1 : 0;
                 pathInfo.Description = DescribePath(pathInfo.WorldPath);
 
-                MelonLogger.Msg($"[Pathfinding] SUCCESS: {pathInfo.StepCount} steps - {pathInfo.Description}");
                 return pathInfo;
             }
             catch (Exception ex)

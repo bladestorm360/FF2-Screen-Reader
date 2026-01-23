@@ -5,12 +5,11 @@
 Adds NVDA output, pathfinding, sound queues and other accessibility aides to Final Fantasy II Pixel Remaster.
 
 ## Known Issues
+When speaking to an NPC with only one keyword in the ask list or opening the key terms menu from main menu with only one keyword, may not be any speech output. Will function normally once 2 or more keywords are obtained.
 Shop menus are reading the first highlighted item on both entry and exit.
 Items that can not be purchased due to a lack of gil are not reading, either upon highlight or the description by pressing I.
 Secret passages, even when opened, do not show properly on the pathfinder. Can use wall bumps and estimation to find, usually near the opening mechanism.
 H in battle announces statistics for all characters, not active character.
-Pop-ups are not reading, usually context-sensative yes or no dialogues such as load game or learn spell. Yes or no options read but not the pop-up text.
-Vehicle state and landing detection may not be working properly.
 Area transition triggers (area boundary) only announce that the player is moving to a new area. No apparent way to get destination information. Map Exits are named.
 Key terms menu reads item names but not descriptions.
 May be an issue with shops command menu (buy/sell/equipment/exit) reading shop items instead of menu after backing out of buy or sell menu, needs further testing.

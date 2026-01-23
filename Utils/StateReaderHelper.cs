@@ -13,9 +13,10 @@ namespace FFII_ScreenReader.Utils
         private const int OFFSET_STATE_TAG = 0x10;             // int Tag value
 
         // Controller-specific state machine offsets (from dump.cs)
-        public const int OFFSET_ITEM_WINDOW = 0x70;       // ItemWindowController (line 452378)
-        public const int OFFSET_EQUIP_WINDOW = 0x60;      // EquipmentWindowController (line 448755)
-        public const int OFFSET_SHOP_CONTROLLER = 0x98;   // KeyInput ShopController (line 462313)
+        public const int OFFSET_ITEM_WINDOW = 0x70;            // ItemWindowController (line 452378)
+        public const int OFFSET_EQUIP_WINDOW = 0x60;           // EquipmentWindowController (line 448755)
+        public const int OFFSET_SHOP_CONTROLLER = 0x98;        // KeyInput ShopController (line 462313)
+        public const int OFFSET_BATTLE_COMMAND_CONTROLLER = 0x48; // BattleCommandSelectController state machine
 
         /// <summary>
         /// Reads the state tag from a controller's state machine using unsafe pointer arithmetic.
@@ -25,6 +26,7 @@ namespace FFII_ScreenReader.Utils
         /// <returns>State tag value, or -1 if read failed</returns>
         /// <remarks>
         /// Known offsets by controller type (use the OFFSET_* constants):
+        /// - BattleCommandSelectController: 0x48 (OFFSET_BATTLE_COMMAND_CONTROLLER)
         /// - EquipmentWindowController: 0x60 (OFFSET_EQUIP_WINDOW)
         /// - ItemWindowController: 0x70 (OFFSET_ITEM_WINDOW)
         /// - ShopController: 0x98 (OFFSET_SHOP_CONTROLLER) - KeyInput version

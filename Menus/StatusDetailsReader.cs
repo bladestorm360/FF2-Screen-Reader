@@ -353,7 +353,6 @@ namespace FFII_ScreenReader.Menus
         /// </summary>
         public static void InvalidateUICache()
         {
-            MelonLogger.Msg("[StatusDetails] Invalidating UI cache");
             weaponSkillCache.Clear();
             cachedAccuracyCount = -1;
             cachePopulated = false;
@@ -367,15 +366,12 @@ namespace FFII_ScreenReader.Menus
         {
             if (cachePopulated)
             {
-                MelonLogger.Msg("[StatusDetails] Cache already populated, skipping");
                 return;
             }
 
-            MelonLogger.Msg("[StatusDetails] Populating UI cache...");
             CacheWeaponSkillsFromUI();
             CacheAccuracyCountFromUI();
             cachePopulated = true;
-            MelonLogger.Msg($"[StatusDetails] Cache populated: {weaponSkillCache.Count} weapon skills, accuracy count={cachedAccuracyCount}");
         }
 
         // Memory offset for SkillLevelContentController.view (private field)
@@ -411,7 +407,6 @@ namespace FFII_ScreenReader.Menus
                 var tracker = StatusNavigationTracker.Instance;
                 if (tracker?.ActiveController == null)
                 {
-                    MelonLogger.Warning("[StatusDetails] No active controller in tracker - cannot cache weapon skills");
                     return;
                 }
 
@@ -419,11 +414,8 @@ namespace FFII_ScreenReader.Menus
                 IntPtr controllerPtr = activeController.Pointer;
                 if (controllerPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Warning("[StatusDetails] Active controller pointer is null");
                     return;
                 }
-
-                MelonLogger.Msg($"[StatusDetails] Accessing skillLevelContentList from StatusDetailsController at offset 0x{OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT:X}");
 
                 // Access skillLevelContentList at offset 0x80 (KeyInput variant)
                 IntPtr listPtr;
@@ -434,25 +426,17 @@ namespace FFII_ScreenReader.Menus
 
                 if (listPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Warning("[StatusDetails] skillLevelContentList pointer is null");
                     return;
                 }
 
                 // Create managed List wrapper
                 var skillList = new Il2CppSystem.Collections.Generic.List<SkillLevelContentController>(listPtr);
                 int count = skillList.Count;
-                MelonLogger.Msg($"[StatusDetails] skillLevelContentList has {count} entries");
 
                 if (count == 0)
                 {
-                    MelonLogger.Warning("[StatusDetails] skillLevelContentList is empty");
                     return;
                 }
-
-                // Skill names for logging (index matches SkillLevelTarget enum)
-                string[] skillNames = { "Sword", "Knife", "Spear", "Axe", "Staff", "Bow", "Shield", "Unarmed" };
-                // UI skill names in display order (indices 3 and 4 are swapped vs enum)
-                string[] uiSkillNames = { "Sword", "Knife", "Spear", "Staff", "Axe", "Bow", "Shield", "Unarmed" };
 
                 // Iterate through list BY INDEX, then map to correct enum value
                 for (int i = 0; i < count && i < 8; i++)
@@ -462,14 +446,12 @@ namespace FFII_ScreenReader.Menus
                         var controller = skillList[i];
                         if (controller == null)
                         {
-                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): controller is null");
                             continue;
                         }
 
                         IntPtr skillControllerPtr = controller.Pointer;
                         if (skillControllerPtr == IntPtr.Zero)
                         {
-                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): controller pointer is zero");
                             continue;
                         }
 
@@ -481,7 +463,6 @@ namespace FFII_ScreenReader.Menus
                         }
                         if (viewPtr == IntPtr.Zero)
                         {
-                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): view pointer is zero");
                             continue;
                         }
 
@@ -489,7 +470,6 @@ namespace FFII_ScreenReader.Menus
                         var view = new SkillLevelContentView(viewPtr);
                         if (view == null)
                         {
-                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): failed to create view wrapper");
                             continue;
                         }
 
@@ -503,11 +483,6 @@ namespace FFII_ScreenReader.Menus
                             {
                                 int.TryParse(levelStr.Trim(), out level);
                             }
-                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): levelText=\"{levelStr}\" -> level={level}");
-                        }
-                        else
-                        {
-                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): LevelText is null");
                         }
 
                         // Read percentage from gauge
@@ -532,7 +507,6 @@ namespace FFII_ScreenReader.Menus
                                         percentage = (int)(fillAmount * 100);
                                         if (percentage < 0) percentage = 0;
                                         if (percentage > 99) percentage = 99;
-                                        MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): gauge fillAmount={fillAmount} -> {percentage}%");
                                     }
                                 }
                             }
@@ -541,21 +515,14 @@ namespace FFII_ScreenReader.Menus
                         // Map UI index to SkillLevelTarget enum value (indices 3 and 4 are swapped)
                         int skillType = uiIndexToSkillType[i];
                         weaponSkillCache[skillType] = (level, percentage);
-                        string uiName = i < uiSkillNames.Length ? uiSkillNames[i] : "?";
-                        string enumName = skillType < skillNames.Length ? skillNames[skillType] : "?";
-                        MelonLogger.Msg($"[StatusDetails] UI index {i} ({uiName}) -> enum {skillType} ({enumName}): level={level}, percentage={percentage}");
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        MelonLogger.Warning($"[StatusDetails] Error reading skill at index {i}: {ex.Message}");
                     }
                 }
-
-                MelonLogger.Msg($"[StatusDetails] Weapon skill cache complete: {weaponSkillCache.Count} entries");
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[StatusDetails] Error caching weapon skills: {ex.Message}");
             }
         }
 
@@ -574,14 +541,12 @@ namespace FFII_ScreenReader.Menus
                 var tracker = StatusNavigationTracker.Instance;
                 if (tracker?.ActiveController == null)
                 {
-                    MelonLogger.Warning("[StatusDetails] No active controller - cannot cache accuracy count");
                     return;
                 }
 
                 IntPtr controllerPtr = tracker.ActiveController.Pointer;
                 if (controllerPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Warning("[StatusDetails] Controller pointer is null");
                     return;
                 }
 
@@ -594,7 +559,6 @@ namespace FFII_ScreenReader.Menus
 
                 if (contentListPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Warning("[StatusDetails] contentList pointer is null");
                     return;
                 }
 
@@ -621,7 +585,6 @@ namespace FFII_ScreenReader.Menus
 
                         if (paramType == PARAMETER_TYPE_ACCURACY_RATE)
                         {
-
                             // Read view pointer at offset 0x20
                             IntPtr viewPtr;
                             unsafe
@@ -647,24 +610,19 @@ namespace FFII_ScreenReader.Menus
                                     if (!string.IsNullOrEmpty(valueStr) && int.TryParse(valueStr.Trim(), out int value))
                                     {
                                         cachedAccuracyCount = value;
-                                        MelonLogger.Msg($"[StatusDetails] Cached accuracy count from AccuracyRate view: {cachedAccuracyCount}");
                                         return;
                                     }
                                 }
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        MelonLogger.Warning($"[StatusDetails] Error checking parameter controller {i}: {ex.Message}");
                     }
                 }
-
-                MelonLogger.Warning("[StatusDetails] AccuracyRate controller not found in contentList");
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[StatusDetails] Error caching accuracy count: {ex.Message}");
             }
         }
 

@@ -25,15 +25,12 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[BattleCommand] Applying battle command patches...");
-
                 // Patch SetCommandData for turn announcements
                 var setCommandDataMethod = AccessTools.Method(typeof(BattleCommandSelectController), "SetCommandData");
                 if (setCommandDataMethod != null)
                 {
                     var postfix = AccessTools.Method(typeof(BattleCommandPatches), nameof(SetCommandData_Postfix));
                     harmony.Patch(setCommandDataMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleCommand] Patched SetCommandData");
                 }
 
                 // Patch SetCursor for command selection
@@ -42,7 +39,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(BattleCommandPatches), nameof(SetCursor_Postfix));
                     harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleCommand] Patched SetCursor");
                 }
 
                 // Patch ShowWindow for target selection tracking
@@ -51,7 +47,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var prefix = AccessTools.Method(typeof(BattleCommandPatches), nameof(ShowWindow_Prefix));
                     harmony.Patch(showWindowMethod, prefix: new HarmonyMethod(prefix));
-                    MelonLogger.Msg("[BattleCommand] Patched ShowWindow");
                 }
 
                 // Patch SelectContent for player targets
@@ -65,7 +60,6 @@ namespace FFII_ScreenReader.Patches
                     var prefix = AccessTools.Method(typeof(BattleCommandPatches), nameof(SelectContentPlayer_Prefix));
                     var postfix = AccessTools.Method(typeof(BattleCommandPatches), nameof(SelectContentPlayer_Postfix));
                     harmony.Patch(selectContentPlayerMethod, prefix: new HarmonyMethod(prefix), postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleCommand] Patched SelectContent(Player)");
                 }
 
                 // Patch SelectContent for enemy targets
@@ -79,10 +73,7 @@ namespace FFII_ScreenReader.Patches
                     var prefix = AccessTools.Method(typeof(BattleCommandPatches), nameof(SelectContentEnemy_Prefix));
                     var postfix = AccessTools.Method(typeof(BattleCommandPatches), nameof(SelectContentEnemy_Postfix));
                     harmony.Patch(selectContentEnemyMethod, prefix: new HarmonyMethod(prefix), postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleCommand] Patched SelectContent(Enemy)");
                 }
-
-                MelonLogger.Msg("[BattleCommand] Battle command patches applied successfully");
             }
             catch (Exception ex)
             {

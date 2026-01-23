@@ -334,7 +334,6 @@ namespace FFII_ScreenReader.Field
 
             // No reachable entities found, stay at original position
             currentIndex = startIndex;
-            MelonLogger.Msg("[EntityScanner] No reachable entities found with pathfinding filter");
         }
 
         /// <summary>
@@ -377,12 +376,11 @@ namespace FFII_ScreenReader.Field
 
             // No reachable entities found, stay at original position
             currentIndex = startIndex;
-            MelonLogger.Msg("[EntityScanner] No reachable entities found with pathfinding filter");
         }
 
         // Debug: track logged entity types to avoid spam
         private static HashSet<string> loggedEntityTypes = new HashSet<string>();
-        private static bool vehicleDebugEnabled = true;
+        private static bool vehicleDebugEnabled = false;
 
         /// <summary>
         /// Converts a FieldEntity to a NavigableEntity.
@@ -406,18 +404,6 @@ namespace FFII_ScreenReader.Field
 
             string goNameLower = goName.ToLower();
 
-            // Debug: Log entity types we haven't seen before (or vehicle-related ones always)
-            bool isVehicleRelated = typeName.Contains("Air") || typeName.Contains("Ship") ||
-                                    typeName.Contains("Transport") || typeName.Contains("Chocobo") ||
-                                    goNameLower.Contains("air") || goNameLower.Contains("ship") ||
-                                    goNameLower.Contains("transport") || goNameLower.Contains("chocobo");
-
-            if (vehicleDebugEnabled && (isVehicleRelated || !loggedEntityTypes.Contains(typeName)))
-            {
-                MelonLogger.Msg($"[Entity Debug] Type: {typeName}, GO: {goName}, Pos: {position}");
-                loggedEntityTypes.Add(typeName);
-            }
-
             // Skip the player entity
             if (typeName.Contains("FieldPlayer") || goNameLower.Contains("player"))
                 return null;
@@ -426,23 +412,14 @@ namespace FFII_ScreenReader.Field
             if (FieldNavigationHelper.VehicleTypeMap.TryGetValue(fieldEntity, out int vehicleType))
             {
                 string vehicleName = GetVehicleNameFromType(vehicleType);
-                if (vehicleDebugEnabled)
-                {
-                    MelonLogger.Msg($"[Entity Debug] *** VEHICLE (VehicleTypeMap) *** Type={vehicleType}, Name={vehicleName}, GO: {goName}");
-                }
                 return new VehicleEntity(fieldEntity, position, vehicleName, vehicleType);
             }
 
             // Check for FieldAirShip BEFORE the residentchara filter
             // Vehicles may have similar naming to resident characters but should be detected
             var airship = fieldEntity.TryCast<FieldAirShip>();
-            if (vehicleDebugEnabled && isVehicleRelated)
-            {
-                MelonLogger.Msg($"[Entity Debug] TryCast<FieldAirShip> result: {(airship != null ? "SUCCESS" : "null")}");
-            }
             if (airship != null)
             {
-                MelonLogger.Msg($"[Entity Debug] *** AIRSHIP DETECTED *** Type: {typeName}, GO: {goName}");
                 string vehicleName = CleanObjectName(goName, "Airship");
                 return new VehicleEntity(fieldEntity, position, vehicleName, 3); // 3 = Plane/Airship in TransportationType
             }
@@ -457,10 +434,6 @@ namespace FFII_ScreenReader.Field
                     var transportProperty = property.TryCast<PropertyTransportation>();
                     if (transportProperty != null)
                     {
-                        if (vehicleDebugEnabled)
-                        {
-                            MelonLogger.Msg($"[Entity Debug] *** VEHICLE (PropertyTransportation) *** Type: {typeName}, GO: {goName}");
-                        }
                         // Determine vehicle type from name
                         string vehicleName = GetVehicleNameFromProperty(goName, typeName);
                         int vehicleTypeFromName = GetVehicleTypeFromName(vehicleName);
@@ -476,10 +449,6 @@ namespace FFII_ScreenReader.Field
             // Skip party members following the player (but not vehicles which were checked above)
             if (goNameLower.Contains("residentchara"))
             {
-                if (vehicleDebugEnabled && isVehicleRelated)
-                {
-                    MelonLogger.Msg($"[Entity Debug] FILTERED by residentchara: {typeName}, GO: {goName}");
-                }
                 return null;
             }
 
@@ -535,7 +504,6 @@ namespace FFII_ScreenReader.Field
                 goNameLower.Contains("canoe") || goNameLower.Contains("airship") ||
                 goNameLower.Contains("chocobo"))
             {
-                MelonLogger.Msg($"[Entity Debug] *** VEHICLE (string match) *** Type: {typeName}, GO: {goName}");
                 string vehicleName = CleanObjectName(goName, "Vehicle");
                 return new VehicleEntity(fieldEntity, position, vehicleName, 0);
             }

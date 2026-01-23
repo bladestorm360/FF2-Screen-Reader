@@ -41,7 +41,6 @@ namespace FFII_ScreenReader.Patches
                 return false;
             }
 
-            MelonLogger.Msg($"[{source}] {cleanMessage}");
             // Battle actions don't interrupt - they queue
             FFII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: false);
             return true;
@@ -69,15 +68,12 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[BattleMessage] Applying battle message patches...");
-
                 // Patch CreateActFunction for action announcements
                 var createActFunctionMethod = AccessTools.Method(typeof(ParameterActFunctionManagment), "CreateActFunction");
                 if (createActFunctionMethod != null)
                 {
                     var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(CreateActFunction_Postfix));
                     harmony.Patch(createActFunctionMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleMessage] Patched CreateActFunction");
                 }
 
                 // Patch static BattleUtility.CreateDamageView for damage/healing display
@@ -91,7 +87,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(CreateDamageViewUtility_Postfix));
                     harmony.Patch(utilityDamageViewMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleMessage] Patched CreateDamageView");
                 }
 
                 // Patch BattleConditionController.Add for status effect announcements
@@ -100,7 +95,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(ConditionAdd_Postfix));
                     harmony.Patch(addConditionMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleMessage] Patched BattleConditionController.Add");
                 }
 
                 // Patch BattleController.StartPreeMptiveMes for encounter type announcements
@@ -109,7 +103,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(StartPreeMptiveMes_Postfix));
                     harmony.Patch(startPreeMptiveMesMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleMessage] Patched StartPreeMptiveMes");
                 }
                 else
                 {
@@ -122,14 +115,11 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(StartEscape_Postfix));
                     harmony.Patch(startEscapeMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[BattleMessage] Patched StartEscape");
                 }
                 else
                 {
                     MelonLogger.Warning("[BattleMessage] Could not find StartEscape method");
                 }
-
-                MelonLogger.Msg("[BattleMessage] Battle message patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -180,7 +170,6 @@ namespace FFII_ScreenReader.Patches
                 // attacking in sequence are both announced (each has unique BattleActData)
                 if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_BATTLE_ACTION, battleActData))
                 {
-                    MelonLogger.Msg($"[BattleAction] {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -368,7 +357,6 @@ namespace FFII_ScreenReader.Patches
                     message = $"{targetName}: {damage} damage";
                 }
 
-                MelonLogger.Msg($"[Damage] {message}");
                 // Damage/healing doesn't interrupt - queues after action announcement
                 FFII_ScreenReaderMod.SpeakText(message, interrupt: false);
             }
@@ -466,7 +454,6 @@ namespace FFII_ScreenReader.Patches
                 // Skip duplicates using centralized deduplication
                 if (!ShouldAnnounce(CONTEXT_BATTLE_CONDITION, announcement)) return;
 
-                MelonLogger.Msg($"[Status] {announcement}");
                 // Status doesn't interrupt
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
             }
@@ -543,7 +530,6 @@ namespace FFII_ScreenReader.Patches
 
                 if (!string.IsNullOrEmpty(announcement))
                 {
-                    MelonLogger.Msg($"[BattleMessage] Encounter: {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }
@@ -565,7 +551,6 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 string announcement = "Party escaped!";
-                MelonLogger.Msg($"[BattleMessage] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)

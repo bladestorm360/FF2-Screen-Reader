@@ -45,8 +45,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[BattleResult] Applying battle result patches...");
-
                 // Patch BOTH KeyInput and Touch variants of ResultMenuController
                 PatchResultMenuController(harmony, typeof(ResultMenuController), "KeyInput");
 
@@ -59,8 +57,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     MelonLogger.Warning("[BattleResult] Could not find Touch.ResultMenuController");
                 }
-
-                MelonLogger.Msg("[BattleResult] Battle result patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -81,15 +77,12 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         private static void PatchResultMenuControllerByType(HarmonyLib.Harmony harmony, Type controllerType, string variant)
         {
-            MelonLogger.Msg($"[BattleResult] Patching {variant} ResultMenuController: {controllerType.FullName}");
-
             // Patch ShowPointsInit
             var showPointsInitMethod = AccessTools.Method(controllerType, "ShowPointsInit");
             if (showPointsInitMethod != null)
             {
                 var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowPointsInit_Postfix_Generic));
                 harmony.Patch(showPointsInitMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg($"[BattleResult] Patched ShowPointsInit ({variant})");
             }
             else
             {
@@ -102,7 +95,6 @@ namespace FFII_ScreenReader.Patches
             {
                 var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowGetItemsInit_Postfix_Generic));
                 harmony.Patch(showGetItemsInitMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg($"[BattleResult] Patched ShowGetItemsInit ({variant})");
             }
 
             // Patch Show
@@ -111,7 +103,6 @@ namespace FFII_ScreenReader.Patches
             {
                 var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(Show_Postfix));
                 harmony.Patch(showMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg($"[BattleResult] Patched Show ({variant})");
             }
 
             // Patch ShowSkillLevelsInit - Weapon skill level-ups (State = 3)
@@ -120,7 +111,6 @@ namespace FFII_ScreenReader.Patches
             {
                 var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowSkillLevelsInit_Postfix_Generic));
                 harmony.Patch(showSkillLevelsInitMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg($"[BattleResult] Patched ShowSkillLevelsInit ({variant})");
             }
 
             // Patch ShowStatusUpInit - Stat gains (HP, Evasion, Magic Evasion, etc.)
@@ -129,7 +119,6 @@ namespace FFII_ScreenReader.Patches
             {
                 var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowStatusUpInit_Postfix_Generic));
                 harmony.Patch(showStatusUpInitMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg($"[BattleResult] Patched ShowStatusUpInit ({variant})");
             }
         }
 
@@ -197,12 +186,9 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[BattleResult] ShowSkillLevelsInit_Postfix_Generic fired for {__instance?.GetType().Name}");
-
                 // Prevent double announcements
                 if (announcedWeaponSkills)
                 {
-                    MelonLogger.Msg("[BattleResult] Weapon skills already announced, skipping");
                     return;
                 }
                 announcedWeaponSkills = true;
@@ -229,12 +215,9 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[BattleResult] ShowStatusUpInit_Postfix_Generic fired for {__instance?.GetType().Name}");
-
                 // Prevent double announcements
                 if (announcedStatGains)
                 {
-                    MelonLogger.Msg("[BattleResult] Stat gains already announced, skipping");
                     return;
                 }
                 announcedStatGains = true;
@@ -261,17 +244,11 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[BattleResult] ShowPointsInit_Postfix fired");
                 // IL2CppInterop exposes private fields as public properties - access directly
                 var data = __instance.targetData;
                 if (data != null)
                 {
-                    MelonLogger.Msg("[BattleResult] Got targetData successfully");
                     AnnouncePointsGained(data);
-                }
-                else
-                {
-                    MelonLogger.Warning("[BattleResult] targetData is null in ShowPointsInit");
                 }
             }
             catch (Exception ex)
@@ -293,7 +270,6 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 int gil = data.GetGil;
-                MelonLogger.Msg($"[BattleResult] Gil value: {gil}");
                 if (gil > 0)
                 {
                     parts.Add($"{gil:N0} gil");
@@ -307,7 +283,6 @@ namespace FFII_ScreenReader.Patches
             if (parts.Count > 0)
             {
                 string announcement = "Gained " + string.Join(", ", parts);
-                MelonLogger.Msg($"[Victory] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
 
@@ -332,7 +307,6 @@ namespace FFII_ScreenReader.Patches
                 var beforeData = charResult.BeforData;
                 if (afterData == null)
                 {
-                    MelonLogger.Warning("[BattleResult] AfterData is null");
                     return;
                 }
 
@@ -344,13 +318,8 @@ namespace FFII_ScreenReader.Patches
 
                 if (afterSkills == null)
                 {
-                    MelonLogger.Warning($"[BattleResult] {charName}: afterSkills is null");
                     return;
                 }
-
-                MelonLogger.Msg($"[BattleResult] {charName}: Checking {afterSkills.Count} skill types");
-
-                int skillsWithGrowth = 0;
 
                 // Iterate through all skills in afterData and compare with beforeData
                 foreach (var kvp in afterSkills)
@@ -378,39 +347,26 @@ namespace FFII_ScreenReader.Patches
                         // Only announce if exp actually increased
                         if (afterExp <= beforeExp) continue;
 
-                        skillsWithGrowth++;
                         string skillName = GetWeaponSkillName(skillTarget);
-                        int expGained = afterExp - beforeExp;
 
                         // Use BattleUtility.GetSkillLevel for accurate level calculation
                         int beforeLevel = beforeData != null ? BattleUtility.GetSkillLevel(beforeData, skillTarget) : 1;
                         int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
 
-                        MelonLogger.Msg($"[BattleResult] {charName} {skillName}: {beforeExp} -> {afterExp} (+{expGained}), level {beforeLevel}->{afterLevel}");
-
                         // Calculate percentage using ExpUtility (same as game's gauge display)
                         int beforePercent = CalculatePercentInLevel(beforeExp);
                         int afterPercent = CalculatePercentInLevel(afterExp);
-                        MelonLogger.Msg($"[BattleResult] {charName} {skillName}: beforePercent={beforePercent}%, afterPercent={afterPercent}%");
 
                         // Check if level increased
                         bool leveledUp = afterLevel > beforeLevel;
 
-                        if (leveledUp)
-                        {
-                            // Level-ups are announced in AnnounceWeaponSkillLevelUps during stat gain phase
-                            // Just log here for debugging
-                            MelonLogger.Msg($"[BattleResult] {charName} {skillName} leveled up to {afterLevel} (will announce in stat phase)");
-                        }
-                        else
+                        if (!leveledUp)
                         {
                             // No level up - announce percentage gained
                             int percentDelta = afterPercent - beforePercent;
-                            MelonLogger.Msg($"[BattleResult] {charName} {skillName}: percentDelta={percentDelta}");
                             if (percentDelta > 0)
                             {
                                 string announcement = $"{charName} {skillName}: {percentDelta} percent";
-                                MelonLogger.Msg($"[Victory] {announcement}");
                                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                             }
                         }
@@ -419,11 +375,6 @@ namespace FFII_ScreenReader.Patches
                     {
                         MelonLogger.Warning($"Error announcing skill: {ex.Message}");
                     }
-                }
-
-                if (skillsWithGrowth == 0)
-                {
-                    MelonLogger.Msg($"[BattleResult] {charName}: No skill exp gained this battle");
                 }
             }
             catch (Exception ex)
@@ -502,7 +453,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[BattleResult] ShowGetItemsInit_Postfix fired");
                 var data = __instance.targetData;
                 if (data != null)
                 {
@@ -556,7 +506,6 @@ namespace FFII_ScreenReader.Patches
                         announcement = $"Found {itemName}";
                     }
 
-                    MelonLogger.Msg($"[Victory] {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -581,11 +530,9 @@ namespace FFII_ScreenReader.Patches
                 var characterList = data.CharacterList;
                 if (characterList == null)
                 {
-                    MelonLogger.Warning("[BattleResult] CharacterList is null for stat gains");
                     return;
                 }
 
-                MelonLogger.Msg($"[BattleResult] Checking stat gains for {characterList.Count} characters");
                 foreach (var charResult in characterList)
                 {
                     if (charResult == null) continue;
@@ -616,7 +563,6 @@ namespace FFII_ScreenReader.Patches
                 var grouthList = charResult.GrouthWeaponSkillList;
                 if (grouthList != null && grouthList.Count > 0)
                 {
-                    MelonLogger.Msg($"[BattleResult] Using GrouthWeaponSkillList with {grouthList.Count} skills");
                     foreach (var skillTarget in grouthList)
                     {
                         try
@@ -631,7 +577,6 @@ namespace FFII_ScreenReader.Patches
                             // Use BattleUtility.GetSkillLevel for accurate level
                             int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
                             string skillName = GetWeaponSkillName(skillTarget);
-                            MelonLogger.Msg($"[BattleResult] {skillName} leveled up to {afterLevel}");
                             levelUps.Add($"{skillName} lv{afterLevel}");
                         }
                         catch (Exception ex)
@@ -678,7 +623,6 @@ namespace FFII_ScreenReader.Patches
                         int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
 
                         string skillName = GetWeaponSkillName(skillTarget);
-                        MelonLogger.Msg($"[BattleResult] {skillName}: exp {beforeExp}->{afterExp}, level {beforeLevel}->{afterLevel}");
 
                         // Add if level increased
                         if (afterLevel > beforeLevel)
@@ -714,14 +658,12 @@ namespace FFII_ScreenReader.Patches
 
                 if (beforeData == null || afterData == null)
                 {
-                    MelonLogger.Warning("[BattleResult] BeforData or AfterData is null");
                     return;
                 }
 
                 string charName = afterData.Name;
                 if (string.IsNullOrEmpty(charName))
                 {
-                    MelonLogger.Warning("[BattleResult] Character name is empty");
                     return;
                 }
 
@@ -771,12 +713,7 @@ namespace FFII_ScreenReader.Patches
                 {
                     // Format: "Firion: Sword lv2, Strength +1, HP +5"
                     string announcement = $"{charName}: {string.Join(", ", allChanges)}";
-                    MelonLogger.Msg($"[Victory] {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
-                }
-                else
-                {
-                    MelonLogger.Msg($"[BattleResult] {charName}: No level-ups or stat changes");
                 }
             }
             catch (Exception ex)
@@ -795,13 +732,11 @@ namespace FFII_ScreenReader.Patches
             if (delta > 0)
             {
                 changes.Add($"{statName} +{delta}");
-                MelonLogger.Msg($"[BattleResult] Stat change: {statName} {before} -> {after} (+{delta})");
             }
             else if (delta < 0)
             {
                 // Stats can decrease in FF2 (e.g., HP down from certain actions)
                 changes.Add($"{statName} {delta}");
-                MelonLogger.Msg($"[BattleResult] Stat change: {statName} {before} -> {after} ({delta})");
             }
         }
 
@@ -820,8 +755,6 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 if (data == null || isReverse) return;
-
-                MelonLogger.Msg("[BattleResult] Show_Postfix fired - announcing gil");
 
                 // Clear battle active flag - battle is now over
                 FFII_ScreenReaderMod.ClearBattleActive();
@@ -853,7 +786,6 @@ namespace FFII_ScreenReader.Patches
             // Prevent double announcements (ShowPointsInit might also fire)
             if (announcedPoints)
             {
-                MelonLogger.Msg("[BattleResult] Gil already announced, skipping");
                 return;
             }
             announcedPoints = true;
@@ -861,11 +793,9 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 int gil = data.GetGil;
-                MelonLogger.Msg($"[BattleResult] Gil value: {gil}");
                 if (gil > 0)
                 {
                     string announcement = $"Gained {gil:N0} gil";
-                    MelonLogger.Msg($"[Victory] {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }
@@ -885,11 +815,9 @@ namespace FFII_ScreenReader.Patches
                 var characterList = data.CharacterList;
                 if (characterList == null)
                 {
-                    MelonLogger.Warning("[BattleResult] CharacterList is null");
                     return;
                 }
 
-                MelonLogger.Msg($"[BattleResult] CharacterList count: {characterList.Count}");
                 foreach (var charResult in characterList)
                 {
                     if (charResult == null) continue;

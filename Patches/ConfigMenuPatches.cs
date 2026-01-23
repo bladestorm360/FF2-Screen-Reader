@@ -207,8 +207,6 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                MelonLogger.Msg("[Config Menu] Applying config menu patches...");
-
                 // Patch ConfigCommandController.SetFocus for navigation
                 TryPatchSetFocus(harmony);
 
@@ -217,7 +215,6 @@ namespace FFII_ScreenReader.Patches
                 TryPatchSwitchSliderType(harmony);
 
                 isPatched = true;
-                MelonLogger.Msg("[Config Menu] Config menu patches applied");
             }
             catch (Exception ex)
             {
@@ -234,7 +231,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(ConfigMenuPatches), nameof(SetFocus_Postfix));
                     harmony.Patch(setFocusMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Config Menu] Patched ConfigCommandController.SetFocus");
                 }
             }
             catch (Exception ex)
@@ -252,7 +248,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(ConfigMenuPatches), nameof(SwitchArrowSelectType_Postfix));
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Config Menu] Patched SwitchArrowSelectTypeProcess");
                 }
             }
             catch (Exception ex)
@@ -270,7 +265,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(ConfigMenuPatches), nameof(SwitchSliderType_Postfix));
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Config Menu] Patched SwitchSliderTypeProcess");
                 }
             }
             catch (Exception ex)
@@ -336,7 +330,6 @@ namespace FFII_ScreenReader.Patches
                 if (isValueChangeOnly)
                     return;
 
-                MelonLogger.Msg($"[Config Menu] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -376,7 +369,6 @@ namespace FFII_ScreenReader.Patches
                                     return;
 
                                 lastArrowValue = textValue;
-                                MelonLogger.Msg($"[Config Menu] Arrow value changed: {textValue}");
                                 FFII_ScreenReaderMod.SpeakText(textValue, interrupt: true);
                                 return;
                             }
@@ -424,7 +416,6 @@ namespace FFII_ScreenReader.Patches
 
                 lastSliderPercentage = percentage;
 
-                MelonLogger.Msg($"[Config Menu] Slider value changed: {percentage}");
                 FFII_ScreenReaderMod.SpeakText(percentage, interrupt: true);
             }
             catch (Exception ex)

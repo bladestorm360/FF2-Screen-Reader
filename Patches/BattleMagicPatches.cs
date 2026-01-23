@@ -37,8 +37,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[Battle Magic] Applying battle magic menu patches...");
-
                 // Patch KeyInput variant
                 PatchControllerType(harmony, typeof(BattleQuantityAbilityInfomationController_KeyInput), "KeyInput");
 
@@ -47,7 +45,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Magic] Error applying patches: {ex.Message}");
+                MelonLogger.Error($"[Battle Magic] Error applying patches: {ex.Message}");
             }
         }
 
@@ -68,7 +66,6 @@ namespace FFII_ScreenReader.Patches
                         if (parameters.Length >= 1 && parameters[0].ParameterType.Name == "Cursor")
                         {
                             selectContentMethod = m;
-                            MelonLogger.Msg($"[Battle Magic] Found SelectContent method ({variant})");
                             break;
                         }
                     }
@@ -80,7 +77,6 @@ namespace FFII_ScreenReader.Patches
                         .GetMethod("Postfix", BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg($"[Battle Magic] Patched SelectContent successfully ({variant})");
                 }
                 else
                 {
@@ -89,7 +85,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Magic] Error patching {variant}: {ex.Message}");
+                MelonLogger.Error($"[Battle Magic] Error patching {variant}: {ex.Message}");
             }
         }
     }
@@ -113,11 +109,7 @@ namespace FFII_ScreenReader.Patches
             MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
         }
 
-        // State machine offsets for BattleCommandSelectController
-        private const int OFFSET_STATE_MACHINE = 0x48;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
+        // State constants for BattleCommandSelectController
         private const int STATE_NORMAL = 1;
         private const int STATE_EXTRA = 2;
 
@@ -149,7 +141,7 @@ namespace FFII_ScreenReader.Patches
                 var cmdController = GameObjectCache.GetOrRefresh<BattleCommandSelectController>();
                 if (cmdController != null && cmdController.gameObject.activeInHierarchy)
                 {
-                    int state = GetCommandState(cmdController);
+                    int state = StateReaderHelper.ReadStateTag(cmdController.Pointer, StateReaderHelper.OFFSET_BATTLE_COMMAND_CONTROLLER);
                     if (state == STATE_NORMAL || state == STATE_EXTRA)
                     {
                         // Command menu is active, we're no longer in magic selection
@@ -165,27 +157,6 @@ namespace FFII_ScreenReader.Patches
                 Reset();
                 return false;
             }
-        }
-
-        private static int GetCommandState(BattleCommandSelectController controller)
-        {
-            try
-            {
-                IntPtr ptr = controller.Pointer;
-                if (ptr == IntPtr.Zero) return -1;
-
-                unsafe
-                {
-                    IntPtr smPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (smPtr == IntPtr.Zero) return -1;
-
-                    IntPtr currentPtr = *(IntPtr*)((byte*)smPtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentPtr == IntPtr.Zero) return -1;
-
-                    return *(int*)((byte*)currentPtr.ToPointer() + OFFSET_STATE_TAG);
-                }
-            }
-            catch { return -1; }
         }
 
         public static void Reset()
@@ -232,10 +203,7 @@ namespace FFII_ScreenReader.Patches
                 string announcement = TryGetAbilityAnnouncement(__instance, cursorIndex);
 
                 if (string.IsNullOrEmpty(announcement))
-                {
-                    MelonLogger.Msg("[Battle Magic] Could not get spell data");
                     return;
-                }
 
                 if (!ShouldAnnounce(CONTEXT_BATTLE_MAGIC, announcement))
                     return;
@@ -243,12 +211,11 @@ namespace FFII_ScreenReader.Patches
                 // Set active state and clear other menus
                 BattleMagicMenuState.SetActive();
 
-                MelonLogger.Msg($"[Battle Magic] Announcing: {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Magic] Error in SelectContent patch: {ex.Message}");
+                MelonLogger.Error($"[Battle Magic] Error in SelectContent patch: {ex.Message}");
             }
         }
 
@@ -275,18 +242,12 @@ namespace FFII_ScreenReader.Patches
                     // Read dataList at offset 0x70
                     IntPtr dataListPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_DATA_LIST);
                     if (dataListPtr == IntPtr.Zero)
-                    {
-                        MelonLogger.Msg("[Battle Magic] dataList pointer is null");
                         return null;
-                    }
 
                     // Create managed list wrapper
                     var dataList = new Il2CppSystem.Collections.Generic.List<OwnedAbility>(dataListPtr);
                     if (dataList == null || cursorIndex < 0 || cursorIndex >= dataList.Count)
-                    {
-                        MelonLogger.Msg($"[Battle Magic] Index {cursorIndex} out of range (count: {dataList?.Count ?? 0})");
                         return null;
-                    }
 
                     var ability = dataList[cursorIndex];
                     if (ability == null)
@@ -303,10 +264,7 @@ namespace FFII_ScreenReader.Patches
                             characterData = battlePlayerData.ownedCharacterData;
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Msg($"[Battle Magic] Could not get character data: {ex.Message}");
-                    }
+                    catch { }
 
                     // Try to get gauge progress from content controller
                     float gaugeProgress = -1f;
@@ -331,11 +289,8 @@ namespace FFII_ScreenReader.Patches
                     return FormatAbilityAnnouncement(ability, characterData, gaugeProgress);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Msg($"[Battle Magic] Error getting ability from data list: {ex.Message}");
-                return null;
-            }
+            catch { }
+            return null;
         }
 
         /// <summary>
@@ -437,7 +392,6 @@ namespace FFII_ScreenReader.Patches
                                         if (ownedAbilityData != null && ownedAbilityData.Id == abilityId)
                                         {
                                             rawExp = ownedAbility.SkillLevel;
-                                            MelonLogger.Msg($"[Battle Magic] Found ability {abilityId} in character data, rawExp={rawExp}");
                                             break;
                                         }
                                     }
@@ -451,17 +405,12 @@ namespace FFII_ScreenReader.Patches
                     if (rawExp <= 0)
                     {
                         rawExp = ability.SkillLevel;
-                        MelonLogger.Msg($"[Battle Magic] Using dataList ability rawExp={rawExp}");
                     }
 
                     // Use game's ExpUtility.GetExpLevel for accurate level calculation
                     spellLevel = ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp);
-                    MelonLogger.Msg($"[Battle Magic] rawExp={rawExp} -> level={spellLevel}");
                 }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[Battle Magic] Error getting spell level: {ex.Message}");
-                }
+                catch { }
 
                 // Clamp level to valid range (1-16)
                 if (spellLevel < 1) spellLevel = 1;
@@ -515,11 +464,8 @@ namespace FFII_ScreenReader.Patches
 
                 return announcement;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Magic] Error formatting announcement: {ex.Message}");
-                return null;
-            }
+            catch { }
+            return null;
         }
     }
 }

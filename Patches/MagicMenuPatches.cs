@@ -296,12 +296,10 @@ namespace FFII_ScreenReader.Patches
                 int level = ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp);
                 if (level < 1) level = 1;
                 if (level > 16) level = 16;
-                MelonLogger.Msg($"[Magic] Spell rawExp={rawExp} -> level={level}");
                 return level;
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic] Error getting spell proficiency: {ex.Message}");
             }
 
             return 1;
@@ -353,8 +351,6 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                MelonLogger.Msg("[Magic Menu] Applying magic menu patches...");
-
                 // Patch spell list controller
                 TryPatchSpellListController(harmony);
 
@@ -368,7 +364,6 @@ namespace FFII_ScreenReader.Patches
                 TryPatchTargetSelection(harmony);
 
                 isPatched = true;
-                MelonLogger.Msg("[Magic Menu] Magic menu patches applied");
             }
             catch (Exception ex)
             {
@@ -398,7 +393,6 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(UpdateController_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityContentListController.UpdateController");
                 }
 
                 // Patch SetCursor for navigation
@@ -421,12 +415,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetCursor_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityContentListController.SetCursor");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error patching spell list controller: {ex.Message}");
             }
         }
 
@@ -452,12 +444,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetNextState_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityWindowController.SetNextState");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error patching window controller: {ex.Message}");
             }
         }
 
@@ -483,16 +473,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(CommandController_UpdateFocus_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityCommandController.UpdateFocus");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Magic Menu] AbilityCommandController.UpdateFocus not found");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error patching command controller: {ex.Message}");
             }
         }
 
@@ -514,7 +498,6 @@ namespace FFII_ScreenReader.Patches
                         if (parameters.Length >= 1 && parameters[0].ParameterType.Name == "Cursor")
                         {
                             setCursorMethod = method;
-                            MelonLogger.Msg($"[Magic Menu] Found AbilityUseContentListController.SetCursor");
                             break;
                         }
                     }
@@ -525,16 +508,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MagicMenuPatches).GetMethod(nameof(TargetSetCursor_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setCursorMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Magic Menu] Patched AbilityUseContentListController.SetCursor");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Magic Menu] AbilityUseContentListController.SetCursor not found");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error patching target selection: {ex.Message}");
             }
         }
 
@@ -546,8 +523,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[Magic Menu] State transition to: {state}");
-
                 if (state == MagicMenuState.STATE_COMMAND)
                 {
                     // Transitioning to command menu - activate command state
@@ -652,13 +627,11 @@ namespace FFII_ScreenReader.Patches
                     if (!MagicMenuState.ShouldAnnounceCommand(commandName))
                         return;
 
-                    MelonLogger.Msg($"[Magic Command] {commandName}");
                     FFII_ScreenReaderMod.SpeakText(commandName, interrupt: true);
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error in CommandController_UpdateFocus_Postfix: {ex.Message}");
             }
         }
 
@@ -760,9 +733,8 @@ namespace FFII_ScreenReader.Patches
                 int cursorIndex = targetCursor.Index;
                 AnnounceSpellAtIndex(controller, cursorIndex);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error in SetCursor_Postfix: {ex.Message}");
             }
         }
 
@@ -862,9 +834,8 @@ namespace FFII_ScreenReader.Patches
                             }
                         }
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        MelonLogger.Warning($"[Magic Target] Error getting character parameters: {ex.Message}");
                     }
 
                     // Skip duplicates
@@ -873,13 +844,11 @@ namespace FFII_ScreenReader.Patches
 
                     MagicMenuState.OnTargetSelectionActive();
 
-                    MelonLogger.Msg($"[Magic Target] {announcement}");
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error in TargetSetCursor_Postfix: {ex.Message}");
             }
         }
 
@@ -923,9 +892,8 @@ namespace FFII_ScreenReader.Patches
                 // Pass contentController to read gauge for percentage
                 AnnounceSpell(ability, contentController);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error in AnnounceSpellAtIndex: {ex.Message}");
             }
         }
 
@@ -981,11 +949,9 @@ namespace FFII_ScreenReader.Patches
                 {
                     try
                     {
-                        MelonLogger.Msg($"[Magic Menu] Attempting to read gauge from contentController...");
                         CommonGauge gauge = contentController.Gauge;
                         if (gauge != null)
                         {
-                            MelonLogger.Msg($"[Magic Menu] Got CommonGauge, reading gaugeImage...");
                             // gaugeImage is private, access via offset
                             IntPtr gaugePtr = gauge.Pointer;
                             if (gaugePtr != IntPtr.Zero)
@@ -1004,31 +970,13 @@ namespace FFII_ScreenReader.Patches
                                         percentage = (int)(fillAmount * 100);
                                         if (percentage < 0) percentage = 0;
                                         if (percentage > 99) percentage = 99;
-                                        MelonLogger.Msg($"[Magic Menu] Spell gauge fillAmount={fillAmount} -> {percentage}%");
-                                    }
-                                    else
-                                    {
-                                        MelonLogger.Msg("[Magic Menu] gaugeImage wrapper is null");
                                     }
                                 }
-                                else
-                                {
-                                    MelonLogger.Msg("[Magic Menu] gaugeImage pointer is zero");
-                                }
                             }
-                            else
-                            {
-                                MelonLogger.Msg("[Magic Menu] gauge pointer is zero");
-                            }
-                        }
-                        else
-                        {
-                            MelonLogger.Msg("[Magic Menu] contentController.Gauge is null");
                         }
                     }
-                    catch (Exception gaugeEx)
+                    catch
                     {
-                        MelonLogger.Warning($"[Magic Menu] Error reading spell gauge: {gaugeEx.Message}");
                     }
                 }
 
@@ -1052,12 +1000,10 @@ namespace FFII_ScreenReader.Patches
                     announcement += $": {description}";
                 }
 
-                MelonLogger.Msg($"[Magic Menu] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Magic Menu] Error in AnnounceSpell: {ex.Message}");
             }
         }
     }

@@ -95,8 +95,6 @@ namespace FFII_ScreenReader.Patches
 
                 // Patch SavePopup.UpdateFocus for button reading
                 TryPatchSavePopupUpdateFocus(harmony);
-
-                MelonLogger.Msg("[SaveLoad] All save/load patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -118,7 +116,6 @@ namespace FFII_ScreenReader.Patches
             // SavePopup button navigation should be handled through:
             // 1. Cursor.NextIndex/PrevIndex patches (already in place)
             // 2. Checking PopupState.IsConfirmationPopupActive in cursor patches
-            MelonLogger.Msg("[SaveLoad] SavePopup.UpdateFocus patch disabled (method doesn't exist in FF2)");
         }
 
         /// <summary>
@@ -136,7 +133,6 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(TitleLoadSetPopupActive_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched TitleLoadController.SetPopupActive");
                 }
                 else
                 {
@@ -164,7 +160,6 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(MainMenuLoadSetPopupActive_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched MainMenuLoadController.SetPopupActive");
                 }
                 else
                 {
@@ -192,7 +187,6 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(MainMenuSaveSetPopupActive_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched MainMenuSaveController.SetPopupActive");
                 }
                 else
                 {
@@ -220,7 +214,6 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(SaveLoadPatches).GetMethod(nameof(InterruptionSetEnablePopup_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(method, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[SaveLoad] Patched InterruptionController.SetEnablePopup (QuickSave)");
                 }
                 else
                 {
@@ -312,7 +305,6 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    MelonLogger.Msg($"[SaveLoad] Popup button: {buttonText}");
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }
@@ -326,8 +318,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] TitleLoad.SetPopupActive called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as TitleLoadController;
@@ -351,8 +341,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] MainMenuLoad.SetPopupActive called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as MainMenuLoadController;
@@ -376,8 +364,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] MainMenuSave.SetPopupActive called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as MainMenuSaveController;
@@ -401,8 +387,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg($"[SaveLoad] Interruption.SetEnablePopup called with isEnable={isEnable}");
-
                 if (isEnable)
                 {
                     var controller = __instance as InterruptionController;
@@ -445,8 +429,6 @@ namespace FFII_ScreenReader.Patches
                         MelonLogger.Warning($"[SaveLoad] {context}: SavePopup pointer is null");
                         return;
                     }
-
-                    MelonLogger.Msg($"[SaveLoad] {context}: SavePopup at 0x{popupPtr.ToInt64():X}");
 
                     // Set state for button navigation immediately
                     SaveLoadMenuState.IsActive = true;
@@ -492,7 +474,6 @@ namespace FFII_ScreenReader.Patches
                     {
                         // Strip Unity rich text tags (like <color=#ff4040>...</color>)
                         message = StripRichTextTags(message);
-                        MelonLogger.Msg($"[SaveLoad] {context}: {message}");
                         FFII_ScreenReaderMod.SpeakText(message);
                     }
                     else
@@ -525,7 +506,6 @@ namespace FFII_ScreenReader.Patches
             SaveLoadMenuState.ResetState();
             PopupState.Clear();
             lastAnnouncedButtonIndex = -1;
-            MelonLogger.Msg("[SaveLoad] Popup closed, state cleared");
         }
 
         /// <summary>
@@ -583,7 +563,6 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    MelonLogger.Msg($"[SaveLoad] Popup button: {buttonText}");
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }

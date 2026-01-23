@@ -30,7 +30,6 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public void Initialize()
         {
-            MelonLogger.Msg("InputManager initialized");
         }
 
         /// <summary>
@@ -298,7 +297,6 @@ namespace FFII_ScreenReader.Core
                     string description = GetConfigDescriptionText(keyInputController);
                     if (!string.IsNullOrEmpty(description))
                     {
-                        MelonLogger.Msg($"[Config Tooltip] {description}");
                         FFII_ScreenReaderMod.SpeakText(description);
                         return;
                     }
@@ -311,13 +309,10 @@ namespace FFII_ScreenReader.Core
                     string description = GetConfigDescriptionTextTouch(touchController);
                     if (!string.IsNullOrEmpty(description))
                     {
-                        MelonLogger.Msg($"[Config Tooltip] {description}");
                         FFII_ScreenReaderMod.SpeakText(description);
                         return;
                     }
                 }
-
-                MelonLogger.Msg("[Config Tooltip] No description available");
             }
             catch (Exception ex)
             {
@@ -400,7 +395,6 @@ namespace FFII_ScreenReader.Core
             {
                 int moveState = Utils.MoveStateHelper.GetCurrentMoveState();
                 string stateName = Utils.MoveStateHelper.GetMoveStateName(moveState);
-                MelonLogger.Msg($"[Vehicle] Current movement mode: {stateName}");
                 FFII_ScreenReaderMod.SpeakText(stateName);
             }
             catch (Exception ex)
@@ -437,7 +431,6 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public void Dispose()
         {
-            MelonLogger.Msg("InputManager disposed");
         }
     }
 }

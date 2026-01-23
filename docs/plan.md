@@ -44,6 +44,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 |----------|---------|
 | [debug.md](debug.md) | Implementation details, memory offsets, bug fixes |
 | [port.md](port.md) | Features to port from FF3 |
+| [performanceIssues.md](performanceIssues.md) | Code cleanup: dead code, redundancy, debug logging |
 | [CLAUDE.md](../CLAUDE.md) | Build instructions, coding conventions |
 
 ## Build

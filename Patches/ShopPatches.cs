@@ -143,12 +143,10 @@ namespace FFII_ScreenReader.Patches
                     announcement = "No item details available";
                 }
 
-                MelonLogger.Msg($"[Shop Details] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error announcing shop details: {ex.Message}");
             }
         }
     }
@@ -167,13 +165,10 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                MelonLogger.Msg("[Shop] Applying shop patches...");
-
                 PatchSetFocus(harmony);
                 PatchTradeWindow(harmony);
 
                 isPatched = true;
-                MelonLogger.Msg("[Shop] Shop patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -192,12 +187,10 @@ namespace FFII_ScreenReader.Patches
                 {
                     harmony.Patch(setFocusMethod,
                         postfix: new HarmonyMethod(typeof(ShopPatches), nameof(SetFocus_Postfix)));
-                    MelonLogger.Msg("[Shop] Patched ShopListItemContentController.SetFocus");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Error($"[Shop] Failed to patch SetFocus: {ex.Message}");
             }
         }
 
@@ -212,12 +205,10 @@ namespace FFII_ScreenReader.Patches
                 {
                     harmony.Patch(updateMethod,
                         postfix: new HarmonyMethod(typeof(ShopPatches), nameof(UpdateCotroller_Postfix)));
-                    MelonLogger.Msg("[Shop] Patched ShopTradeWindowController.UpdateCotroller");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Error($"[Shop] Failed to patch trade window: {ex.Message}");
             }
         }
 
@@ -245,9 +236,6 @@ namespace FFII_ScreenReader.Patches
                 int contentId = 0;
                 try { contentId = __instance.ContentId; } catch { }
 
-                // Debug: log what we found
-                MelonLogger.Msg($"[Shop DEBUG] UI itemName='{itemName}', contentId={contentId}");
-
                 // Fallback: get name from master data if UI text is empty (unaffordable items)
                 if (string.IsNullOrEmpty(itemName) && contentId > 0)
                 {
@@ -259,22 +247,15 @@ namespace FFII_ScreenReader.Patches
                         {
                             var messageManager = MessageManager.Instance;
                             itemName = messageManager.GetMessage(content.MesIdName, false);
-                            MelonLogger.Msg($"[Shop DEBUG] Fallback itemName='{itemName}'");
-                        }
-                        else
-                        {
-                            MelonLogger.Msg($"[Shop DEBUG] content is null for contentId={contentId}");
                         }
                     }
-                    catch (Exception ex)
+                    catch
                     {
-                        MelonLogger.Msg($"[Shop DEBUG] Fallback exception: {ex.Message}");
                     }
                 }
 
                 if (string.IsNullOrEmpty(itemName))
                 {
-                    MelonLogger.Msg($"[Shop DEBUG] itemName still empty, returning");
                     return;
                 }
 
@@ -325,12 +306,10 @@ namespace FFII_ScreenReader.Patches
                 if (!ShouldAnnounce(CONTEXT_SHOP_ITEM, announcement))
                     return;
 
-                MelonLogger.Msg($"[Shop Item] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Error($"[Shop] Error in SetFocus_Postfix: {ex.Message}");
             }
         }
 
@@ -490,12 +469,10 @@ namespace FFII_ScreenReader.Patches
                     ? selectedCount.ToString()
                     : $"{selectedCount}, {totalPrice}";
 
-                MelonLogger.Msg($"[Shop Quantity] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Error($"[Shop] Error in UpdateCotroller_Postfix: {ex.Message}");
             }
         }
 

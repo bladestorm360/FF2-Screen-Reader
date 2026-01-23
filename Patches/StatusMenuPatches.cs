@@ -105,8 +105,6 @@ namespace FFII_ScreenReader.Patches
                             string param0Type = parameters[0].ParameterType.Name;
                             string param1Type = parameters[1].ParameterType.Name;
 
-                            MelonLogger.Msg($"[Status Menu] Found SelectContent: params[0]={param0Type}, params[1]={param1Type}");
-
                             if (param0Type.Contains("List") && param1Type == "Int32")
                             {
                                 targetMethod = method;
@@ -122,25 +120,10 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Status Menu] Patched SelectContent successfully");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Status Menu] Could not find SelectContent method");
-
-                    // Log available methods for debugging
-                    foreach (var method in methods)
-                    {
-                        if (method.Name.Contains("Select") || method.Name.Contains("Content"))
-                        {
-                            MelonLogger.Msg($"[Status Menu] Available method: {method.Name}");
-                        }
-                    }
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Menu] Error patching SelectContent: {ex.Message}");
             }
         }
 
@@ -182,14 +165,12 @@ namespace FFII_ScreenReader.Patches
 
                 if (index < 0 || index >= contents.Count)
                 {
-                    MelonLogger.Msg($"[Status Menu] SelectContent: index {index} out of range (count={contents.Count})");
                     return;
                 }
 
                 var content = contents[index];
                 if (content == null)
                 {
-                    MelonLogger.Msg("[Status Menu] SelectContent: content at index is null");
                     return;
                 }
 
@@ -197,7 +178,6 @@ namespace FFII_ScreenReader.Patches
                 var characterData = content.CharacterData;
                 if (characterData == null)
                 {
-                    MelonLogger.Msg("[Status Menu] SelectContent: CharacterData is null");
                     return;
                 }
 
@@ -257,21 +237,18 @@ namespace FFII_ScreenReader.Patches
                         }
                     }
                 }
-                catch (Exception paramEx)
+                catch
                 {
-                    MelonLogger.Warning($"[Status Menu] Error getting HP/MP: {paramEx.Message}");
                 }
 
                 // Skip duplicates using centralized deduplication
                 if (!ShouldAnnounce(CONTEXT_STATUS_MENU, announcement))
                     return;
 
-                MelonLogger.Msg($"[Status Menu] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Menu] Error in SelectContent postfix: {ex.Message}");
             }
         }
     }
@@ -326,7 +303,6 @@ namespace FFII_ScreenReader.Patches
                         if (parameters.Length == 0)
                         {
                             targetMethod = method;
-                            MelonLogger.Msg($"[Status Details] Found InitDisplay()");
                             break;
                         }
                     }
@@ -338,16 +314,10 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Status Details] Patched InitDisplay successfully");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Status Details] Could not find InitDisplay method");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Details] Error patching InitDisplay: {ex.Message}");
             }
         }
 
@@ -372,7 +342,6 @@ namespace FFII_ScreenReader.Patches
                         if (parameters.Length == 0)
                         {
                             targetMethod = method;
-                            MelonLogger.Msg($"[Status Details] Found ExitDisplay()");
                             break;
                         }
                     }
@@ -384,16 +353,10 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Status Details] Patched ExitDisplay successfully");
-                }
-                else
-                {
-                    MelonLogger.Warning("[Status Details] Could not find ExitDisplay method");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Details] Error patching ExitDisplay: {ex.Message}");
             }
         }
 
@@ -411,9 +374,8 @@ namespace FFII_ScreenReader.Patches
                 // Use coroutine for one-frame delay to ensure UI has updated
                 CoroutineManager.StartManaged(DelayedStatusInit(controller));
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Details] Error in InitDisplay postfix: {ex.Message}");
             }
         }
 
@@ -427,7 +389,6 @@ namespace FFII_ScreenReader.Patches
                 // Validate controller is still active
                 if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
                 {
-                    MelonLogger.Warning("[Status Details] Controller became inactive");
                     yield break;
                 }
 
@@ -437,7 +398,6 @@ namespace FFII_ScreenReader.Patches
 
                 if (characterData == null)
                 {
-                    MelonLogger.Warning("[Status Details] Could not get character data from controller");
                     yield break;
                 }
 
@@ -464,12 +424,9 @@ namespace FFII_ScreenReader.Patches
                 {
                     FFII_ScreenReaderMod.SpeakText(statusInfo, true);
                 }
-
-                MelonLogger.Msg("[Status Details] Navigation initialized - use Up/Down arrows to browse stats");
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Details] Error in delayed status init: {ex.Message}");
             }
         }
 
@@ -495,11 +452,9 @@ namespace FFII_ScreenReader.Patches
 
                 // Clear menu state
                 StatusMenuState.ResetState();
-                MelonLogger.Msg("[Status Details] Menu exited, state cleared");
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Details] Error in ExitDisplay postfix: {ex.Message}");
             }
         }
 
@@ -525,7 +480,6 @@ namespace FFII_ScreenReader.Patches
                 IntPtr statusControllerPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(controllerPtr, 0x78);
                 if (statusControllerPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Warning("[Status Details] statusController is null at 0x78");
                     return null;
                 }
 
@@ -535,16 +489,14 @@ namespace FFII_ScreenReader.Patches
                 IntPtr targetDataPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(statusControllerPtr, 0x48);
                 if (targetDataPtr == IntPtr.Zero)
                 {
-                    MelonLogger.Warning("[Status Details] targetData is null at 0x48");
                     return null;
                 }
 
                 // Convert pointer to OwnedCharacterData
                 return new OwnedCharacterData(targetDataPtr);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[Status Details] Error getting character data: {ex.Message}");
                 return null;
             }
         }

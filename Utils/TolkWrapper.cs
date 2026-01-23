@@ -37,7 +37,6 @@ namespace FFII_ScreenReader.Utils
             try
             {
                 tolk.Unload();
-                MelonLogger.Msg("Screen reader support unloaded");
             }
             catch (Exception ex)
             {

@@ -25,8 +25,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[Battle Item] Applying battle item menu patches...");
-
                 var controllerType = typeof(BattleItemInfomationController);
 
                 MethodInfo selectContentMethod = null;
@@ -40,7 +38,6 @@ namespace FFII_ScreenReader.Patches
                         if (parameters.Length >= 1 && parameters[0].ParameterType.Name == "Cursor")
                         {
                             selectContentMethod = m;
-                            MelonLogger.Msg($"[Battle Item] Found SelectContent with Cursor parameter");
                             break;
                         }
                     }
@@ -52,7 +49,6 @@ namespace FFII_ScreenReader.Patches
                         .GetMethod("Postfix", BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Item] Patched SelectContent successfully");
                 }
                 else
                 {
@@ -61,7 +57,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Item] Error applying patches: {ex.Message}");
+                MelonLogger.Error($"[Battle Item] Error applying patches: {ex.Message}");
             }
         }
     }
@@ -84,11 +80,7 @@ namespace FFII_ScreenReader.Patches
             MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_ITEM);
         }
 
-        // State machine offsets for BattleCommandSelectController
-        private const int OFFSET_STATE_MACHINE = 0x48;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
+        // State constants for BattleCommandSelectController
         private const int STATE_NORMAL = 1;
         private const int STATE_EXTRA = 2;
 
@@ -108,7 +100,7 @@ namespace FFII_ScreenReader.Patches
                 var cmdController = GameObjectCache.GetOrRefresh<BattleCommandSelectController>();
                 if (cmdController != null && cmdController.gameObject.activeInHierarchy)
                 {
-                    int state = GetCommandState(cmdController);
+                    int state = StateReaderHelper.ReadStateTag(cmdController.Pointer, StateReaderHelper.OFFSET_BATTLE_COMMAND_CONTROLLER);
                     if (state == STATE_NORMAL || state == STATE_EXTRA)
                     {
                         Reset();
@@ -123,27 +115,6 @@ namespace FFII_ScreenReader.Patches
                 Reset();
                 return false;
             }
-        }
-
-        private static int GetCommandState(BattleCommandSelectController controller)
-        {
-            try
-            {
-                IntPtr ptr = controller.Pointer;
-                if (ptr == IntPtr.Zero) return -1;
-
-                unsafe
-                {
-                    IntPtr smPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (smPtr == IntPtr.Zero) return -1;
-
-                    IntPtr currentPtr = *(IntPtr*)((byte*)smPtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentPtr == IntPtr.Zero) return -1;
-
-                    return *(int*)((byte*)currentPtr.ToPointer() + OFFSET_STATE_TAG);
-                }
-            }
-            catch { return -1; }
         }
 
         public static void Reset()
@@ -170,27 +141,22 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 int cursorIndex = targetCursor.Index;
-                MelonLogger.Msg($"[Battle Item] SelectContent called, cursor index: {cursorIndex}");
 
                 string announcement = TryGetItemFromContentList(controller, cursorIndex);
 
                 if (string.IsNullOrEmpty(announcement))
-                {
-                    MelonLogger.Msg("[Battle Item] Could not get item from content list");
                     return;
-                }
 
                 if (!ShouldAnnounce(CONTEXT_BATTLE_ITEM, announcement))
                     return;
 
                 BattleItemMenuState.SetActive();
 
-                MelonLogger.Msg($"[Battle Item] Announcing: {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Item] Error in SelectContent patch: {ex.Message}");
+                MelonLogger.Error($"[Battle Item] Error in SelectContent patch: {ex.Message}");
             }
         }
 
@@ -206,8 +172,6 @@ namespace FFII_ScreenReader.Patches
                 var displayDataList = GetDisplayDataList(controller);
                 if (displayDataList != null && displayDataList.Count > 0)
                 {
-                    MelonLogger.Msg($"[Battle Item] displayDataList found with {displayDataList.Count} items, cursor index: {cursorIndex}");
-
                     if (cursorIndex >= 0 && cursorIndex < displayDataList.Count)
                     {
                         var data = displayDataList[cursorIndex];
@@ -219,8 +183,6 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Msg("[Battle Item] displayDataList is null or empty, trying fallback...");
-
                     // Fallback: search scene for content controllers with IsFocus
                     var allContentControllers = UnityEngine.Object.FindObjectsOfType<BattleItemInfomationContentController>();
                     if (allContentControllers != null && allContentControllers.Length > 0)
@@ -239,10 +201,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Item] Error getting item from content list: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -270,11 +229,8 @@ namespace FFII_ScreenReader.Patches
                     return new Il2CppSystem.Collections.Generic.List<ItemListContentData>(listPtr);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Item] Error accessing displayDataList: {ex.Message}");
-                return null;
-            }
+            catch { }
+            return null;
         }
 
         private static string FormatItemAnnouncement(ItemListContentData data)
@@ -307,11 +263,8 @@ namespace FFII_ScreenReader.Patches
 
                 return announcement;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Item] Error formatting announcement: {ex.Message}");
-                return null;
-            }
+            catch { }
+            return null;
         }
     }
 }

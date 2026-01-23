@@ -24,6 +24,7 @@ using KeyInputShopController = Il2CppLast.UI.KeyInput.ShopController;
 using KeyInputSecretWordController = Il2CppLast.UI.KeyInput.SecretWordController;
 using KeyInputWordsWindowController = Il2CppLast.UI.KeyInput.WordsWindowController;
 using CommonPopup = Il2CppLast.UI.KeyInput.CommonPopup;
+using SubSceneManagerMainGame = Il2CppLast.Management.SubSceneManagerMainGame;
 
 [assembly: MelonInfo(typeof(FFII_ScreenReader.Core.FFII_ScreenReaderMod), "FFII Screen Reader", "1.0.0", "Author")]
 [assembly: MelonGame("SQUARE ENIX, Inc.", "FINAL FANTASY II")]
@@ -64,9 +65,6 @@ namespace FFII_ScreenReader.Core
         // Filter toggles
         private bool filterByPathfinding = false;
         private bool filterMapExits = false;
-
-        // Map transition tracking
-        private int lastAnnouncedMapId = -1;
 
         // Preferences
         private static MelonPreferences_Category prefsCategory;
@@ -177,6 +175,9 @@ namespace FFII_ScreenReader.Core
 
             // Apply transition patches to clear menu states when menus close
             MenuTransitionPatches.ApplyPatches(harmony);
+
+            // Patch game state transitions (map changes, battle exit) - event-driven, no polling
+            GameStatePatches.ApplyPatches(harmony);
 
             // Patch entity interactions for event-driven entity refresh
             TryPatchEntityInteractions(harmony);
@@ -379,56 +380,14 @@ namespace FFII_ScreenReader.Core
             // Check for mod hotkey input using optimized Input System approach
             // Uses wasPressedThisFrame with early exit on anyKey check - minimal overhead
             inputManager?.CheckInput();
-
-            // Check for map transitions
-            CheckMapTransition();
         }
 
         /// <summary>
-        /// Checks for map transitions and triggers entity rescan when map changes.
-        /// Announces new map name and clears stale entity cache.
+        /// Forces an entity rescan. Called from GameStatePatches on map transitions.
         /// </summary>
-        private void CheckMapTransition()
+        public void ForceEntityRescan()
         {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                    return;
-
-                int currentMapId = userDataManager.CurrentMapId;
-
-                if (currentMapId != lastAnnouncedMapId && lastAnnouncedMapId != -1)
-                {
-                    // Map has changed - announce new map
-                    string mapName = MapNameResolver.GetCurrentMapName();
-                    string announcement = $"Entering {mapName}";
-
-                    // Record for deduplication before announcing
-                    // This prevents the game's fade message (e.g., "Altair – 1F") from also being announced
-                    LocationMessageTracker.SetLastMapTransition(announcement);
-
-                    SpeakText(announcement, interrupt: false);
-                    lastAnnouncedMapId = currentMapId;
-
-                    // Clear vehicle type map so it gets repopulated with new map's vehicles
-                    FieldNavigationHelper.ResetTransportationDebug();
-
-                    // Force entity rescan to clear stale entities from previous map
-                    entityScanner.ForceRescan();
-
-                    LoggerInstance.Msg($"[MapTransition] Map changed to {mapName} (ID: {currentMapId}), entities rescanned");
-                }
-                else if (lastAnnouncedMapId == -1)
-                {
-                    // First run - store current map without announcing
-                    lastAnnouncedMapId = currentMapId;
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"[MapTransition] Error: {ex.Message}");
-            }
+            entityScanner?.ForceRescan();
         }
 
         #region Entity Navigation
@@ -968,39 +927,6 @@ namespace FFII_ScreenReader.Core
         #region Menu State Management
 
         /// <summary>
-        /// Clears all menu states except the specified one.
-        /// Note: This method is deprecated. Use MenuStateRegistry.SetActiveExclusive() instead.
-        /// Kept for backward compatibility.
-        /// </summary>
-        public static void ClearOtherMenuStates(string exceptMenu)
-        {
-            // Map legacy menu names to MenuStateRegistry keys
-            string exceptKey = exceptMenu switch
-            {
-                "Equip" => MenuStateRegistry.EQUIP_MENU,
-                "BattleCommand" => MenuStateRegistry.BATTLE_COMMAND,
-                "BattleTarget" => MenuStateRegistry.BATTLE_TARGET,
-                "Item" => MenuStateRegistry.ITEM_MENU,
-                "Status" => MenuStateRegistry.STATUS_MENU,
-                "Magic" => MenuStateRegistry.MAGIC_MENU,
-                "Config" => MenuStateRegistry.CONFIG_MENU,
-                "Shop" => MenuStateRegistry.SHOP_MENU,
-                "BattleItem" => MenuStateRegistry.BATTLE_ITEM,
-                "BattleMagic" => MenuStateRegistry.BATTLE_MAGIC,
-                "Keyword" => MenuStateRegistry.KEYWORD_MENU,
-                "Words" => MenuStateRegistry.WORDS_MENU,
-                "Popup" => MenuStateRegistry.POPUP,
-                _ => null
-            };
-
-            // Use centralized registry to clear other states
-            if (!string.IsNullOrEmpty(exceptKey))
-            {
-                MenuStateRegistry.ResetAllExcept(exceptKey);
-            }
-        }
-
-        /// <summary>
         /// Clears all menu state flags including battle state.
         /// Called when returning to main menu level to ensure no stuck suppression flags.
         /// </summary>
@@ -1158,13 +1084,10 @@ namespace FFII_ScreenReader.Core
                 if (WordsMenuState.ShouldSuppress()) return;
 
                 // Popup dialogs (Yes/No confirmations)
-                // For SavePopup, read button text since UpdateFocus doesn't exist
+                // Route all popup button reading through PopupPatches.ReadCurrentButton
                 if (PopupState.ShouldSuppress())
                 {
-                    if (SaveLoadPatches.IsSavePopupActive())
-                    {
-                        SaveLoadPatches.ReadCurrentButton(cursor);
-                    }
+                    PopupPatches.ReadCurrentButton(cursor);
                     return;
                 }
 

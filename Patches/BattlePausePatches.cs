@@ -38,9 +38,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[Battle Pause] Applying battle pause menu patches...");
-                MelonLogger.Msg("[Battle Pause] Pause menu detected via cursor path in CursorNavigation_Postfix");
-
                 // Patch CommonPopup.UpdateFocus for popup button reading during battle
                 TryPatchCommonPopupUpdateFocus(harmony);
             }
@@ -65,7 +62,6 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(BattlePausePatches).GetMethod(nameof(CommonPopup_UpdateFocus_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Battle Pause] Patched CommonPopup.UpdateFocus for popup button reading");
                 }
                 else
                 {
@@ -80,20 +76,18 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Postfix for CommonPopup.UpdateFocus - reads and announces current button.
-        /// Skips initial button reading when popup just opened (lets message read first).
+        /// Only active during battle - outside battle, CursorNavigation_Postfix handles popup buttons.
+        /// Uses lastAnnouncedButtonIndex for duplicate prevention.
         /// </summary>
         public static void CommonPopup_UpdateFocus_Postfix(object __instance)
         {
             try
             {
-                if (__instance == null) return;
-
-                // Skip initial button reading - let popup message read first
-                if (PopupState.PopupJustOpened)
-                {
-                    MelonLogger.Msg("[Battle Pause] Skipping initial button read - popup just opened");
+                // Only handle popups during battle - outside battle, CursorNavigation_Postfix handles it
+                if (!FFII_ScreenReaderMod.IsInBattleUIContext())
                     return;
-                }
+
+                if (__instance == null) return;
 
                 var popup = __instance as KeyInputCommonPopup;
                 if (popup == null) return;
@@ -163,7 +157,6 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    MelonLogger.Msg($"[Battle Pause] Popup button: {buttonText}");
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }

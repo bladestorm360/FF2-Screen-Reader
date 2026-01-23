@@ -141,8 +141,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                MelonLogger.Msg("[EquipMenu] Applying equipment menu patches...");
-
                 // Patch EquipmentInfoWindowController.SelectContent for slot selection
                 var selectContentSlotMethod = AccessTools.Method(
                     typeof(KeyInputEquipmentInfoWindowController),
@@ -153,7 +151,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(EquipMenuPatches), nameof(EquipmentInfoWindowController_SelectContent_Postfix));
                     harmony.Patch(selectContentSlotMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[EquipMenu] Patched EquipmentInfoWindowController.SelectContent");
                 }
 
                 // Patch EquipmentSelectWindowController.SelectContent for item selection
@@ -166,13 +163,10 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(EquipMenuPatches), nameof(EquipmentSelectWindowController_SelectContent_Postfix));
                     harmony.Patch(selectContentItemMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[EquipMenu] Patched EquipmentSelectWindowController.SelectContent");
                 }
 
                 // Patch EquipmentWindowController.SetNextState for state transition detection
                 TryPatchSetNextState(harmony);
-
-                MelonLogger.Msg("[EquipMenu] Equipment menu patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -204,16 +198,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(EquipMenuPatches).GetMethod(nameof(SetNextState_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[EquipMenu] Patched EquipmentWindowController.SetNextState");
-                }
-                else
-                {
-                    MelonLogger.Warning("[EquipMenu] EquipmentWindowController.SetNextState not found");
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[EquipMenu] Error patching SetNextState: {ex.Message}");
             }
         }
 
@@ -227,7 +215,6 @@ namespace FFII_ScreenReader.Patches
                 // STATE_NONE = 0 (menu closing), STATE_COMMAND = 1 (command bar)
                 if ((state == 0 || state == 1) && EquipMenuState.IsActive)
                 {
-                    MelonLogger.Msg($"[EquipMenu] SetNextState called with state={state}, clearing IsActive");
                     EquipMenuState.ClearState();
                 }
             }
@@ -253,20 +240,17 @@ namespace FFII_ScreenReader.Patches
                 var contentList = __instance.contentList;
                 if (contentList == null || contentList.Count == 0)
                 {
-                    MelonLogger.Warning("[Equipment Slot] contentList is null or empty");
                     return;
                 }
 
                 if (index < 0 || index >= contentList.Count)
                 {
-                    MelonLogger.Warning($"[Equipment Slot] Index {index} out of range (count={contentList.Count})");
                     return;
                 }
 
                 var contentView = contentList[index];
                 if (contentView == null)
                 {
-                    MelonLogger.Warning("[Equipment Slot] Content view is null");
                     return;
                 }
 
@@ -338,12 +322,10 @@ namespace FFII_ScreenReader.Patches
                 if (!ShouldAnnounce(CONTEXT_EQUIP_MENU, announcement))
                     return;
 
-                MelonLogger.Msg($"[Equipment Slot] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error in EquipmentInfoWindowController.SelectContent patch: {ex.Message}");
             }
         }
 
@@ -424,12 +406,10 @@ namespace FFII_ScreenReader.Patches
                 if (!ShouldAnnounce(CONTEXT_EQUIP_MENU, announcement))
                     return;
 
-                MelonLogger.Msg($"[Equipment Item] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error in EquipmentSelectWindowController.SelectContent patch: {ex.Message}");
             }
         }
 

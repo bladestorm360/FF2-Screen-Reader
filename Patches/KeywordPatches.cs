@@ -136,8 +136,6 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                MelonLogger.Msg("[Keyword] Applying keyword patches...");
-
                 // Patch SecretWordController.SelectCommand for command bar navigation
                 var selectCommandMethod = AccessTools.Method(
                     typeof(KeyInputSecretWordController),
@@ -148,7 +146,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(SelectCommand_Postfix));
                     harmony.Patch(selectCommandMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Keyword] Patched SecretWordController.SelectCommand");
                 }
                 else
                 {
@@ -164,7 +161,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(SelectContentByWord_Postfix));
                     harmony.Patch(selectContentMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Keyword] Patched SecretWordController.SelectContentByWord");
                 }
                 else
                 {
@@ -180,7 +176,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(SelectContentByItem_Postfix));
                     harmony.Patch(selectItemMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Keyword] Patched SecretWordController.SelectContentByItem");
                 }
                 else
                 {
@@ -198,7 +193,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsSetDescriptionText_Postfix));
                     harmony.Patch(wordsSetDescriptionMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Keyword] Patched WordsContentListController.SetDescriptionText (KeyInput)");
                 }
                 else
                 {
@@ -214,13 +208,11 @@ namespace FFII_ScreenReader.Patches
                     {
                         var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsSetSelectContent_Touch_Postfix));
                         harmony.Patch(touchSetSelectMethod, postfix: new HarmonyMethod(postfix));
-                        MelonLogger.Msg("[Keyword] Patched WordsContentListController.SetSelectContent (Touch)");
                     }
                 }
                 catch { }
 
                 isPatched = true;
-                MelonLogger.Msg("[Keyword] Keyword patches applied successfully");
             }
             catch (Exception ex)
             {

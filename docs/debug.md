@@ -199,12 +199,80 @@ KeyInput and Touch often have different method names:
 **Problem**: Both "Entering X" and fade message "X" announced.
 **Fix**: Created `LocationMessageTracker` for cross-source deduplication.
 
-### Popup Button Before Message (2026-01-22)
-**Problem**: Popup buttons read before message (e.g., "Yes. Learn the selected spell?").
-**Cause**: `UpdateFocus` fires synchronously; message uses 1-frame delayed coroutine.
-**Fix**: Added `PopupState.PopupJustOpened` flag; skip initial button read in `CommonPopup_UpdateFocus_Postfix`.
-
 ### Shop Command Menu Not Reading (2026-01-22)
 **Problem**: Command bar (Buy/Sell/Equipment/Back) not announced when navigating.
 **Cause**: `OFFSET_SHOP_CONTROLLER` was `0x90` (Touch version) but KeyInput version uses `0x98`.
 **Fix**: Changed offset to `0x98` in `StateReaderHelper`. Now `ShouldSuppress()` correctly detects command bar state and lets generic cursor handle it via `ShopCommandReader`.
+
+### Menus Not Reading After New Game (2026-01-23)
+**Problem**: After starting a new game, all menus silently failed to read (cursor navigation suppressed).
+**Cause**: `IsInBattle` flag could get stuck if battle ended via defeat/flee/scripted sequence rather than victory screen. `ClearBattleActive()` was only called in `BattleResultPatches.Show_Postfix` (victory) and scene transitions.
+**Fix**: Created `GameStatePatches` to hook `SubSceneManagerMainGame.ChangeState` - event-driven approach that clears battle state when transitioning to field states (FieldReady, Player, ChangeMap). Also handles map transition announcements without per-frame polling.
+
+### Event-Driven Map Transitions (2026-01-23)
+**Problem**: `CheckMapTransition()` in `OnUpdate()` violated the "no polling" rule in CLAUDE.md.
+**Fix**: Moved map transition logic to `GameStatePatches.ChangeState_Postfix`. The game's state machine fires `ChangeState` on all major transitions (field, battle, menu, etc.), providing a reliable event-driven hook. Applied to FF2, FF3, and FF4.
+
+### Popup Button Reading Issues (2026-01-23)
+**Problem**: Two issues with popup button reading:
+1. "Return to Title" popup: "No" button interrupted the popup message text
+2. Load menu popup: First navigation key spoke nothing, second worked normally
+**Cause**: `PopupJustOpened` flag introduced to prevent early button reads had multiple code paths checking/clearing it, causing race conditions. Flag was cleared on first button-read attempt but returned without reading, then subsequent reads worked.
+**Fix**: Removed `PopupJustOpened` flag entirely. Aligned with FF3's simpler approach:
+- `CursorNavigation_Postfix` routes ALL popup button reading through `PopupPatches.ReadCurrentButton()`
+- `CommonPopup_UpdateFocus_Postfix` uses `lastAnnouncedButtonIndex` for duplicate prevention only
+- Reset `lastAnnouncedButtonIndex` in `HandlePopupDetected()` when popup opens
+Files modified: `PopupPatches.cs`, `BattlePausePatches.cs`, `SaveLoadPatches.cs`, `FFII_ScreenReaderMod.cs`.
+
+### Popup Button Duplicate Announcements (2026-01-23)
+**Problem**: Popup buttons announced twice when navigating (e.g., "Yes" spoken twice on New Game → Return to Title popup).
+**Cause**: Two code paths both fired for popup button reading outside of battle:
+1. `CursorNavigation_Postfix` → `PopupPatches.ReadCurrentButton()` (correct path outside battle)
+2. `BattlePausePatches.CommonPopup_UpdateFocus_Postfix` (no battle guard, fired for ALL popups)
+The `CommonPopup.UpdateFocus` patch was intended for battle context only (since `CursorNavigation_Postfix` returns early when `IsInBattleUIContext()` is true), but had no guard to enforce this.
+**Fix**: Added `IsInBattleUIContext()` guard to `CommonPopup_UpdateFocus_Postfix`. Now:
+- Outside battle: Only `CursorNavigation_Postfix` handles popup buttons
+- During battle: Only `CommonPopup.UpdateFocus` patch handles popup buttons (since cursor nav exits early)
+
+## Paginated Dialogue System (2026-01-23)
+
+Ported from FF4 screen reader. Announces dialogue page-by-page as player advances, instead of all pages at once.
+
+### Architecture
+
+```
+SetContent → Store messages in DialogueTracker.storedMessages[]
+SetSpeker → Store speaker in DialogueTracker.currentSpeaker
+PlayingInit → Announce ONE page (fires each time player advances)
+Close → Reset DialogueTracker state
+```
+
+### Key Classes
+
+**DialogueTracker** (MessageWindowPatches.cs):
+- `storedMessages[]` - Array of dialogue pages
+- `nextAnnouncementIndex` - Own tracking (game's `messageLineIndex` is stale)
+- `currentSpeaker` / `lastAnnouncedSpeaker` - Speaker deduplication
+- `InvalidSpeakers[]` - Filter menu labels from speakers
+
+**LineFadeMessageTracker** (ScrollMessagePatches.cs):
+- `storedMessages[]` - Array of auto-scroll lines
+- `currentLineIndex` - Line tracking for per-line announcement
+
+### API Hooks
+
+| Method | Purpose |
+|--------|---------|
+| `MessageWindowManager.SetContent` | Stores content list for per-page retrieval |
+| `MessageWindowManager.SetSpeker` | Stores speaker for "Speaker: text" format |
+| `MessageWindowManager.PlayingInit` | Announces current page (fires per page) |
+| `MessageWindowManager.Close` | Resets tracker state |
+| `LineFadeMessageWindowController.SetData` | Stores lines for per-line announcement |
+| `LineFadeMessageWindowController.PlayInit` | Announces next line (fires per line) |
+
+### Why Own Index Tracking?
+
+The game's `messageLineIndex` is often stale or not incremented when expected. `DialogueTracker.nextAnnouncementIndex` provides reliable page tracking:
+- Incremented after each announcement
+- Reset when new content is stored
+- Reset when dialogue closes
