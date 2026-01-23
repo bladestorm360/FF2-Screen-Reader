@@ -16,6 +16,9 @@ using EventTriggerEntity = Il2CppLast.Entity.Field.EventTriggerEntity;
 using SavePointEventEntity = Il2CppLast.Entity.Field.SavePointEventEntity;
 using PropertyEntity = Il2CppLast.Map.PropertyEntity;
 using PropertyGotoMap = Il2CppLast.Map.PropertyGotoMap;
+using PropertyTransportation = Il2CppLast.Map.PropertyTransportation;
+using FieldEntity = Il2CppLast.Entity.Field.FieldEntity;
+using FieldAirShip = Il2CppLast.Entity.Field.FieldAirShip;
 
 namespace FFII_ScreenReader.Field
 {
@@ -29,6 +32,10 @@ namespace FFII_ScreenReader.Field
         private EntityCategory currentCategory = EntityCategory.All;
         private List<NavigableEntity> filteredEntities = new List<NavigableEntity>();
         private PathfindingFilter pathfindingFilter = new PathfindingFilter();
+
+        // Incremental scanning: map FieldEntity to its NavigableEntity conversion
+        // This avoids re-converting the same entities every scan
+        private Dictionary<FieldEntity, NavigableEntity> entityMap = new Dictionary<FieldEntity, NavigableEntity>();
 
         // Track selected entity by identifier to maintain focus across re-sorts
         private Vector3? selectedEntityPosition = null;
@@ -156,121 +163,40 @@ namespace FFII_ScreenReader.Field
         }
 
         /// <summary>
-        /// Scans the field for all navigable entities.
+        /// Scans the field for all navigable entities using incremental scanning.
+        /// Only converts new entities, keeping existing conversions to improve performance.
         /// </summary>
         public void ScanEntities()
         {
-            entities.Clear();
-
             try
             {
-                // Log current map ID and explore FieldMap properties
-                try
-                {
-                    var mapInfo = Il2CppLast.Map.FieldMapProvisionInformation.Instance;
-                    var fieldMap = GameObjectCache.Get<FieldMap>();
-
-                    if (mapInfo != null)
-                    {
-                        int currentMapId = mapInfo.CurrentMapId;
-                        MelonLogger.Msg($"[EntityScanner] Current map ID: {currentMapId}");
-                    }
-
-                    // Explore FieldMap for map name data
-                    if (fieldMap != null)
-                    {
-                        var fieldMapType = fieldMap.GetType();
-                        var props = fieldMapType.GetProperties();
-                        MelonLogger.Msg($"[EntityScanner] FieldMap properties: {string.Join(", ", props.Select(p => p.Name))}");
-
-                        // Try to find name-related properties
-                        foreach (var prop in props)
-                        {
-                            string propLower = prop.Name.ToLower();
-                            if (propLower.Contains("name") || propLower.Contains("area") ||
-                                propLower.Contains("data") || propLower.Contains("info"))
-                            {
-                                try
-                                {
-                                    var value = prop.GetValue(fieldMap);
-                                    MelonLogger.Msg($"[EntityScanner] FieldMap.{prop.Name} = '{value}'");
-                                }
-                                catch { }
-                            }
-                        }
-
-                        // Check if fieldController has map data
-                        if (fieldMap.fieldController != null)
-                        {
-                            var controller = fieldMap.fieldController;
-                            var controllerType = controller.GetType();
-
-                            // Get mapTitleMessageId - this is likely the key for map name
-                            var mapTitleMsgIdProp = controllerType.GetProperty("mapTitleMessageId");
-                            if (mapTitleMsgIdProp != null)
-                            {
-                                var msgId = mapTitleMsgIdProp.GetValue(controller);
-                                MelonLogger.Msg($"[EntityScanner] FieldController.mapTitleMessageId = '{msgId}'");
-
-                                // Try to resolve it via MessageManager
-                                if (msgId != null)
-                                {
-                                    var messageManager = MessageManager.Instance;
-                                    string mapName = messageManager?.GetMessage(msgId.ToString(), true);
-                                    MelonLogger.Msg($"[EntityScanner] Resolved mapTitleMessageId -> '{mapName}'");
-                                }
-                            }
-
-                            // Get currentAreaId
-                            var areaIdProp = controllerType.GetProperty("currentAreaId");
-                            if (areaIdProp != null)
-                            {
-                                var areaId = areaIdProp.GetValue(controller);
-                                MelonLogger.Msg($"[EntityScanner] FieldController.currentAreaId = '{areaId}'");
-                            }
-
-                            // Get nextMap for destination info
-                            var nextMapProp = controllerType.GetProperty("nextMap");
-                            if (nextMapProp != null)
-                            {
-                                var nextMap = nextMapProp.GetValue(controller);
-                                if (nextMap != null)
-                                {
-                                    MelonLogger.Msg($"[EntityScanner] FieldController.nextMap = '{nextMap}', type={nextMap.GetType().Name}");
-                                    // Log nextMap properties
-                                    var nextMapType = nextMap.GetType();
-                                    var nextMapProps = nextMapType.GetProperties();
-                                    MelonLogger.Msg($"[EntityScanner] nextMap properties: {string.Join(", ", nextMapProps.Select(p => p.Name))}");
-                                }
-                            }
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[EntityScanner] Could not get map info: {ex.Message}");
-                }
-
                 var fieldEntities = FieldNavigationHelper.GetAllFieldEntities();
-                MelonLogger.Msg($"[EntityScanner] Found {fieldEntities.Count} field entities");
+                var currentSet = new HashSet<FieldEntity>(fieldEntities);
 
+                // Remove entities that no longer exist
+                var toRemove = entityMap.Keys.Where(k => !currentSet.Contains(k)).ToList();
+                foreach (var key in toRemove)
+                    entityMap.Remove(key);
+
+                // Only process NEW entities (ones not already in the map)
                 foreach (var fieldEntity in fieldEntities)
                 {
-                    try
+                    if (!entityMap.ContainsKey(fieldEntity))
                     {
-                        var navigable = ConvertToNavigableEntity(fieldEntity);
-                        if (navigable != null)
+                        try
                         {
-                            entities.Add(navigable);
+                            var navigable = ConvertToNavigableEntity(fieldEntity);
+                            if (navigable != null)
+                            {
+                                entityMap[fieldEntity] = navigable;
+                            }
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Warning($"Error converting entity: {ex.Message}");
+                        catch { }  // Silently skip entities that fail to convert
                     }
                 }
 
-                MelonLogger.Msg($"[EntityScanner] Converted {entities.Count} navigable entities");
+                // Update the entities list from the map
+                entities = entityMap.Values.ToList();
 
                 // Re-apply filter after scanning
                 ApplyFilter();
@@ -286,12 +212,21 @@ namespace FFII_ScreenReader.Field
         }
 
         /// <summary>
+        /// Forces a full rescan by clearing the entity cache.
+        /// Use this when changing maps or when entities may have changed state.
+        /// </summary>
+        public void ForceRescan()
+        {
+            entityMap.Clear();
+            loggedEntityTypes.Clear(); // Clear debug log tracking for fresh output
+            ScanEntities();
+        }
+
+        /// <summary>
         /// Applies the current category filter.
         /// </summary>
         private void ApplyFilter()
         {
-            MelonLogger.Msg($"[EntityScanner] ApplyFilter: category={currentCategory}, entities.Count={entities.Count}");
-
             if (currentCategory == EntityCategory.All)
             {
                 filteredEntities = new List<NavigableEntity>(entities);
@@ -299,15 +234,6 @@ namespace FFII_ScreenReader.Field
             else
             {
                 filteredEntities = entities.Where(e => e.Category == currentCategory).ToList();
-            }
-
-            MelonLogger.Msg($"[EntityScanner] After filter: filteredEntities.Count={filteredEntities.Count}");
-
-            // Log all filtered entities
-            for (int i = 0; i < filteredEntities.Count; i++)
-            {
-                var e = filteredEntities[i];
-                MelonLogger.Msg($"[EntityScanner]   [{i}] {e.Category}: '{e.Name}'");
             }
 
             // Sort by distance from player
@@ -374,25 +300,16 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         public void NextEntity()
         {
-            MelonLogger.Msg($"[EntityScanner] NextEntity called. Filter enabled: {pathfindingFilter.IsEnabled}, Category: {currentCategory}");
-
             if (filteredEntities.Count == 0)
             {
                 ScanEntities();
                 if (filteredEntities.Count == 0)
-                {
-                    MelonLogger.Msg("[EntityScanner] No entities after scan");
                     return;
-                }
             }
-
-            MelonLogger.Msg($"[EntityScanner] filteredEntities.Count = {filteredEntities.Count}, currentIndex = {currentIndex}");
 
             if (!pathfindingFilter.IsEnabled)
             {
                 currentIndex = (currentIndex + 1) % filteredEntities.Count;
-                var entity = filteredEntities[currentIndex];
-                MelonLogger.Msg($"[EntityScanner] Filter OFF - selected '{entity.Name}' at index {currentIndex}");
                 SaveSelectedEntityIdentifier();
                 return;
             }
@@ -463,6 +380,10 @@ namespace FFII_ScreenReader.Field
             MelonLogger.Msg("[EntityScanner] No reachable entities found with pathfinding filter");
         }
 
+        // Debug: track logged entity types to avoid spam
+        private static HashSet<string> loggedEntityTypes = new HashSet<string>();
+        private static bool vehicleDebugEnabled = true;
+
         /// <summary>
         /// Converts a FieldEntity to a NavigableEntity.
         /// Order matters - check specific types before generic ones.
@@ -485,20 +406,80 @@ namespace FFII_ScreenReader.Field
 
             string goNameLower = goName.ToLower();
 
-            // Log EVERY entity for debugging - show what we're working with
-            MelonLogger.Msg($"[Entity] Processing: type={typeName}, name={goName}, pos=({position.x:F0},{position.y:F0},{position.z:F0})");
+            // Debug: Log entity types we haven't seen before (or vehicle-related ones always)
+            bool isVehicleRelated = typeName.Contains("Air") || typeName.Contains("Ship") ||
+                                    typeName.Contains("Transport") || typeName.Contains("Chocobo") ||
+                                    goNameLower.Contains("air") || goNameLower.Contains("ship") ||
+                                    goNameLower.Contains("transport") || goNameLower.Contains("chocobo");
+
+            if (vehicleDebugEnabled && (isVehicleRelated || !loggedEntityTypes.Contains(typeName)))
+            {
+                MelonLogger.Msg($"[Entity Debug] Type: {typeName}, GO: {goName}, Pos: {position}");
+                loggedEntityTypes.Add(typeName);
+            }
 
             // Skip the player entity
             if (typeName.Contains("FieldPlayer") || goNameLower.Contains("player"))
-            {
-                MelonLogger.Msg($"[Entity] SKIP (player): {typeName} / {goName}");
                 return null;
+
+            // Check VehicleTypeMap first - this has the accurate type from Transportation.ModelList
+            if (FieldNavigationHelper.VehicleTypeMap.TryGetValue(fieldEntity, out int vehicleType))
+            {
+                string vehicleName = GetVehicleNameFromType(vehicleType);
+                if (vehicleDebugEnabled)
+                {
+                    MelonLogger.Msg($"[Entity Debug] *** VEHICLE (VehicleTypeMap) *** Type={vehicleType}, Name={vehicleName}, GO: {goName}");
+                }
+                return new VehicleEntity(fieldEntity, position, vehicleName, vehicleType);
             }
 
-            // Skip party members following the player
+            // Check for FieldAirShip BEFORE the residentchara filter
+            // Vehicles may have similar naming to resident characters but should be detected
+            var airship = fieldEntity.TryCast<FieldAirShip>();
+            if (vehicleDebugEnabled && isVehicleRelated)
+            {
+                MelonLogger.Msg($"[Entity Debug] TryCast<FieldAirShip> result: {(airship != null ? "SUCCESS" : "null")}");
+            }
+            if (airship != null)
+            {
+                MelonLogger.Msg($"[Entity Debug] *** AIRSHIP DETECTED *** Type: {typeName}, GO: {goName}");
+                string vehicleName = CleanObjectName(goName, "Airship");
+                return new VehicleEntity(fieldEntity, position, vehicleName, 3); // 3 = Plane/Airship in TransportationType
+            }
+
+            // Check for vehicles via PropertyTransportation
+            // Vehicles from Transportation.ModelList have this property type
+            try
+            {
+                var property = fieldEntity.Property;
+                if (property != null)
+                {
+                    var transportProperty = property.TryCast<PropertyTransportation>();
+                    if (transportProperty != null)
+                    {
+                        if (vehicleDebugEnabled)
+                        {
+                            MelonLogger.Msg($"[Entity Debug] *** VEHICLE (PropertyTransportation) *** Type: {typeName}, GO: {goName}");
+                        }
+                        // Determine vehicle type from name
+                        string vehicleName = GetVehicleNameFromProperty(goName, typeName);
+                        int vehicleTypeFromName = GetVehicleTypeFromName(vehicleName);
+                        // Skip unknown vehicle types (Type 0)
+                        if (vehicleTypeFromName == 0)
+                            return null;
+                        return new VehicleEntity(fieldEntity, position, vehicleName, vehicleTypeFromName);
+                    }
+                }
+            }
+            catch { }
+
+            // Skip party members following the player (but not vehicles which were checked above)
             if (goNameLower.Contains("residentchara"))
             {
-                MelonLogger.Msg($"[Entity] SKIP (party member): {typeName} / {goName}");
+                if (vehicleDebugEnabled && isVehicleRelated)
+                {
+                    MelonLogger.Msg($"[Entity Debug] FILTERED by residentchara: {typeName}, GO: {goName}");
+                }
                 return null;
             }
 
@@ -506,20 +487,13 @@ namespace FFII_ScreenReader.Field
             try
             {
                 if (!fieldEntity.gameObject.activeInHierarchy)
-                {
-                    MelonLogger.Msg($"[Entity] SKIP (inactive): {typeName} / {goName}");
                     return null;
-                }
             }
             catch { }
 
             // 1. Check for MoveArea FIRST - these are area boundaries, not map exits
-            // MoveArea entities are trigger zones within a map, categorized as Events
             if (goNameLower.Contains("movearea"))
-            {
-                MelonLogger.Msg($"[Entity] -> Area Boundary: {goName}");
                 return new EventEntity(fieldEntity, position, "Area Boundary", "AreaBoundary");
-            }
 
             // 2. Check for map exit/door (GotoMap and other exit types)
             if (typeName.Contains("MapChange") || typeName.Contains("Door") ||
@@ -532,7 +506,6 @@ namespace FFII_ScreenReader.Field
                 goNameLower.Contains("warp") || goNameLower.Contains("transfer"))
             {
                 var (destMapId, destName) = GetMapExitDestination(fieldEntity);
-                MelonLogger.Msg($"[Entity] -> MapExit: {goName}, destId={destMapId}, destName={destName}");
                 return new MapExitEntity(fieldEntity, position, "Exit", destMapId, destName);
             }
 
@@ -541,9 +514,7 @@ namespace FFII_ScreenReader.Field
             if (treasureBox != null)
             {
                 bool isOpened = GetTreasureBoxOpenedState(treasureBox);
-                string name = "Treasure Chest";
-                MelonLogger.Msg($"[Entity] -> Chest (TryCast): {goName}, opened={isOpened}");
-                return new TreasureChestEntity(fieldEntity, position, name, isOpened);
+                return new TreasureChestEntity(fieldEntity, position, "Treasure Chest", isOpened);
             }
 
             // Fallback: Check for treasure chest by name patterns
@@ -552,34 +523,27 @@ namespace FFII_ScreenReader.Field
             {
                 string name = CleanObjectName(goName, "Treasure Chest");
                 bool isOpened = CheckIfTreasureOpened(fieldEntity);
-                MelonLogger.Msg($"[Entity] -> Chest (name): {name}, opened={isOpened}");
                 return new TreasureChestEntity(fieldEntity, position, name, isOpened);
             }
 
             // 4. Check for save point
             if (typeName.Contains("Save") || goNameLower.Contains("save"))
-            {
-                MelonLogger.Msg($"[Entity] -> SavePoint");
                 return new SavePointEntity(fieldEntity, position, "Save Point");
-            }
 
-            // 5. Check for transportation/vehicles
+            // 5. Check for transportation/vehicles (string-based fallback)
             if (typeName.Contains("Transport") || goNameLower.Contains("ship") ||
                 goNameLower.Contains("canoe") || goNameLower.Contains("airship") ||
                 goNameLower.Contains("chocobo"))
             {
+                MelonLogger.Msg($"[Entity Debug] *** VEHICLE (string match) *** Type: {typeName}, GO: {goName}");
                 string vehicleName = CleanObjectName(goName, "Vehicle");
-                MelonLogger.Msg($"[Entity] -> Vehicle: {vehicleName}");
                 return new VehicleEntity(fieldEntity, position, vehicleName, 0);
             }
 
             // 6. Check for SavePointEventEntity by type casting
             var savePointEvent = fieldEntity.TryCast<SavePointEventEntity>();
             if (savePointEvent != null)
-            {
-                MelonLogger.Msg($"[Entity] -> SavePoint (TryCast): {goName}");
                 return new SavePointEntity(fieldEntity, position, "Save Point");
-            }
 
             // 7. Check for EventTriggerEntity by type casting
             var eventTrigger = fieldEntity.TryCast<EventTriggerEntity>();
@@ -587,10 +551,7 @@ namespace FFII_ScreenReader.Field
             {
                 string entityName = GetEntityNameFromProperty(fieldEntity);
                 if (string.IsNullOrEmpty(entityName))
-                {
                     entityName = CleanObjectName(goName, "Event");
-                }
-                MelonLogger.Msg($"[Entity] -> Event (TryCast): {goName} -> '{entityName}'");
                 return new EventEntity(fieldEntity, position, entityName, "Event");
             }
 
@@ -600,40 +561,31 @@ namespace FFII_ScreenReader.Field
             {
                 string name = GetNpcDisplayName(fieldEntity, goName);
                 bool isShop = goNameLower.Contains("shop") || goNameLower.Contains("merchant");
-                MelonLogger.Msg($"[Entity] -> NPC (FieldNonPlayer): {name}, shop={isShop}");
                 return new NPCEntity(fieldEntity, position, name, "", isShop);
             }
 
-            // 7. Check for NPC by GameObject name "FieldNpc" (fallback)
+            // 9. Check for NPC by GameObject name "FieldNpc" (fallback)
             if (goNameLower.Contains("fieldnpc"))
             {
                 string name = GetNpcDisplayName(fieldEntity, goName);
                 bool isShop = goNameLower.Contains("shop") || goNameLower.Contains("merchant");
-                MelonLogger.Msg($"[Entity] -> NPC (name): {name}, shop={isShop}");
                 return new NPCEntity(fieldEntity, position, name, "", isShop);
             }
 
-            // 8. Check for NPC/character by type name (fallback)
+            // 10. Check for NPC/character by type name (fallback)
             if ((typeName.Contains("Chara") || typeName.Contains("Npc") || typeName.Contains("NPC"))
                 && !typeName.Contains("Player") && !typeName.Contains("Resident"))
             {
                 string name = GetNpcDisplayName(fieldEntity, goName);
                 bool isShop = goNameLower.Contains("shop") || goNameLower.Contains("merchant");
-                MelonLogger.Msg($"[Entity] -> NPC (type): {name}, shop={isShop}");
                 return new NPCEntity(fieldEntity, position, name, "", isShop);
             }
 
             // Skip visual effects and non-interactive objects
-            // Note: Do NOT skip "mapobject" - these are interactive objects like springs
-            // Note: Do NOT skip generic "trigger" - these may be valid EventTriggerEntity objects
-            // Skip "opentrigger" specifically - these are door activation zones (we have GotoMap exits)
             if (goNameLower.Contains("effect") || goNameLower.Contains("tileanim") ||
                 goNameLower.Contains("scroll") || goNameLower.Contains("pointin") ||
                 goNameLower.Contains("opentrigger"))
-            {
-                MelonLogger.Msg($"[Entity] SKIP (visual/trigger): {typeName} / {goName}");
                 return null;
-            }
 
             // 11. Check for interactive objects (generic fallback)
             var interactiveEntity = fieldEntity.TryCast<IInteractiveEntity>();
@@ -641,21 +593,14 @@ namespace FFII_ScreenReader.Field
             {
                 string entityName = GetEntityNameFromProperty(fieldEntity);
                 if (string.IsNullOrEmpty(entityName))
-                {
                     entityName = CleanObjectName(goName, "Interactive Object");
-                }
-                MelonLogger.Msg($"[Entity] -> Interactive (TryCast): {goName} -> '{entityName}'");
                 return new EventEntity(fieldEntity, position, entityName, "Interactive");
             }
 
             // Include ALL remaining entities as generic events
-            // This ensures nothing is filtered out - we can refine the list later
             string fallbackName = GetEntityNameFromProperty(fieldEntity);
             if (string.IsNullOrEmpty(fallbackName))
-            {
                 fallbackName = CleanObjectName(goName, typeName);
-            }
-            MelonLogger.Msg($"[Entity] -> Generic (fallback): {typeName} / {goName} -> '{fallbackName}'");
             return new EventEntity(fieldEntity, position, fallbackName, "Generic");
         }
 
@@ -682,6 +627,66 @@ namespace FFII_ScreenReader.Field
         }
 
         /// <summary>
+        /// Gets a display name for a vehicle based on TransportationType.
+        /// </summary>
+        private string GetVehicleNameFromType(int transportType)
+        {
+            // TransportationType enum values from dump.cs
+            return transportType switch
+            {
+                2 => "Ship",
+                3 => "Airship",
+                6 => "Submarine",
+                7 => "Airship",      // LowFlying variant
+                8 => "Airship",      // SpecialPlane variant
+                9 => "Yellow Chocobo",
+                10 => "Black Chocobo",
+                _ => "Vehicle"
+            };
+        }
+
+        /// <summary>
+        /// Gets a display name for a vehicle entity.
+        /// </summary>
+        private string GetVehicleNameFromProperty(string goName, string typeName)
+        {
+            string nameLower = goName.ToLower();
+
+            // Check for specific vehicle keywords
+            if (nameLower.Contains("airship") || typeName.Contains("AirShip"))
+                return "Airship";
+            if (nameLower.Contains("chocobo"))
+                return "Chocobo";
+            if (nameLower.Contains("canoe"))
+                return "Canoe";
+            if (nameLower.Contains("ship") || nameLower.Contains("boat"))
+                return "Ship";
+
+            // Default to cleaned name or generic
+            string cleaned = CleanObjectName(goName, "");
+            return string.IsNullOrEmpty(cleaned) ? "Vehicle" : cleaned;
+        }
+
+        /// <summary>
+        /// Gets the TransportationType enum value from vehicle name.
+        /// </summary>
+        private int GetVehicleTypeFromName(string vehicleName)
+        {
+            string nameLower = vehicleName.ToLower();
+
+            // TransportationType enum values from dump.cs
+            // Ship=2, Plane=3, YellowChocobo=9, BlackChocobo=10
+            if (nameLower.Contains("airship") || nameLower.Contains("plane"))
+                return 3; // Plane/Airship
+            if (nameLower.Contains("ship") || nameLower.Contains("boat"))
+                return 2; // Ship
+            if (nameLower.Contains("chocobo"))
+                return 9; // YellowChocobo (default)
+
+            return 0; // Unknown
+        }
+
+        /// <summary>
         /// Gets the entity name from PropertyEntity.Name for event/interactive entities.
         /// Falls back to trying to resolve via MessageManager if name looks like a message ID.
         /// </summary>
@@ -699,11 +704,7 @@ namespace FFII_ScreenReader.Field
                 // Get the Name property
                 string name = property.Name;
                 if (string.IsNullOrWhiteSpace(name))
-                {
                     return null;
-                }
-
-                MelonLogger.Msg($"[EntityScanner] PropertyEntity.Name = '{name}'");
 
                 // Check if name looks like a message ID (e.g., starts with "mes_" or similar patterns)
                 if (name.StartsWith("mes_", StringComparison.OrdinalIgnoreCase) ||
@@ -716,10 +717,7 @@ namespace FFII_ScreenReader.Field
                     {
                         string localizedName = messageManager.GetMessage(name, false);
                         if (!string.IsNullOrWhiteSpace(localizedName) && localizedName != name)
-                        {
-                            MelonLogger.Msg($"[EntityScanner] Resolved '{name}' -> '{localizedName}'");
                             return localizedName;
-                        }
                     }
                 }
 
@@ -778,7 +776,6 @@ namespace FFII_ScreenReader.Field
         {
             try
             {
-                // FieldTresureBox has private "isOpen" field at offset 0x159 (from dump.cs:301492)
                 // First try reflection
                 var isOpenField = treasureBox.GetType().GetField("isOpen",
                     System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -786,29 +783,21 @@ namespace FFII_ScreenReader.Field
                 {
                     var value = isOpenField.GetValue(treasureBox);
                     if (value != null)
-                    {
-                        MelonLogger.Msg($"[TreasureBox] Got isOpen via reflection: {value}");
                         return (bool)value;
-                    }
                 }
 
                 // Fallback: Try IL2CPP pointer offset access
-                // isOpen is at offset 0x159 in FieldTresureBox
                 unsafe
                 {
                     IntPtr ptr = treasureBox.Pointer;
                     if (ptr != IntPtr.Zero)
                     {
                         bool isOpen = *(bool*)(ptr + 0x159);
-                        MelonLogger.Msg($"[TreasureBox] Got isOpen via pointer offset: {isOpen}");
                         return isOpen;
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[TreasureBox] Error getting isOpen: {ex.Message}");
-            }
+            catch { }
             return false;
         }
 
@@ -851,17 +840,9 @@ namespace FFII_ScreenReader.Field
 
             try
             {
-                // Access the Property directly on the IL2CPP object
                 PropertyEntity property = fieldEntity.Property;
                 if (property == null)
-                {
-                    MelonLogger.Msg("[MapExit] Property is null");
                     return (destMapId, destName);
-                }
-
-                // Log the actual property type for debugging
-                string actualType = property.GetType().FullName;
-                MelonLogger.Msg($"[MapExit] Property type: {actualType}");
 
                 // Try to cast to PropertyGotoMap which has the actual MapId destination
                 var gotoMapProperty = property.TryCast<PropertyGotoMap>();
@@ -869,39 +850,20 @@ namespace FFII_ScreenReader.Field
                 {
                     destMapId = gotoMapProperty.MapId;
                     string assetName = gotoMapProperty.AssetName;
-                    MelonLogger.Msg($"[MapExit] PropertyGotoMap - MapId={destMapId}, AssetName={assetName}");
 
                     if (destMapId > 0)
                     {
                         string mapName = MapNameResolver.GetMapExitName(destMapId);
                         if (!string.IsNullOrEmpty(mapName))
-                        {
                             destName = mapName;
-                            MelonLogger.Msg($"[MapExit] Resolved map {destMapId} -> '{mapName}'");
-                        }
-                        else
-                        {
-                            // Could not resolve map name, just say "Exit"
-                            MelonLogger.Msg($"[MapExit] Could not resolve map {destMapId}, using 'Exit'");
-                        }
                     }
                     else if (!string.IsNullOrEmpty(assetName))
                     {
-                        // MapId is 0 but we have AssetName, format it as readable name
                         destName = FormatAssetNameAsMapName(assetName);
-                        MelonLogger.Msg($"[MapExit] Using AssetName: {assetName} -> '{destName}'");
                     }
                 }
-                else
-                {
-                    // Not a PropertyGotoMap - could be another exit type
-                    MelonLogger.Msg("[MapExit] Property is not PropertyGotoMap, using generic 'Exit'");
-                }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MapExit] Error getting destination: {ex.Message}");
-            }
+            catch { }
 
             return (destMapId, destName);
         }
@@ -955,10 +917,6 @@ namespace FFII_ScreenReader.Field
                     {
                         var propType = propertyObj.GetType();
 
-                        // Log Property type and its members for debugging
-                        var propMembers = propType.GetProperties();
-                        MelonLogger.Msg($"[NPC] Property type: {propType.Name}, members: {string.Join(", ", propMembers.Select(p => p.Name))}");
-
                         // Try to get character/NPC name from Property
                         string[] nameProps = { "characterName", "npcName", "displayName", "Name", "name" };
                         foreach (var nameProp in nameProps)
@@ -968,10 +926,7 @@ namespace FFII_ScreenReader.Field
                             {
                                 string name = innerProp.GetValue(propertyObj) as string;
                                 if (!string.IsNullOrWhiteSpace(name) && !name.Contains("Clone"))
-                                {
-                                    MelonLogger.Msg($"[NPC] Found name in Property.{nameProp}: {name}");
                                     return name;
-                                }
                             }
                         }
 
@@ -995,10 +950,7 @@ namespace FFII_ScreenReader.Field
                                             {
                                                 string name = messageManager.GetMessage(keyFormat);
                                                 if (!string.IsNullOrEmpty(name))
-                                                {
-                                                    MelonLogger.Msg($"[NPC] Resolved name from Property.{idPropName}={charId}: {name}");
                                                     return name;
-                                                }
                                             }
                                         }
                                     }
@@ -1009,10 +961,7 @@ namespace FFII_ScreenReader.Field
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[NPC] Error getting display name: {ex.Message}");
-            }
+            catch { }
 
             // Fallback to generic NPC (don't use GameObject name as it's just "FieldNpc(Clone)")
             return "NPC";

@@ -154,6 +154,19 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
+        /// Gets a cached instance, or searches and caches if not found.
+        /// Convenience method combining Get() + Refresh() fallback pattern.
+        /// </summary>
+        public static T GetOrRefresh<T>() where T : UnityEngine.Object
+        {
+            T cached = Get<T>();
+            if (cached != null)
+                return cached;
+
+            return Refresh<T>();
+        }
+
+        /// <summary>
         /// Forces a refresh of the cached instance for the specified type.
         /// </summary>
         public static T Refresh<T>() where T : UnityEngine.Object

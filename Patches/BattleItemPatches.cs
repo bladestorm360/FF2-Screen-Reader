@@ -5,6 +5,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 
 // Type aliases for IL2CPP types
 using BattleItemInfomationController = Il2CppLast.UI.KeyInput.BattleItemInfomationController;
@@ -70,7 +71,18 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleItemMenuState
     {
-        public static bool IsActive { get; set; } = false;
+        /// <summary>
+        /// True when battle item menu is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM);
+
+        /// <summary>
+        /// Sets the battle item menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_ITEM);
+        }
 
         // State machine offsets for BattleCommandSelectController
         private const int OFFSET_STATE_MACHINE = 0x48;
@@ -86,14 +98,14 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                var itemController = UnityEngine.Object.FindObjectOfType<BattleItemInfomationController>();
+                var itemController = GameObjectCache.GetOrRefresh<BattleItemInfomationController>();
                 if (itemController == null || !itemController.gameObject.activeInHierarchy)
                 {
                     Reset();
                     return false;
                 }
 
-                var cmdController = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
+                var cmdController = GameObjectCache.GetOrRefresh<BattleCommandSelectController>();
                 if (cmdController != null && cmdController.gameObject.activeInHierarchy)
                 {
                     int state = GetCommandState(cmdController);
@@ -134,25 +146,10 @@ namespace FFII_ScreenReader.Patches
             catch { return -1; }
         }
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
-        }
-
         public static void Reset()
         {
-            IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
+            MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_ITEM);
+            AnnouncementDeduplicator.Reset(AnnouncementDeduplicator.CONTEXT_BATTLE_ITEM);
         }
     }
 
@@ -183,11 +180,10 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                if (!BattleItemMenuState.ShouldAnnounce(announcement))
+                if (!ShouldAnnounce(CONTEXT_BATTLE_ITEM, announcement))
                     return;
 
-                FFII_ScreenReaderMod.ClearOtherMenuStates("BattleItem");
-                BattleItemMenuState.IsActive = true;
+                BattleItemMenuState.SetActive();
 
                 MelonLogger.Msg($"[Battle Item] Announcing: {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

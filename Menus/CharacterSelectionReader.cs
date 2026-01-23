@@ -7,10 +7,6 @@ using FFII_ScreenReader.Utils;
 using MenuManager = Il2CppLast.UI.MenuManager;
 using StatusWindowContentControllerBase = Il2CppSerial.Template.UI.StatusWindowContentControllerBase;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
-using UserDataManager = Il2CppLast.Management.UserDataManager;
-using CorpsId = Il2CppLast.Defaine.User.CorpsId;
-using Condition = Il2CppLast.Data.Master.Condition;
-using MessageManager = Il2CppLast.Management.MessageManager;
 
 namespace FFII_ScreenReader.Menus
 {
@@ -181,7 +177,7 @@ namespace FFII_ScreenReader.Menus
                 // FF2: No jobs - skip job name
 
                 // Row (Front/Back)
-                string row = GetCharacterRow(characterData);
+                string row = CharacterUtility.GetCharacterRow(characterData);
                 if (!string.IsNullOrEmpty(row))
                 {
                     parts.Add(row);
@@ -223,34 +219,6 @@ namespace FFII_ScreenReader.Menus
                 MelonLogger.Warning($"CharacterSelectionReader: Error in ReadFromCharacterData: {ex.Message}");
             }
 
-            return null;
-        }
-
-        /// <summary>
-        /// Gets the character's row (Front Row / Back Row) from Corps data.
-        /// </summary>
-        private static string GetCharacterRow(OwnedCharacterData characterData)
-        {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                    return null;
-
-                var corpsList = userDataManager.GetCorpsListClone();
-                if (corpsList == null)
-                    return null;
-
-                int characterId = characterData.Id;
-                foreach (var corps in corpsList)
-                {
-                    if (corps != null && corps.CharacterId == characterId)
-                    {
-                        return corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
-                    }
-                }
-            }
-            catch { }
             return null;
         }
 

@@ -8,6 +8,7 @@ using Il2CppLast.Battle.Function;
 using Il2CppLast.Systems;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using BattlePlayerData = Il2Cpp.BattlePlayerData;
 using BattleUtility = Il2CppLast.Battle.BattleUtility;
 using BattleController = Il2CppLast.Battle.BattleController;
@@ -17,16 +18,13 @@ using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
 namespace FFII_ScreenReader.Patches
 {
     /// <summary>
-    /// Global message deduplication to prevent the same message being spoken by multiple patches.
+    /// Helper for battle message announcements using centralized deduplication.
     /// </summary>
     public static class GlobalBattleMessageTracker
     {
-        private static string lastMessage = "";
-        private static float lastMessageTime = 0f;
-        private const float MESSAGE_THROTTLE_SECONDS = 1.5f;
-
         /// <summary>
         /// Try to announce a message, returning false if it was recently announced.
+        /// Uses centralized AnnouncementDeduplicator for deduplication.
         /// </summary>
         public static bool TryAnnounce(string message, string source)
         {
@@ -36,16 +34,12 @@ namespace FFII_ScreenReader.Patches
             }
 
             string cleanMessage = message.Trim();
-            float currentTime = UnityEngine.Time.time;
 
-            // Skip if same message within throttle window
-            if (cleanMessage == lastMessage && (currentTime - lastMessageTime) < MESSAGE_THROTTLE_SECONDS)
+            // Use centralized deduplication
+            if (!ShouldAnnounce(CONTEXT_BATTLE_MESSAGE, cleanMessage))
             {
                 return false;
             }
-
-            lastMessage = cleanMessage;
-            lastMessageTime = currentTime;
 
             MelonLogger.Msg($"[{source}] {cleanMessage}");
             // Battle actions don't interrupt - they queue
@@ -58,8 +52,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void Reset()
         {
-            lastMessage = "";
-            lastMessageTime = 0f;
+            AnnouncementDeduplicator.Reset(CONTEXT_BATTLE_ACTION, CONTEXT_BATTLE_MESSAGE, CONTEXT_BATTLE_CONDITION);
         }
     }
 
@@ -182,7 +175,14 @@ namespace FFII_ScreenReader.Patches
                 {
                     announcement = $"{actorName} attacks";
                 }
-                GlobalBattleMessageTracker.TryAnnounce(announcement, "BattleAction");
+
+                // Use object-based deduplication so different enemies with same name
+                // attacking in sequence are both announced (each has unique BattleActData)
+                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_BATTLE_ACTION, battleActData))
+                {
+                    MelonLogger.Msg($"[BattleAction] {announcement}");
+                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
+                }
             }
             catch (Exception ex)
             {
@@ -382,8 +382,6 @@ namespace FFII_ScreenReader.Patches
 
         #region ConditionAdd - Status Effect Announcements
 
-        private static string lastConditionAnnouncement = "";
-
         public static void ConditionAdd_Postfix(BattleUnitData battleUnitData, int id)
         {
             try
@@ -465,9 +463,8 @@ namespace FFII_ScreenReader.Patches
 
                 string announcement = $"{targetName}: {conditionName}";
 
-                // Skip duplicates
-                if (announcement == lastConditionAnnouncement) return;
-                lastConditionAnnouncement = announcement;
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_BATTLE_CONDITION, announcement)) return;
 
                 MelonLogger.Msg($"[Status] {announcement}");
                 // Status doesn't interrupt
@@ -585,7 +582,6 @@ namespace FFII_ScreenReader.Patches
         public static void ResetState()
         {
             GlobalBattleMessageTracker.Reset();
-            lastConditionAnnouncement = "";
             lastPreemptiveState = 0;
         }
     }

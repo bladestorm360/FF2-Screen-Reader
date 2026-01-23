@@ -46,8 +46,6 @@ namespace FFII_ScreenReader.Utils
         {
             lock (coroutineLock)
             {
-                CleanupCompleted();
-
                 if (activeCoroutines.Count >= maxConcurrentCoroutines)
                 {
                     activeCoroutines.RemoveAt(0);
@@ -63,11 +61,6 @@ namespace FFII_ScreenReader.Utils
                     MelonLogger.Error($"Error starting managed coroutine: {ex.Message}");
                 }
             }
-        }
-
-        private static void CleanupCompleted()
-        {
-            // Simplified: we rely on max limit for now
         }
     }
 }

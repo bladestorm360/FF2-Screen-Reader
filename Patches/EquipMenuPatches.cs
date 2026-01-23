@@ -4,6 +4,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
 
 // Type aliases for IL2CPP types
@@ -13,6 +14,8 @@ using EquipSlotType = Il2CppLast.Defaine.EquipSlotType;
 using EquipUtility = Il2CppLast.Systems.EquipUtility;
 using GameCursor = Il2CppLast.UI.Cursor;
 using CustomScrollViewWithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
+using KeyInputEquipmentWindowController = Il2CppLast.UI.KeyInput.EquipmentWindowController;
+using System.Reflection;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -23,12 +26,16 @@ namespace FFII_ScreenReader.Patches
     public static class EquipMenuState
     {
         /// <summary>
-        /// Flag indicating if the equipment menu is active and handling announcements.
+        /// True when equipment menu is active. Delegates to MenuStateRegistry.
         /// </summary>
-        public static bool IsActive { get; private set; } = false;
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.EQUIP_MENU);
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
+        // State constants from dump.cs (KeyInput.EquipmentWindowController.State)
+        private const int STATE_NONE = 0;     // Menu closed
+        private const int STATE_COMMAND = 1;  // Command bar (Equip/Remove/etc.)
+        private const int STATE_INFO = 2;     // Slot selection
+        private const int STATE_SELECT = 3;   // Item selection
+
 
         /// <summary>
         /// Called when equipment menu activates (slot or item list focused).
@@ -36,43 +43,34 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void SetActive()
         {
-            FFII_ScreenReaderMod.ClearOtherMenuStates("Equip");
-            IsActive = true;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.EQUIP_MENU);
+            AnnouncementDeduplicator.Reset(CONTEXT_EQUIP_MENU);
         }
 
         /// <summary>
         /// Check if GenericCursor announcements should be suppressed.
-        /// Returns false if controller is gone (auto-resets stuck flags).
+        /// Validates state machine to auto-clear when backing to command bar.
         /// </summary>
         public static bool ShouldSuppress()
         {
-            if (!IsActive) return false;
+            if (!IsActive)
+                return false;
 
-            try
-            {
-                // Validate that equipment controllers are still active
-                var infoController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentInfoWindowController>();
-                var selectController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentSelectWindowController>();
-
-                bool infoActive = infoController != null && infoController.gameObject.activeInHierarchy;
-                bool selectActive = selectController != null && selectController.gameObject.activeInHierarchy;
-
-                if (!infoActive && !selectActive)
-                {
-                    // Auto-clear state when menu closes
-                    ClearState();
-                    return false;
-                }
-
-                return true;
-            }
-            catch
+            // Validate we're actually in a submenu, not command bar
+            var windowController = GameObjectCache.GetOrRefresh<KeyInputEquipmentWindowController>();
+            if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
                 ClearState();
                 return false;
             }
+
+            int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_EQUIP_WINDOW);
+            if (state == STATE_COMMAND || state == STATE_NONE)
+            {
+                ClearState();
+                return false;  // Don't suppress - let generic cursor handle command bar
+            }
+            return true;  // In submenu - suppress generic cursor
         }
 
         /// <summary>
@@ -80,23 +78,8 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void ClearState()
         {
-            IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
-        }
-
-        /// <summary>
-        /// Deduplication helper - returns true if announcement should proceed.
-        /// </summary>
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.1f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            MenuStateRegistry.Reset(MenuStateRegistry.EQUIP_MENU);
+            AnnouncementDeduplicator.Reset(CONTEXT_EQUIP_MENU);
         }
 
         /// <summary>
@@ -186,12 +169,69 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Msg("[EquipMenu] Patched EquipmentSelectWindowController.SelectContent");
                 }
 
+                // Patch EquipmentWindowController.SetNextState for state transition detection
+                TryPatchSetNextState(harmony);
+
                 MelonLogger.Msg("[EquipMenu] Equipment menu patches applied successfully");
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[EquipMenu] Error applying patches: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Patches EquipmentWindowController.SetNextState for state transition detection.
+        /// </summary>
+        private static void TryPatchSetNextState(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                Type controllerType = typeof(KeyInputEquipmentWindowController);
+
+                MethodInfo setNextStateMethod = null;
+                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (method.Name == "SetNextState")
+                    {
+                        setNextStateMethod = method;
+                        break;
+                    }
+                }
+
+                if (setNextStateMethod != null)
+                {
+                    var postfix = typeof(EquipMenuPatches).GetMethod(nameof(SetNextState_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[EquipMenu] Patched EquipmentWindowController.SetNextState");
+                }
+                else
+                {
+                    MelonLogger.Warning("[EquipMenu] EquipmentWindowController.SetNextState not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[EquipMenu] Error patching SetNextState: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for SetNextState - clears state when returning to command bar or closing menu.
+        /// </summary>
+        public static void SetNextState_Postfix(object __instance, int state)
+        {
+            try
+            {
+                // STATE_NONE = 0 (menu closing), STATE_COMMAND = 1 (command bar)
+                if ((state == 0 || state == 1) && EquipMenuState.IsActive)
+                {
+                    MelonLogger.Msg($"[EquipMenu] SetNextState called with state={state}, clearing IsActive");
+                    EquipMenuState.ClearState();
+                }
+            }
+            catch { }
         }
 
         #region EquipmentInfoWindowController - Slot Selection
@@ -294,8 +334,8 @@ namespace FFII_ScreenReader.Patches
                 // Strip icon markup
                 announcement = TextUtils.StripIconMarkup(announcement);
 
-                // Skip duplicates
-                if (!EquipMenuState.ShouldAnnounce(announcement))
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_EQUIP_MENU, announcement))
                     return;
 
                 MelonLogger.Msg($"[Equipment Slot] {announcement}");
@@ -380,8 +420,8 @@ namespace FFII_ScreenReader.Patches
                 }
                 catch { }
 
-                // Skip duplicates
-                if (!EquipMenuState.ShouldAnnounce(announcement))
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_EQUIP_MENU, announcement))
                     return;
 
                 MelonLogger.Msg($"[Equipment Item] {announcement}");

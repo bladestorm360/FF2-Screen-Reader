@@ -6,8 +6,8 @@ using FFII_ScreenReader.Core;
 namespace FFII_ScreenReader.Utils
 {
     /// <summary>
-    /// Helper for tracking and announcing player movement state (walking, ship, airship, chocobo, canoe, etc.)
-    /// Ported from FF3/FF5 screen reader, adapted for FF2 vehicles.
+    /// Helper for tracking and announcing player movement state (walking, ship, airship, chocobo, etc.)
+    /// Uses event-driven state updates from MovementSpeechPatches (GetOn/GetOff/ChangeTransportation hooks).
     ///
     /// FF2 vehicles: Canoe (rivers), Ship (ocean), Airship (air travel)
     /// </summary>
@@ -23,33 +23,75 @@ namespace FFII_ScreenReader.Utils
         public const int MOVE_STATE_GIMMICK = 6;
         public const int MOVE_STATE_UNIQUE = 7;
 
-        // Cached state tracking (workaround for unreliable moveState field)
+        // TransportationType enum values (from MapConstants.TransportationType in dump.cs)
+        private const int TRANSPORT_NONE = 0;
+        private const int TRANSPORT_PLAYER = 1;
+        private const int TRANSPORT_SHIP = 2;
+        private const int TRANSPORT_PLANE = 3;       // Airship
+        private const int TRANSPORT_SYMBOL = 4;
+        private const int TRANSPORT_CONTENT = 5;
+        private const int TRANSPORT_SUBMARINE = 6;
+        private const int TRANSPORT_LOWFLYING = 7;
+        private const int TRANSPORT_SPECIALPLANE = 8;
+        private const int TRANSPORT_YELLOWCHOCOBO = 9;
+        private const int TRANSPORT_BLACKCHOCOBO = 10;
+        private const int TRANSPORT_BOKO = 11;
+
+        // Cached state tracking (event-driven, no timeouts)
         private static int cachedMoveState = MOVE_STATE_WALK;
-        private static bool useCachedState = false;
-        private static int lastAnnouncedState = -1;
-        private static float lastVehicleStateSeenTime = 0f;
-        private const float VEHICLE_STATE_TIMEOUT_SECONDS = 1.0f;
+        private static int cachedTransportationType = 0;
+        private const string CONTEXT_STATE = "Movement.State";
 
         /// <summary>
-        /// Update the cached move state (called from MovementSpeechPatches when state changes)
-        /// This is the "reliable" update path from ChangeMoveState event
+        /// Set vehicle state when boarding (called from GetOn/ChangeTransportation patches).
+        /// Maps TransportationType to MoveState.
+        /// </summary>
+        public static void SetVehicleState(int transportationType)
+        {
+            cachedTransportationType = transportationType;
+            cachedMoveState = TransportTypeToMoveState(transportationType);
+        }
+
+        /// <summary>
+        /// Set on-foot state when disembarking (called from GetOff/ChangeTransportation patches).
+        /// </summary>
+        public static void SetOnFoot()
+        {
+            cachedTransportationType = 0;
+            cachedMoveState = MOVE_STATE_WALK;
+        }
+
+        /// <summary>
+        /// Update cached move state directly (called from ChangeMoveState patch as backup).
         /// </summary>
         public static void UpdateCachedMoveState(int newState)
         {
             int previousState = cachedMoveState;
             cachedMoveState = newState;
-            useCachedState = true;
 
-            // If this is a vehicle state, update the timestamp
-            if (IsVehicleState(newState))
-            {
-                lastVehicleStateSeenTime = UnityEngine.Time.time;
-            }
-
-            // Announce state changes that weren't already announced
-            if (newState != lastAnnouncedState)
+            // Announce state changes
+            if (newState != previousState)
             {
                 AnnounceStateChange(previousState, newState);
+            }
+        }
+
+        /// <summary>
+        /// Convert TransportationType to MoveState for compatibility with existing code.
+        /// </summary>
+        private static int TransportTypeToMoveState(int transportationType)
+        {
+            switch (transportationType)
+            {
+                case TRANSPORT_SHIP: return MOVE_STATE_SHIP;
+                case TRANSPORT_PLANE: return MOVE_STATE_AIRSHIP;
+                case TRANSPORT_SUBMARINE: return MOVE_STATE_SHIP;  // Treat submarine like ship
+                case TRANSPORT_LOWFLYING: return MOVE_STATE_LOWFLYING;
+                case TRANSPORT_SPECIALPLANE: return MOVE_STATE_AIRSHIP;
+                case TRANSPORT_YELLOWCHOCOBO:
+                case TRANSPORT_BLACKCHOCOBO:
+                case TRANSPORT_BOKO: return MOVE_STATE_CHOCOBO;
+                default: return MOVE_STATE_WALK;
             }
         }
 
@@ -93,64 +135,21 @@ namespace FFII_ScreenReader.Utils
 
             if (announcement != null)
             {
-                lastAnnouncedState = newState;
-                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                // Use deduplicator to prevent duplicate announcements
+                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_STATE, newState))
+                {
+                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                }
             }
         }
 
         /// <summary>
-        /// Get current MoveState from FieldPlayer
+        /// Get current MoveState - uses cached state from event hooks.
         /// </summary>
         public static int GetCurrentMoveState()
         {
-            var controller = GameObjectCache.Get<FieldPlayerController>();
-            if (controller?.fieldPlayer == null)
-                return useCachedState ? cachedMoveState : MOVE_STATE_WALK;
-
-            // Read actual state from game
-            int actualState = (int)controller.fieldPlayer.moveState;
-            float currentTime = UnityEngine.Time.time;
-
-            // BUG WORKAROUND: moveState field unreliably reverts to Walking even when on vehicles
-            // Vehicle states (ship, chocobo, airship) are "sticky" - once detected, we don't revert
-            // to Walking unless ChangeMoveState explicitly fires OR we timeout
-
-            // If actual state shows a vehicle, update timestamp
-            if (IsVehicleState(actualState))
-            {
-                lastVehicleStateSeenTime = currentTime;
-
-                // If this is a new vehicle state, cache it (coroutine will announce)
-                if (actualState != cachedMoveState)
-                {
-                    cachedMoveState = actualState;
-                    useCachedState = true;
-                }
-            }
-
-            // If we have a cached vehicle state but actual shows Walking
-            if (useCachedState && IsVehicleState(cachedMoveState) && actualState == MOVE_STATE_WALK)
-            {
-                // Check if we've timed out (haven't seen vehicle state in actual for too long)
-                float timeSinceLastSeen = currentTime - lastVehicleStateSeenTime;
-                if (timeSinceLastSeen > VEHICLE_STATE_TIMEOUT_SECONDS)
-                {
-                    // Timeout: assume player disembarked without ChangeMoveState firing
-                    cachedMoveState = actualState;
-                    return actualState;
-                }
-
-                // Still within timeout: trust cached vehicle state
-                return cachedMoveState;
-            }
-
-            // For non-vehicle states when not cached as vehicle, update cache normally
-            if (!IsVehicleState(actualState) && actualState != cachedMoveState && !IsVehicleState(cachedMoveState))
-            {
-                cachedMoveState = actualState;
-            }
-
-            return useCachedState && IsVehicleState(cachedMoveState) ? cachedMoveState : actualState;
+            // Return cached state (set by GetOn/GetOff/ChangeTransportation patches)
+            return cachedMoveState;
         }
 
         /// <summary>
@@ -257,9 +256,22 @@ namespace FFII_ScreenReader.Utils
         public static void ResetState()
         {
             cachedMoveState = MOVE_STATE_WALK;
-            useCachedState = false;
-            lastAnnouncedState = -1;
-            lastVehicleStateSeenTime = 0f;
+            cachedTransportationType = 0;
+            AnnouncementDeduplicator.Reset(CONTEXT_STATE);
+        }
+
+        /// <summary>
+        /// Called on map transitions to handle vehicle state.
+        /// If entering an interior map while in a vehicle, switch to on-foot state.
+        /// </summary>
+        public static void OnMapTransition(bool isWorldMap)
+        {
+            // If entering an interior map (not world map) and currently in a vehicle,
+            // switch to on-foot state (e.g., entering interior while in airship)
+            if (!isWorldMap && IsVehicleState(cachedMoveState))
+            {
+                SetOnFoot();
+            }
         }
     }
 }

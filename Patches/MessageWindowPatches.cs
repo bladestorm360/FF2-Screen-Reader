@@ -63,6 +63,21 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Warning("Play method not found");
                 }
 
+                // Patch Close - called when dialogue window closes
+                // Triggers entity refresh to update NPC/interactive object states after interaction
+                var closeMethod = AccessTools.Method(managerType, "Close");
+                if (closeMethod != null)
+                {
+                    var postfix = typeof(MessageWindowPatches).GetMethod("Close_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(closeMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("Patched Close for entity refresh");
+                }
+                else
+                {
+                    MelonLogger.Warning("Close method not found");
+                }
+
                 MelonLogger.Msg("Message window patches applied successfully");
             }
             catch (Exception ex)
@@ -236,6 +251,21 @@ namespace FFII_ScreenReader.Patches
             lastDialogueMessage = "";
             lastSpeaker = "";
             pendingDialogue = "";
+        }
+
+        /// <summary>
+        /// Postfix for MessageWindowManager.Close - clears dialogue deduplication state.
+        /// This ensures the same NPC dialogue can be announced on subsequent interactions.
+        /// Also triggers entity refresh to update NPC/interactive object states.
+        /// </summary>
+        public static void Close_Postfix()
+        {
+            // Reset dialogue state for next conversation
+            lastDialogueMessage = "";
+            pendingDialogue = "";
+
+            // Trigger entity refresh after dialogue ends (NPC interaction complete)
+            FFII_ScreenReader.Core.FFII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
     }
 }

@@ -188,6 +188,10 @@ namespace FFII_ScreenReader.Patches
             if (BattleTargetPatches.IsTargetSelectionActive)
                 yield break;
 
+            // Check if we're still in battle (prevents "Attack" on return to title)
+            if (!FFII_ScreenReaderMod.IsInBattle)
+                yield break;
+
             FFII_ScreenReaderMod.SpeakText(text, interrupt: false);
         }
 
@@ -270,9 +274,9 @@ namespace FFII_ScreenReader.Patches
     public static class BattleCommandState
     {
         /// <summary>
-        /// Flag indicating if the battle command menu is active and handling announcements.
+        /// True when battle command menu is active. Delegates to MenuStateRegistry.
         /// </summary>
-        public static bool IsActive { get; private set; } = false;
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND);
 
         /// <summary>
         /// Called when battle command menu activates.
@@ -280,8 +284,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void SetActive()
         {
-            FFII_ScreenReaderMod.ClearOtherMenuStates("BattleCommand");
-            IsActive = true;
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_COMMAND);
         }
 
         /// <summary>
@@ -294,7 +297,7 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                var controller = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
+                var controller = GameObjectCache.GetOrRefresh<BattleCommandSelectController>();
                 if (controller == null || !controller.gameObject.activeInHierarchy)
                 {
                     ClearState();
@@ -314,7 +317,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void ClearState()
         {
-            IsActive = false;
+            MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_COMMAND);
         }
     }
 
@@ -328,9 +331,9 @@ namespace FFII_ScreenReader.Patches
         private static int lastAnnouncedEnemyIndex = -1;
 
         /// <summary>
-        /// Flag indicating if target selection is active.
+        /// True when target selection is active. Delegates to MenuStateRegistry.
         /// </summary>
-        public static bool IsTargetSelectionActive { get; private set; } = false;
+        public static bool IsTargetSelectionActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_TARGET);
 
         /// <summary>
         /// Reset target tracking indices.
@@ -351,17 +354,17 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                var controller = UnityEngine.Object.FindObjectOfType<BattleTargetSelectController>();
+                var controller = GameObjectCache.GetOrRefresh<BattleTargetSelectController>();
                 if (controller == null || !controller.gameObject.activeInHierarchy)
                 {
-                    IsTargetSelectionActive = false;
+                    MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_TARGET);
                     return false;
                 }
                 return true;
             }
             catch
             {
-                IsTargetSelectionActive = false;
+                MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_TARGET);
                 return false;
             }
         }
@@ -373,13 +376,13 @@ namespace FFII_ScreenReader.Patches
         {
             if (active)
             {
-                FFII_ScreenReaderMod.ClearOtherMenuStates("BattleTarget");
-            }
-            IsTargetSelectionActive = active;
-            if (active)
-            {
+                MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_TARGET);
                 // Only reset target tracking when entering target selection
                 ResetState();
+            }
+            else
+            {
+                MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_TARGET);
             }
         }
 

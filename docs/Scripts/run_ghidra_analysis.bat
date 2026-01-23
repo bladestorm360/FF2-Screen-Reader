@@ -8,6 +8,7 @@ REM     pathfinding  - Decompile pathfinding and map functions (default)
 REM     magic        - Decompile magic/ability growth functions
 REM     weapon_skill - Decompile weapon skill growth functions
 REM     skill_level  - Decompile skill level calculation functions (spell level fix)
+REM     status_ui    - Decompile status screen UI functions (weapon skills, combat stats)
 REM   mode:
 REM     import  - Create new project and import GameAssembly.dll (first time)
 REM     analyze - Re-run analysis on existing project (subsequent runs)
@@ -18,7 +19,8 @@ REM   run_ghidra_analysis.bat magic                 - Import + decompile magic
 REM   run_ghidra_analysis.bat weapon_skill          - Import + decompile weapon skills
 REM   run_ghidra_analysis.bat magic analyze         - Re-analyze existing project for magic
 REM   run_ghidra_analysis.bat pathfinding analyze
-REM   run_ghidra_analysis.bat skill_level          - Import + decompile skill level functions
+REM   run_ghidra_analysis.bat skill_level           - Import + decompile skill level functions
+REM   run_ghidra_analysis.bat status_ui             - Import + decompile status screen UI
 
 setlocal enabledelayedexpansion
 
@@ -46,6 +48,9 @@ if /i "%~1"=="weapon_skill" set "SCRIPT_TYPE=weapon_skill"
 if /i "%~1"=="weapon" set "SCRIPT_TYPE=weapon_skill"
 if /i "%~1"=="skill_level" set "SCRIPT_TYPE=skill_level"
 if /i "%~1"=="skill" set "SCRIPT_TYPE=skill_level"
+if /i "%~1"=="status_ui" set "SCRIPT_TYPE=status_ui"
+if /i "%~1"=="status" set "SCRIPT_TYPE=status_ui"
+if /i "%~1"=="ui" set "SCRIPT_TYPE=status_ui"
 if /i "%~1"=="analyze" (
     set "MODE=analyze"
     goto :skip_second_arg
@@ -75,6 +80,10 @@ if "%SCRIPT_TYPE%"=="magic" (
     set "SCRIPT_FILE=%SCRIPT_DIR%decompile_skill_level.py"
     set "OUTPUT_FILE=%SCRIPT_DIR%decompiled_skill_level.c"
     set "SCRIPT_NAME=decompile_skill_level.py"
+) else if "%SCRIPT_TYPE%"=="status_ui" (
+    set "SCRIPT_FILE=%SCRIPT_DIR%decompile_status_ui.py"
+    set "OUTPUT_FILE=%SCRIPT_DIR%decompiled_status_ui.c"
+    set "SCRIPT_NAME=decompile_status_ui.py"
 ) else (
     set "SCRIPT_FILE=%SCRIPT_DIR%decompile_pathfinding.py"
     set "OUTPUT_FILE=%SCRIPT_DIR%decompiled_pathfinding.c"

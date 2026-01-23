@@ -5,6 +5,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
 
 // Type aliases for IL2CPP types
@@ -15,13 +16,10 @@ using ItemTargetSelectContentController = Il2CppLast.UI.KeyInput.ItemTargetSelec
 using GameCursor = Il2CppLast.UI.Cursor;
 using CustomScrollViewWithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
-using Condition = Il2CppLast.Data.Master.Condition;
-using CorpsId = Il2CppLast.Defaine.User.CorpsId;
-using Corps = Il2CppLast.Data.User.Corps;
-using UserDataManager = Il2CppLast.Management.UserDataManager;
 using KeyInputItemCommandController = Il2CppLast.UI.KeyInput.ItemCommandController;
 using KeyInputItemWindowController = Il2CppLast.UI.KeyInput.ItemWindowController;
 using ItemCommandId = Il2CppLast.Defaine.UI.ItemCommandId;
+using System.Reflection;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -30,108 +28,59 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class ItemMenuState
     {
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
 
         /// <summary>
         /// True when item list or item target selection is active.
-        /// Used to suppress generic cursor navigation announcements.
+        /// Delegates to MenuStateRegistry.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.ITEM_MENU);
+
+        /// <summary>
+        /// Sets the item menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
+        }
 
         /// <summary>
         /// Stores the currently selected item data for 'I' key lookup.
         /// </summary>
         public static ItemListContentData LastSelectedItem { get; set; } = null;
 
-        // State machine offsets (from dump.cs)
-        // KeyInput.ItemWindowController has stateMachine at offset 0x70
-        private const int OFFSET_STATE_MACHINE = 0x70;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
-        // ItemWindowController.State values
-        private const int STATE_NONE = 0;
+        // State constants from dump.cs (KeyInput.ItemWindowController.State)
+        private const int STATE_NONE = 0;            // Menu closed
         private const int STATE_COMMAND_SELECT = 1;  // Command bar (Use/Key Items/Sort)
-        private const int STATE_USE_SELECT = 2;       // Item list for Use
-        private const int STATE_IMPORTANT_SELECT = 3; // Key Items list
-        private const int STATE_ORGANIZE_SELECT = 4;  // Sort list
-        private const int STATE_TARGET_SELECT = 5;    // Target selection
+        private const int STATE_USE_SELECT = 2;      // Regular item list
+        private const int STATE_IMPORTANT_SELECT = 3; // Key items list
+        private const int STATE_ORGANIZE_SELECT = 4;  // Organize/Sort mode
+        private const int STATE_TARGET_SELECT = 5;    // Character target selection
+
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
-        /// Uses state machine to determine if we're in item list vs command bar.
+        /// Validates state machine to auto-clear when backing to command bar.
         /// </summary>
         public static bool ShouldSuppress()
         {
             if (!IsActive)
                 return false;
 
-            try
+            // Validate we're actually in a submenu, not command bar
+            var windowController = GameObjectCache.GetOrRefresh<KeyInputItemWindowController>();
+            if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
-                // Check the ItemWindowController's state machine
-                var windowController = UnityEngine.Object.FindObjectOfType<KeyInputItemWindowController>();
-                if (windowController != null)
-                {
-                    int currentState = GetCurrentState(windowController);
-
-                    // If we're in CommandSelect state, don't suppress - let MenuTextDiscovery handle it
-                    if (currentState == STATE_COMMAND_SELECT || currentState == STATE_NONE)
-                    {
-                        ClearState();
-                        return false;
-                    }
-
-                    // We're in an item list state - suppress
-                    if (currentState == STATE_USE_SELECT ||
-                        currentState == STATE_IMPORTANT_SELECT ||
-                        currentState == STATE_ORGANIZE_SELECT ||
-                        currentState == STATE_TARGET_SELECT)
-                    {
-                        return true;
-                    }
-                }
+                ClearState();
+                return false;
             }
-            catch { }
 
-            // Fallback: clear state if we can't determine
-            ClearState();
-            return false;
-        }
-
-        /// <summary>
-        /// Reads the current state from ItemWindowController's state machine.
-        /// Returns -1 if unable to read.
-        /// </summary>
-        private static int GetCurrentState(KeyInputItemWindowController controller)
-        {
-            try
+            int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_ITEM_WINDOW);
+            if (state == STATE_COMMAND_SELECT || state == STATE_NONE)
             {
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return -1;
-
-                unsafe
-                {
-                    // Read stateMachine pointer at offset 0x70
-                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (stateMachinePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read current State<T> pointer at offset 0x10
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentStatePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read Tag (int) at offset 0x10
-                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
-                    return stateValue;
-                }
+                ClearState();
+                return false;  // Don't suppress - let generic cursor handle command bar
             }
-            catch
-            {
-                return -1;
-            }
+            return true;  // In submenu - suppress generic cursor
         }
 
         /// <summary>
@@ -139,61 +88,9 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void ClearState()
         {
-            IsActive = false;
+            MenuStateRegistry.Reset(MenuStateRegistry.ITEM_MENU);
             LastSelectedItem = null;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
-        }
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.1f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
-        }
-
-        /// <summary>
-        /// Gets the row (Front/Back) for a character.
-        /// </summary>
-        public static string GetCharacterRow(OwnedCharacterData characterData)
-        {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                {
-                    return null;
-                }
-
-                var corpsList = userDataManager.GetCorpsListClone();
-                if (corpsList == null)
-                {
-                    return null;
-                }
-
-                int characterId = characterData.Id;
-
-                foreach (var corps in corpsList)
-                {
-                    if (corps != null)
-                    {
-                        if (corps.CharacterId == characterId)
-                        {
-                            string row = corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
-                            return row;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[ItemMenu] Error getting character row: {ex.Message}");
-            }
-            return null;
+            AnnouncementDeduplicator.Reset(CONTEXT_ITEM_MENU);
         }
 
         /// <summary>
@@ -204,60 +101,14 @@ namespace FFII_ScreenReader.Patches
             switch (commandId)
             {
                 case ItemCommandId.Use:
-                    return GetLocalizedCommand("$menu_item_use") ?? "Use";
+                    return LocalizationUtility.GetLocalizedCommand("$menu_item_use") ?? "Use";
                 case ItemCommandId.Organize:
-                    return GetLocalizedCommand("$menu_item_organize") ?? "Sort";
+                    return LocalizationUtility.GetLocalizedCommand("$menu_item_organize") ?? "Sort";
                 case ItemCommandId.Important:
-                    return GetLocalizedCommand("$menu_item_important") ?? "Key Items";
+                    return LocalizationUtility.GetLocalizedCommand("$menu_item_important") ?? "Key Items";
                 default:
                     return null;
             }
-        }
-
-        private static string GetLocalizedCommand(string mesId)
-        {
-            try
-            {
-                var messageManager = MessageManager.Instance;
-                if (messageManager != null)
-                {
-                    string text = messageManager.GetMessage(mesId, false);
-                    if (!string.IsNullOrWhiteSpace(text))
-                        return TextUtils.StripIconMarkup(text);
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        /// <summary>
-        /// Gets a localized condition/status effect name from a Condition object.
-        /// </summary>
-        public static string GetConditionName(Condition condition)
-        {
-            if (condition == null)
-                return null;
-
-            try
-            {
-                string mesId = condition.MesIdName;
-                if (!string.IsNullOrEmpty(mesId))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        string localizedName = messageManager.GetMessage(mesId, false);
-                        if (!string.IsNullOrWhiteSpace(localizedName))
-                            return localizedName;
-                    }
-                }
-            }
-            catch
-            {
-                // Fall through
-            }
-
-            return null;
         }
     }
 
@@ -310,6 +161,9 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(itemUseSelectContent, postfix: new HarmonyMethod(postfix));
                     MelonLogger.Msg("[Item Menu] Patched ItemUseController.SelectContent");
                 }
+
+                // Patch ItemWindowController.SetNextState for state transition detection
+                TryPatchSetNextState(harmony);
 
                 isPatched = true;
                 MelonLogger.Msg("[Item Menu] Item menu patches applied successfully");
@@ -375,13 +229,12 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
 
-                // Skip duplicates
-                if (!ItemMenuState.ShouldAnnounce(announcement))
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_ITEM_MENU, announcement))
                     return;
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Item");
-                ItemMenuState.IsActive = true;
+                ItemMenuState.SetActive();
 
                 MelonLogger.Msg($"[Item Menu] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -464,7 +317,7 @@ namespace FFII_ScreenReader.Patches
                             var statusNames = new List<string>();
                             foreach (var condition in conditionList)
                             {
-                                string conditionName = ItemMenuState.GetConditionName(condition);
+                                string conditionName = LocalizationUtility.GetConditionName(condition);
                                 if (!string.IsNullOrWhiteSpace(conditionName))
                                 {
                                     statusNames.Add(conditionName);
@@ -483,13 +336,12 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Warning($"[Item Target] Error getting character parameters: {paramEx.Message}");
                 }
 
-                // Skip duplicates
-                if (!ItemMenuState.ShouldAnnounce(announcement))
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_ITEM_MENU, announcement))
                     return;
 
                 // Set active state AFTER validation
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Item");
-                ItemMenuState.IsActive = true;
+                ItemMenuState.SetActive();
 
                 MelonLogger.Msg($"[Item Target] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -498,6 +350,60 @@ namespace FFII_ScreenReader.Patches
             {
                 MelonLogger.Warning($"Error in ItemUseController.SelectContent patch: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Patches ItemWindowController.SetNextState for state transition detection.
+        /// </summary>
+        private static void TryPatchSetNextState(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                Type controllerType = typeof(KeyInputItemWindowController);
+
+                MethodInfo setNextStateMethod = null;
+                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (method.Name == "SetNextState")
+                    {
+                        setNextStateMethod = method;
+                        break;
+                    }
+                }
+
+                if (setNextStateMethod != null)
+                {
+                    var postfix = typeof(ItemMenuPatches).GetMethod(nameof(SetNextState_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
+                    MelonLogger.Msg("[Item Menu] Patched ItemWindowController.SetNextState");
+                }
+                else
+                {
+                    MelonLogger.Warning("[Item Menu] ItemWindowController.SetNextState not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Item Menu] Error patching SetNextState: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Postfix for SetNextState - clears state when returning to command bar or closing menu.
+        /// </summary>
+        public static void SetNextState_Postfix(object __instance, int state)
+        {
+            try
+            {
+                // STATE_NONE = 0 (menu closing), STATE_COMMAND_SELECT = 1 (command bar)
+                if ((state == 0 || state == 1) && ItemMenuState.IsActive)
+                {
+                    MelonLogger.Msg($"[Item Menu] SetNextState called with state={state}, clearing IsActive");
+                    ItemMenuState.ClearState();
+                }
+            }
+            catch { }
         }
     }
 }

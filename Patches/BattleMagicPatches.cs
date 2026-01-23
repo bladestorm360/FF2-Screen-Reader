@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
 using Il2CppLast.Battle;
 using Il2CppLast.Systems;
@@ -99,7 +100,18 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleMagicMenuState
     {
-        public static bool IsActive { get; set; } = false;
+        /// <summary>
+        /// True when battle magic menu is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC);
+
+        /// <summary>
+        /// Sets the battle magic menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
+        }
 
         // State machine offsets for BattleCommandSelectController
         private const int OFFSET_STATE_MACHINE = 0x48;
@@ -120,8 +132,8 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 // Check if either KeyInput or Touch magic controller is still active
-                var keyInputController = UnityEngine.Object.FindObjectOfType<BattleQuantityAbilityInfomationController_KeyInput>();
-                var touchController = UnityEngine.Object.FindObjectOfType<BattleQuantityAbilityInfomationController_Touch>();
+                var keyInputController = GameObjectCache.GetOrRefresh<BattleQuantityAbilityInfomationController_KeyInput>();
+                var touchController = GameObjectCache.GetOrRefresh<BattleQuantityAbilityInfomationController_Touch>();
 
                 bool controllerActive = (keyInputController != null && keyInputController.gameObject.activeInHierarchy) ||
                                          (touchController != null && touchController.gameObject.activeInHierarchy);
@@ -134,7 +146,7 @@ namespace FFII_ScreenReader.Patches
 
                 // Also check if command select controller is back to normal state
                 // If so, we've returned to command menu - clear magic state
-                var cmdController = UnityEngine.Object.FindObjectOfType<BattleCommandSelectController>();
+                var cmdController = GameObjectCache.GetOrRefresh<BattleCommandSelectController>();
                 if (cmdController != null && cmdController.gameObject.activeInHierarchy)
                 {
                     int state = GetCommandState(cmdController);
@@ -176,25 +188,10 @@ namespace FFII_ScreenReader.Patches
             catch { return -1; }
         }
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
-        }
-
         public static void Reset()
         {
-            IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
+            MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_MAGIC);
+            AnnouncementDeduplicator.Reset(CONTEXT_BATTLE_MAGIC);
         }
     }
 
@@ -240,12 +237,11 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                if (!BattleMagicMenuState.ShouldAnnounce(announcement))
+                if (!ShouldAnnounce(CONTEXT_BATTLE_MAGIC, announcement))
                     return;
 
                 // Set active state and clear other menus
-                FFII_ScreenReaderMod.ClearOtherMenuStates("BattleMagic");
-                BattleMagicMenuState.IsActive = true;
+                BattleMagicMenuState.SetActive();
 
                 MelonLogger.Msg($"[Battle Magic] Announcing: {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

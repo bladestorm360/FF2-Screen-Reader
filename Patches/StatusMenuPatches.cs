@@ -6,6 +6,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using FFII_ScreenReader.Menus;
 using Il2CppLast.Management;
 
@@ -15,10 +16,6 @@ using KeyInputStatusDetailsController = Il2CppSerial.FF2.UI.KeyInput.StatusDetai
 using StatusWindowContentControllerBase = Il2CppSerial.Template.UI.StatusWindowContentControllerBase;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
 using GameCursor = Il2CppLast.UI.Cursor;
-using CorpsId = Il2CppLast.Defaine.User.CorpsId;
-using Corps = Il2CppLast.Data.User.Corps;
-using UserDataManager = Il2CppLast.Management.UserDataManager;
-using Condition = Il2CppLast.Data.Master.Condition;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -28,161 +25,31 @@ namespace FFII_ScreenReader.Patches
     public static class StatusMenuState
     {
         /// <summary>
-        /// True when status/character selection menu is active and handling announcements.
+        /// True when status/character selection menu is active. Delegates to MenuStateRegistry.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.STATUS_MENU);
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
+        /// <summary>
+        /// Sets the status menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.STATUS_MENU);
+        }
 
         public static void ResetState()
         {
-            IsActive = false;
-            lastAnnouncement = "";
-        }
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = UnityEngine.Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.1f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            MenuStateRegistry.Reset(MenuStateRegistry.STATUS_MENU);
+            AnnouncementDeduplicator.Reset(CONTEXT_STATUS_MENU);
         }
 
         /// <summary>
         /// Returns true if generic cursor reading should be suppressed.
         /// Called by CursorNavigation_Postfix to prevent double-reading.
-        /// Uses state machine validation to auto-reset when menu is closed.
+        /// State is cleared by transition patch when menu closes.
         /// </summary>
-        public static bool ShouldSuppress()
-        {
-            if (!IsActive) return false;
+        public static bool ShouldSuppress() => IsActive;
 
-            try
-            {
-                // Find the StatusWindowController to validate it's still active
-                var controller = UnityEngine.Object.FindObjectOfType<KeyInputStatusWindowController>();
-                if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
-                {
-                    // Controller is gone, clear state
-                    ResetState();
-                    return false;
-                }
-
-                // Read state machine to check current state
-                // StatusWindowControllerBase.stateMachine at offset 0x20
-                // StateMachine.current at offset 0x10
-                // State.Tag at offset 0x10
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                {
-                    ResetState();
-                    return false;
-                }
-
-                IntPtr stateMachinePtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(controllerPtr, 0x20);
-                if (stateMachinePtr == IntPtr.Zero)
-                {
-                    ResetState();
-                    return false;
-                }
-
-                IntPtr currentStatePtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(stateMachinePtr, 0x10);
-                if (currentStatePtr == IntPtr.Zero)
-                {
-                    ResetState();
-                    return false;
-                }
-
-                int stateTag = System.Runtime.InteropServices.Marshal.ReadInt32(currentStatePtr, 0x10);
-
-                // State values: None=0, List=1, Select=2
-                // If state is None, menu is closed
-                if (stateTag == 0)
-                {
-                    ResetState();
-                    return false;
-                }
-
-                // Menu is active in List or Select state
-                return true;
-            }
-            catch
-            {
-                // On any error, clear state to avoid stuck suppression
-                ResetState();
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Gets the row (Front/Back) for a character.
-        /// </summary>
-        public static string GetCharacterRow(OwnedCharacterData characterData)
-        {
-            if (characterData == null)
-                return null;
-
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                    return null;
-
-                var corpsList = userDataManager.GetCorpsListClone();
-                if (corpsList == null)
-                    return null;
-
-                int characterId = characterData.Id;
-
-                foreach (var corps in corpsList)
-                {
-                    if (corps != null && corps.CharacterId == characterId)
-                    {
-                        return corps.Id == CorpsId.Front ? "Front Row" : "Back Row";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Status Menu] Error getting character row: {ex.Message}");
-            }
-
-            return null;
-        }
-
-        /// <summary>
-        /// Gets a localized condition/status effect name from a Condition object.
-        /// </summary>
-        public static string GetConditionName(Condition condition)
-        {
-            if (condition == null)
-                return null;
-
-            try
-            {
-                string mesId = condition.MesIdName;
-                if (!string.IsNullOrEmpty(mesId))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        string localizedName = messageManager.GetMessage(mesId, false);
-                        if (!string.IsNullOrWhiteSpace(localizedName))
-                            return localizedName;
-                    }
-                }
-            }
-            catch
-            {
-                // Fall through
-            }
-
-            return null;
-        }
     }
 
     /// <summary>
@@ -335,9 +202,7 @@ namespace FFII_ScreenReader.Patches
                 }
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
-                // Also clear other menu states to prevent conflicts
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Status");
-                StatusMenuState.IsActive = true;
+                StatusMenuState.SetActive();
 
                 // Build announcement
                 string charName = characterData.Name;
@@ -349,7 +214,7 @@ namespace FFII_ScreenReader.Patches
                 // FF2: No jobs - skip job name
 
                 // Add row information
-                string row = StatusMenuState.GetCharacterRow(characterData);
+                string row = CharacterUtility.GetCharacterRow(characterData);
                 if (!string.IsNullOrEmpty(row))
                 {
                     announcement += $", {row}";
@@ -378,7 +243,7 @@ namespace FFII_ScreenReader.Patches
                             var statusNames = new System.Collections.Generic.List<string>();
                             foreach (var condition in conditionList)
                             {
-                                string conditionName = StatusMenuState.GetConditionName(condition);
+                                string conditionName = LocalizationUtility.GetConditionName(condition);
                                 if (!string.IsNullOrWhiteSpace(conditionName))
                                 {
                                     statusNames.Add(conditionName);
@@ -397,8 +262,8 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Warning($"[Status Menu] Error getting HP/MP: {paramEx.Message}");
                 }
 
-                // Skip duplicates
-                if (!StatusMenuState.ShouldAnnounce(announcement))
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_STATUS_MENU, announcement))
                     return;
 
                 MelonLogger.Msg($"[Status Menu] {announcement}");
@@ -586,6 +451,10 @@ namespace FFII_ScreenReader.Patches
                 // Set character data for StatusDetailsReader
                 StatusDetailsReader.SetCurrentCharacterData(characterData);
 
+                // Invalidate and populate UI cache (event-driven, no timers)
+                StatusNavigationReader.InvalidateUICache();
+                StatusNavigationReader.PopulateUICache();
+
                 // Initialize stat list
                 StatusNavigationReader.InitializeStatList();
 
@@ -618,11 +487,14 @@ namespace FFII_ScreenReader.Patches
                 // Clear character data
                 StatusDetailsReader.ClearCurrentCharacterData();
 
+                // Clear UI cache
+                StatusNavigationReader.InvalidateUICache();
+
                 // Reset navigation tracker
                 StatusNavigationTracker.Instance.Reset();
 
                 // Clear menu state
-                StatusMenuState.IsActive = false;
+                StatusMenuState.ResetState();
                 MelonLogger.Msg("[Status Details] Menu exited, state cleared");
             }
             catch (Exception ex)

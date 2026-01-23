@@ -3,6 +3,7 @@ using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
 using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Utils;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -152,6 +153,14 @@ namespace FFII_ScreenReader.Patches
 
                 // Clean up the message
                 string cleanMessage = CleanMessage(message);
+
+                // Check for duplicate location announcement
+                // E.g., skip "Altair – 1F" if "Entering Altair – 1F" was just announced
+                if (!LocationMessageTracker.ShouldAnnounceFadeMessage(cleanMessage))
+                {
+                    MelonLogger.Msg($"[Fade Message] Skipped (duplicate of map transition): {cleanMessage}");
+                    return;
+                }
 
                 MelonLogger.Msg($"[Fade Message] {cleanMessage}");
                 FFII_ScreenReaderMod.SpeakText(cleanMessage);

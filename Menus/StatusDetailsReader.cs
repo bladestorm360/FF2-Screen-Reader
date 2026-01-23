@@ -10,8 +10,13 @@ using Il2CppLast.Systems;
 using Il2CppLast.Battle;
 using FFII_ScreenReader.Core;
 
-// Type aliases for status details UI
+// Type aliases for status details UI controllers
 using KeyInputStatusDetailsController = Il2CppSerial.FF2.UI.KeyInput.StatusDetailsController;
+using SkillLevelContentController = Il2CppSerial.FF2.UI.SkillLevelContentController;
+using SkillLevelContentView = Il2CppSerial.FF2.UI.SkillLevelContentView;
+using CommonGauge = Il2CppLast.UI.CommonGauge;
+using ParameterContentController = Il2CppLast.UI.KeyInput.ParameterContentController;
+using ParameterType = Il2CppLast.Defaine.ParameterType;
 
 namespace FFII_ScreenReader.Menus
 {
@@ -299,7 +304,7 @@ namespace FFII_ScreenReader.Menus
 
     /// <summary>
     /// Handles navigation through status screen stats using arrow keys.
-    /// FF2-specific: 22 stats in 5 groups, includes weapon skills, no level/XP.
+    /// FF2-specific: 23 stats in 5 groups, includes weapon skills, no level/XP.
     /// </summary>
     public static class StatusNavigationReader
     {
@@ -307,9 +312,390 @@ namespace FFII_ScreenReader.Menus
         // Group start indices: CharacterInfo=0, Vitals=1, Attributes=3, CombatStats=9, WeaponSkills=15
         private static readonly int[] GroupStartIndices = new int[] { 0, 1, 3, 9, 15 };
 
+        #region UI Reading Constants and Cache
+
+        /// <summary>
+        /// Cache for weapon skill data read from UI.
+        /// Key: SkillLevelTarget enum value (list index), Value: (level, percentage)
+        /// Event-driven: populated when status screen opens, cleared when it closes.
+        /// </summary>
+        private static Dictionary<int, (int level, int percentage)> weaponSkillCache = new Dictionary<int, (int, int)>();
+
+        /// <summary>
+        /// Cached accuracy count read from UI.
+        /// In FF2, accuracy count (number of hits) comes from equipped weapons, not base stats.
+        /// ConfirmedAccuracyCount() returns 0 because BaseAccuracyCount is never initialized.
+        /// We read from UI text like FF3 does for attack count.
+        /// </summary>
+        private static int cachedAccuracyCount = -1;
+
+        /// <summary>
+        /// Flag to track if cache has been populated this session.
+        /// Reset when InvalidateUICache() is called.
+        /// </summary>
+        private static bool cachePopulated = false;
+
+        /// <summary>
+        /// Mapping from UI list index to SkillLevelTarget enum value.
+        /// UI displays: Sword, Knife, Spear, Staff, Axe, Bow, Shield, Unarmed
+        /// Enum order:  Sword(0), Knife(1), Spear(2), Axe(3), Staff(4), Bow(5), Shield(6), Unarmed(7)
+        /// Indices 3 and 4 are SWAPPED between UI and enum.
+        /// </summary>
+        private static readonly int[] uiIndexToSkillType = { 0, 1, 2, 4, 3, 5, 6, 7 };
+
+        #endregion
+
+        #region UI Reading Helpers
+
+        /// <summary>
+        /// Invalidate UI cache. Called when entering/exiting status screen.
+        /// Clears weapon skills and accuracy count (read from UI).
+        /// </summary>
+        public static void InvalidateUICache()
+        {
+            MelonLogger.Msg("[StatusDetails] Invalidating UI cache");
+            weaponSkillCache.Clear();
+            cachedAccuracyCount = -1;
+            cachePopulated = false;
+        }
+
+        /// <summary>
+        /// Populate UI cache. Called once when status details screen opens.
+        /// Caches weapon skills and accuracy count (which comes from equipped weapons).
+        /// </summary>
+        public static void PopulateUICache()
+        {
+            if (cachePopulated)
+            {
+                MelonLogger.Msg("[StatusDetails] Cache already populated, skipping");
+                return;
+            }
+
+            MelonLogger.Msg("[StatusDetails] Populating UI cache...");
+            CacheWeaponSkillsFromUI();
+            CacheAccuracyCountFromUI();
+            cachePopulated = true;
+            MelonLogger.Msg($"[StatusDetails] Cache populated: {weaponSkillCache.Count} weapon skills, accuracy count={cachedAccuracyCount}");
+        }
+
+        // Memory offset for SkillLevelContentController.view (private field)
+        private const int OFFSET_SKILL_VIEW = 0x18;
+        // Memory offset for CommonGauge.gaugeImage (private field)
+        private const int OFFSET_GAUGE_IMAGE = 0x18;
+        // Memory offset for StatusDetailsController (KeyInput).skillLevelContentList
+        private const int OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT = 0x80;
+        // Memory offset for StatusDetailsControllerBase.contentList (parameter controllers)
+        private const int OFFSET_CONTENT_LIST = 0x48;
+        // Memory offset for ParameterContentController.type
+        private const int OFFSET_PARAMETER_TYPE = 0x18;
+        // Memory offset for ParameterContentController.view
+        private const int OFFSET_PARAMETER_VIEW = 0x20;
+        // Memory offset for ParameterContentView.multipliedValueText (count value like "8" in "8x")
+        private const int OFFSET_MULTIPLIED_VALUE_TEXT = 0x28;
+        // ParameterType.AccuracyRate enum value (the count is displayed in the same controller's view)
+        private const int PARAMETER_TYPE_ACCURACY_RATE = 16;
+
+        /// <summary>
+        /// Cache all weapon skill data from UI controllers using LIST INDEX approach.
+        /// The skillLevelContentList in StatusDetailsController is ordered to match visual display.
+        /// Index 0 = Sword, Index 1 = Knife, ..., Index 7 = Unarmed (matches SkillLevelTarget enum).
+        /// This avoids relying on weaponType field or visible text which may not match.
+        /// </summary>
+        private static void CacheWeaponSkillsFromUI()
+        {
+            weaponSkillCache.Clear();
+
+            try
+            {
+                // Get the active status details controller from the navigation tracker
+                var tracker = StatusNavigationTracker.Instance;
+                if (tracker?.ActiveController == null)
+                {
+                    MelonLogger.Warning("[StatusDetails] No active controller in tracker - cannot cache weapon skills");
+                    return;
+                }
+
+                var activeController = tracker.ActiveController;
+                IntPtr controllerPtr = activeController.Pointer;
+                if (controllerPtr == IntPtr.Zero)
+                {
+                    MelonLogger.Warning("[StatusDetails] Active controller pointer is null");
+                    return;
+                }
+
+                MelonLogger.Msg($"[StatusDetails] Accessing skillLevelContentList from StatusDetailsController at offset 0x{OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT:X}");
+
+                // Access skillLevelContentList at offset 0x80 (KeyInput variant)
+                IntPtr listPtr;
+                unsafe
+                {
+                    listPtr = *(IntPtr*)((byte*)controllerPtr + OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT);
+                }
+
+                if (listPtr == IntPtr.Zero)
+                {
+                    MelonLogger.Warning("[StatusDetails] skillLevelContentList pointer is null");
+                    return;
+                }
+
+                // Create managed List wrapper
+                var skillList = new Il2CppSystem.Collections.Generic.List<SkillLevelContentController>(listPtr);
+                int count = skillList.Count;
+                MelonLogger.Msg($"[StatusDetails] skillLevelContentList has {count} entries");
+
+                if (count == 0)
+                {
+                    MelonLogger.Warning("[StatusDetails] skillLevelContentList is empty");
+                    return;
+                }
+
+                // Skill names for logging (index matches SkillLevelTarget enum)
+                string[] skillNames = { "Sword", "Knife", "Spear", "Axe", "Staff", "Bow", "Shield", "Unarmed" };
+                // UI skill names in display order (indices 3 and 4 are swapped vs enum)
+                string[] uiSkillNames = { "Sword", "Knife", "Spear", "Staff", "Axe", "Bow", "Shield", "Unarmed" };
+
+                // Iterate through list BY INDEX, then map to correct enum value
+                for (int i = 0; i < count && i < 8; i++)
+                {
+                    try
+                    {
+                        var controller = skillList[i];
+                        if (controller == null)
+                        {
+                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): controller is null");
+                            continue;
+                        }
+
+                        IntPtr skillControllerPtr = controller.Pointer;
+                        if (skillControllerPtr == IntPtr.Zero)
+                        {
+                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): controller pointer is zero");
+                            continue;
+                        }
+
+                        // Read view pointer at offset 0x18 (private field)
+                        IntPtr viewPtr;
+                        unsafe
+                        {
+                            viewPtr = *(IntPtr*)((byte*)skillControllerPtr + OFFSET_SKILL_VIEW);
+                        }
+                        if (viewPtr == IntPtr.Zero)
+                        {
+                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): view pointer is zero");
+                            continue;
+                        }
+
+                        // Create managed wrapper for the view
+                        var view = new SkillLevelContentView(viewPtr);
+                        if (view == null)
+                        {
+                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): failed to create view wrapper");
+                            continue;
+                        }
+
+                        // Read level from LevelText property
+                        int level = 1;
+                        Text levelText = view.LevelText;
+                        if (levelText != null)
+                        {
+                            string levelStr = levelText.text;
+                            if (!string.IsNullOrEmpty(levelStr))
+                            {
+                                int.TryParse(levelStr.Trim(), out level);
+                            }
+                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): levelText=\"{levelStr}\" -> level={level}");
+                        }
+                        else
+                        {
+                            MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): LevelText is null");
+                        }
+
+                        // Read percentage from gauge
+                        int percentage = -1;
+                        CommonGauge gauge = view.CommonGauge;
+                        if (gauge != null)
+                        {
+                            IntPtr gaugePtr = gauge.Pointer;
+                            if (gaugePtr != IntPtr.Zero)
+                            {
+                                IntPtr imagePtr;
+                                unsafe
+                                {
+                                    imagePtr = *(IntPtr*)((byte*)gaugePtr + OFFSET_GAUGE_IMAGE);
+                                }
+                                if (imagePtr != IntPtr.Zero)
+                                {
+                                    var gaugeImage = new Image(imagePtr);
+                                    if (gaugeImage != null)
+                                    {
+                                        float fillAmount = gaugeImage.fillAmount;
+                                        percentage = (int)(fillAmount * 100);
+                                        if (percentage < 0) percentage = 0;
+                                        if (percentage > 99) percentage = 99;
+                                        MelonLogger.Msg($"[StatusDetails] Index {i} ({(i < skillNames.Length ? skillNames[i] : "?")}): gauge fillAmount={fillAmount} -> {percentage}%");
+                                    }
+                                }
+                            }
+                        }
+
+                        // Map UI index to SkillLevelTarget enum value (indices 3 and 4 are swapped)
+                        int skillType = uiIndexToSkillType[i];
+                        weaponSkillCache[skillType] = (level, percentage);
+                        string uiName = i < uiSkillNames.Length ? uiSkillNames[i] : "?";
+                        string enumName = skillType < skillNames.Length ? skillNames[skillType] : "?";
+                        MelonLogger.Msg($"[StatusDetails] UI index {i} ({uiName}) -> enum {skillType} ({enumName}): level={level}, percentage={percentage}");
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"[StatusDetails] Error reading skill at index {i}: {ex.Message}");
+                    }
+                }
+
+                MelonLogger.Msg($"[StatusDetails] Weapon skill cache complete: {weaponSkillCache.Count} entries");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[StatusDetails] Error caching weapon skills: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Cache accuracy count from UI.
+        /// In FF2, accuracy count (number of hits shown as "8x" in "8x 99%") comes from equipped weapons.
+        /// ConfirmedAccuracyCount() returns 0 because BaseAccuracyCount is never initialized for players.
+        /// This is similar to how FF3 handles attack count for hidden weapon skill levels.
+        /// </summary>
+        private static void CacheAccuracyCountFromUI()
+        {
+            cachedAccuracyCount = -1;
+
+            try
+            {
+                var tracker = StatusNavigationTracker.Instance;
+                if (tracker?.ActiveController == null)
+                {
+                    MelonLogger.Warning("[StatusDetails] No active controller - cannot cache accuracy count");
+                    return;
+                }
+
+                IntPtr controllerPtr = tracker.ActiveController.Pointer;
+                if (controllerPtr == IntPtr.Zero)
+                {
+                    MelonLogger.Warning("[StatusDetails] Controller pointer is null");
+                    return;
+                }
+
+                // Access contentList at offset 0x48 (from base StatusDetailsControllerBase)
+                IntPtr contentListPtr;
+                unsafe
+                {
+                    contentListPtr = *(IntPtr*)((byte*)controllerPtr + OFFSET_CONTENT_LIST);
+                }
+
+                if (contentListPtr == IntPtr.Zero)
+                {
+                    MelonLogger.Warning("[StatusDetails] contentList pointer is null");
+                    return;
+                }
+
+                var contentList = new Il2CppSystem.Collections.Generic.List<ParameterContentController>(contentListPtr);
+                int count = contentList.Count;
+
+                // Search for the AccuracyRate parameter controller (count is displayed in same view)
+                for (int i = 0; i < count; i++)
+                {
+                    try
+                    {
+                        var controller = contentList[i];
+                        if (controller == null) continue;
+
+                        IntPtr paramControllerPtr = controller.Pointer;
+                        if (paramControllerPtr == IntPtr.Zero) continue;
+
+                        // Read type at offset 0x18
+                        int paramType;
+                        unsafe
+                        {
+                            paramType = *(int*)((byte*)paramControllerPtr + OFFSET_PARAMETER_TYPE);
+                        }
+
+                        if (paramType == PARAMETER_TYPE_ACCURACY_RATE)
+                        {
+
+                            // Read view pointer at offset 0x20
+                            IntPtr viewPtr;
+                            unsafe
+                            {
+                                viewPtr = *(IntPtr*)((byte*)paramControllerPtr + OFFSET_PARAMETER_VIEW);
+                            }
+
+                            if (viewPtr == IntPtr.Zero) continue;
+
+                            // Read multipliedValueText at offset 0x28 (this is the "12" in "12x 99%")
+                            IntPtr textPtr;
+                            unsafe
+                            {
+                                textPtr = *(IntPtr*)((byte*)viewPtr + OFFSET_MULTIPLIED_VALUE_TEXT);
+                            }
+
+                            if (textPtr != IntPtr.Zero)
+                            {
+                                var text = new Text(textPtr);
+                                if (text != null)
+                                {
+                                    string valueStr = text.text;
+                                    if (!string.IsNullOrEmpty(valueStr) && int.TryParse(valueStr.Trim(), out int value))
+                                    {
+                                        cachedAccuracyCount = value;
+                                        MelonLogger.Msg($"[StatusDetails] Cached accuracy count from AccuracyRate view: {cachedAccuracyCount}");
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MelonLogger.Warning($"[StatusDetails] Error checking parameter controller {i}: {ex.Message}");
+                    }
+                }
+
+                MelonLogger.Warning("[StatusDetails] AccuracyRate controller not found in contentList");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[StatusDetails] Error caching accuracy count: {ex.Message}");
+            }
+        }
+
+        // NOTE: Fallback methods have been intentionally removed.
+        // Fallbacks that provide incorrect information are worse than no information.
+        // Better to return "N/A" than misleading data that detracts from playability.
+        // DO NOT re-implement fallback calculations without verifying they match visual display.
+
+        /// <summary>
+        /// Get weapon skill data from cache.
+        /// Returns (level, percentage) or (-1, -1) if not found.
+        /// Cache is populated via PopulateUICache() when status screen opens.
+        /// </summary>
+        private static (int level, int percentage) GetWeaponSkillFromCache(SkillLevelTarget skillType)
+        {
+            if (weaponSkillCache.TryGetValue((int)skillType, out var data))
+            {
+                return data;
+            }
+            return (-1, -1);
+        }
+
+        // NOTE: Combat stats (Accuracy, Evasion, Magic Defense) now use direct API calls
+        // like FF3, instead of UI caching. This is simpler and more reliable.
+        // See ReadAccuracy(), ReadEvasion(), ReadMagicDefense() for implementation.
+
+        #endregion
+
         /// <summary>
         /// Initialize the stat list with all visible stats in UI order.
-        /// FF2-specific stats: 22 total (no job, no level, no XP - all growth is usage-based)
+        /// FF2-specific stats: 23 total (no job, no level, no XP - all growth is usage-based)
         /// Order matches the in-game status screen layout.
         /// </summary>
         public static void InitializeStatList()
@@ -342,15 +728,17 @@ namespace FFII_ScreenReader.Menus
             statList.Add(new StatusStatDefinition("Magic Defense", StatGroup.CombatStats, ReadMagicDefense));
             statList.Add(new StatusStatDefinition("Magic Interference", StatGroup.CombatStats, ReadMagicInterference));
 
-            // Weapon Skills Group (indices 15-21) - FF2 specific
-            // Order matches status screen: Fist, Sword, Staff, Spear, Axe, Bow, Shield
-            statList.Add(new StatusStatDefinition("Fist", StatGroup.WeaponSkills, ReadUnarmedSkill));
+            // Weapon Skills Group (indices 15-22) - FF2 specific
+            // Order matches status screen and SkillLevelTarget enum (0-7):
+            // Sword, Knife, Spear, Axe, Staff, Bow, Shield, Unarmed
             statList.Add(new StatusStatDefinition("Sword", StatGroup.WeaponSkills, ReadSwordSkill));
-            statList.Add(new StatusStatDefinition("Staff", StatGroup.WeaponSkills, ReadStaffSkill));
+            statList.Add(new StatusStatDefinition("Knife", StatGroup.WeaponSkills, ReadKnifeSkill));
             statList.Add(new StatusStatDefinition("Spear", StatGroup.WeaponSkills, ReadSpearSkill));
             statList.Add(new StatusStatDefinition("Axe", StatGroup.WeaponSkills, ReadAxeSkill));
+            statList.Add(new StatusStatDefinition("Staff", StatGroup.WeaponSkills, ReadStaffSkill));
             statList.Add(new StatusStatDefinition("Bow", StatGroup.WeaponSkills, ReadBowSkill));
             statList.Add(new StatusStatDefinition("Shield", StatGroup.WeaponSkills, ReadShieldSkill));
+            statList.Add(new StatusStatDefinition("Unarmed", StatGroup.WeaponSkills, ReadUnarmedSkill));
         }
 
         /// <summary>
@@ -694,17 +1082,28 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                // FF2: Accuracy displayed as "Nx Y%" (e.g., "1x 70%")
-                // ConfirmedAccuracyCount() returns 0-indexed, need +1 for display
-                int count = data.Parameter.ConfirmedAccuracyCount() + 1;
+                if (data?.Parameter == null) return "Accuracy: N/A";
+                // FF2: Accuracy displayed as "Nx Y%" (e.g., "12x 99%")
+                // Accuracy count comes from equipped weapons, not base stats.
+                // ConfirmedAccuracyCount() returns 0 because BaseAccuracyCount is never initialized.
+                // Read count from UI cache via AccuracyRate controller's multipliedValueText.
+                int count = cachedAccuracyCount;
                 int rate = data.Parameter.ConfirmedAccuracyRate(false);
-                return $"Accuracy: {count}x {rate} percent";
+
+                if (count > 0)
+                {
+                    return $"Accuracy: {count}x {rate} percent";
+                }
+                else
+                {
+                    // Fallback to just rate if count unavailable
+                    return $"Accuracy: {rate} percent";
+                }
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Accuracy: {ex.Message}");
-                return "N/A";
+                return "Accuracy: N/A";
             }
         }
 
@@ -726,8 +1125,9 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                // FF2: Evasion displayed as "Nx Y%" (e.g., "1x 24%")
+                if (data?.Parameter == null) return "Evasion: N/A";
+                // FF2: Evasion displayed as "Nx Y%" (e.g., "4x 17%")
+                // Use direct API calls like FF3 - simpler and more reliable than UI cache
                 int count = data.Parameter.ConfirmedEvasionCount();
                 int rate = data.Parameter.ConfirmedEvasionRate(false);
                 return $"Evasion: {count}x {rate} percent";
@@ -735,7 +1135,7 @@ namespace FFII_ScreenReader.Menus
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Evasion: {ex.Message}");
-                return "N/A";
+                return "Evasion: N/A";
             }
         }
 
@@ -743,17 +1143,18 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                // FF2: Magic Defense displayed as "Nx Y%" (e.g., "1x 12%")
-                // ConfirmedAbilityDefense() returns the rate value (confusing naming)
+                if (data?.Parameter == null) return "Magic Defense: N/A";
+                // FF2: Magic Defense displayed as "Nx Y%" (e.g., "7x 77%")
+                // Use direct API calls like FF3 - simpler and more reliable than UI cache
                 int count = data.Parameter.ConfirmedMagicDefenseCount();
+                // ConfirmedAbilityDefense() returns the rate value (confusing naming)
                 int rate = data.Parameter.ConfirmedAbilityDefense();
                 return $"Magic Defense: {count}x {rate} percent";
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error reading Magic Defense: {ex.Message}");
-                return "N/A";
+                return "Magic Defense: N/A";
             }
         }
 
@@ -780,9 +1181,9 @@ namespace FFII_ScreenReader.Menus
         #region Weapon Skill Readers
 
         /// <summary>
-        /// Read a weapon skill level and progress directly from the game's UI.
-        /// This reads what the game actually displays, avoiding calculation errors.
-        /// Format: "skill name lv(level): (progress) percent"
+        /// Read a weapon skill level with progress percentage.
+        /// Format: "skill name: Level X, Y percent" (e.g., "Sword: Level 9, 45 percent")
+        /// Level and percentage read directly from UI components.
         /// </summary>
         private static string ReadWeaponSkill(OwnedCharacterData data, SkillLevelTarget skillType, string skillName)
         {
@@ -790,37 +1191,22 @@ namespace FFII_ScreenReader.Menus
             {
                 if (data == null) return $"{skillName}: N/A";
 
-                // Use BattleUtility.GetSkillLevel - game's calculation method
-                int level = BattleUtility.GetSkillLevel(data, skillType);
+                // Try to read from UI cache first (matches visual display exactly)
+                var (uiLevel, uiPercentage) = GetWeaponSkillFromCache(skillType);
 
-                // Get exp for percentage within level
-                int exp = 0;
-                var skillTargets = data.SkillLevelTargets;
-                if (skillTargets != null && skillTargets.ContainsKey(skillType))
+                if (uiLevel > 0)
                 {
-                    exp = skillTargets[skillType];
-                }
-
-                // Calculate progress using ExpUtility
-                int progress = 0;
-                try
-                {
-                    int expToNext = ExpUtility.GetNextExp(1, exp, ExpTableType.LevelExp);
-                    int expDiff = ExpUtility.GetExpDifference(1, exp, ExpTableType.LevelExp);
-                    if (expDiff > 0)
+                    // Successfully read from UI
+                    if (uiPercentage >= 0)
                     {
-                        float fillAmount = 1.0f - ((float)expToNext / (float)expDiff);
-                        progress = (int)(fillAmount * 100);
-                        if (progress < 0) progress = 0;
-                        if (progress > 99) progress = 99;
+                        return $"{skillName}: Level {uiLevel}, {uiPercentage} percent";
                     }
-                }
-                catch
-                {
-                    progress = 0;
+                    return $"{skillName}: Level {uiLevel}";
                 }
 
-                return $"{skillName} lv{level}: {progress} percent";
+                // NO FALLBACK - incorrect data is worse than no data
+                // DO NOT re-implement fallback calculations without verifying they match visual display
+                return $"{skillName}: N/A";
             }
             catch (Exception ex)
             {
@@ -866,7 +1252,7 @@ namespace FFII_ScreenReader.Menus
 
         private static string ReadUnarmedSkill(OwnedCharacterData data)
         {
-            return ReadWeaponSkill(data, SkillLevelTarget.WeaponWrestle, "Fist");
+            return ReadWeaponSkill(data, SkillLevelTarget.WeaponWrestle, "Unarmed");
         }
 
         // Note: Evasion skills (PhysicalAvoidance, AbilityAvoidance) are intentionally NOT included

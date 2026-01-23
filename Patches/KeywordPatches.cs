@@ -6,15 +6,13 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
 
 // Type aliases for IL2CPP types
 using KeyInputSecretWordController = Il2CppLast.UI.KeyInput.SecretWordController;
-using TouchSecretWordController = Il2CppLast.UI.Touch.SecretWordController;
-using SecretWordControllerBase = Il2CppLast.UI.SecretWordControllerBase;
 using KeyInputWordsWindowController = Il2CppLast.UI.KeyInput.WordsWindowController;
 using KeyInputWordsContentListController = Il2CppLast.UI.KeyInput.WordsContentListController;
-using KeyInputWordsContentListView = Il2CppLast.UI.KeyInput.WordsContentListView;
 using MenuManager = Il2CppLast.UI.MenuManager;
 using GameCursor = Il2CppLast.UI.Cursor;
 using SelectFieldContentData = Il2CppLast.UI.SelectFieldContentManager.SelectFieldContentData;
@@ -32,140 +30,43 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class KeywordMenuState
     {
-        public static bool IsActive { get; set; } = false;
+        /// <summary>
+        /// True when keyword menu is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.KEYWORD_MENU);
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
-        private static int lastCommandIndex = -1;
-        private static int lastWordIndex = -1;
+        // Context keys for index-based deduplication
+        private const string CONTEXT_COMMAND_INDEX = "Keyword.CommandIndex";
+        private const string CONTEXT_WORD_INDEX = "Keyword.WordIndex";
 
-        // StateMachine offsets (from dump.cs SecretWordControllerBase)
-        // stateMachine at offset 0x20
-        private const int OFFSET_STATE_MACHINE = 0x20;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
-        // SecretWordControllerBase.State values
-        private const int STATE_NONE = 0;
-        private const int STATE_COMMAND_SELECT = 1;
-        private const int STATE_COMMAND_SELECTING = 2;
-        private const int STATE_WORD_SELECT = 3;
-        private const int STATE_WORD_SELECTING = 4;
-        private const int STATE_ITEM_SELECT = 5;
-        private const int STATE_ITEM_SELECTING = 6;
-        private const int STATE_NEW_WORD_VIEW = 7;
-        private const int STATE_NEW_WORD_VIEWING = 8;
-        private const int STATE_END = 9;
-        private const int STATE_END_WAIT = 10;
+        /// <summary>
+        /// Sets the keyword menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.KEYWORD_MENU);
+        }
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
-        /// Uses state machine to determine if we're in active selection.
-        /// Auto-clears when returning to inactive state.
+        /// State is cleared by transition patch when menu closes.
         /// </summary>
-        public static bool ShouldSuppress()
-        {
-            if (!IsActive)
-                return false;
-
-            try
-            {
-                var controller = UnityEngine.Object.FindObjectOfType<KeyInputSecretWordController>();
-                if (controller == null)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                int currentState = GetCurrentState(controller);
-
-                // If state is None or End, menu is closing - clear and don't suppress
-                if (currentState == STATE_NONE || currentState == STATE_END ||
-                    currentState == STATE_END_WAIT || currentState < 0)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                // We're in an active state - suppress generic cursor
-                return true;
-            }
-            catch
-            {
-                ClearState();
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Reads the current state from SecretWordControllerBase's state machine.
-        /// Returns -1 if unable to read.
-        /// </summary>
-        public static int GetCurrentState(KeyInputSecretWordController controller)
-        {
-            try
-            {
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return -1;
-
-                unsafe
-                {
-                    // Read stateMachine pointer at offset 0x20
-                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (stateMachinePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read current State<T> pointer at offset 0x10
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentStatePtr == IntPtr.Zero)
-                        return -1;
-
-                    // Read Tag (int) at offset 0x10
-                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
-                    return stateValue;
-                }
-            }
-            catch
-            {
-                return -1;
-            }
-        }
+        public static bool ShouldSuppress() => IsActive;
 
         public static void ClearState()
         {
-            IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
-            lastCommandIndex = -1;
-            lastWordIndex = -1;
-        }
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            MenuStateRegistry.Reset(MenuStateRegistry.KEYWORD_MENU);
+            AnnouncementDeduplicator.Reset(CONTEXT_KEYWORD_COMMAND, CONTEXT_KEYWORD_WORD, CONTEXT_COMMAND_INDEX, CONTEXT_WORD_INDEX);
         }
 
         public static bool CommandIndexChanged(int index)
         {
-            if (index == lastCommandIndex)
-                return false;
-            lastCommandIndex = index;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_COMMAND_INDEX, index);
         }
 
         public static bool WordIndexChanged(int index)
         {
-            if (index == lastWordIndex)
-                return false;
-            lastWordIndex = index;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_WORD_INDEX, index);
         }
 
         public static string GetCommandName(int commandId)
@@ -187,80 +88,37 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class WordsMenuState
     {
-        public static bool IsActive { get; set; } = false;
+        /// <summary>
+        /// True when words menu is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.WORDS_MENU);
 
-        private static string lastAnnouncement = "";
-        private static float lastAnnouncementTime = 0f;
-        private static int lastWordIndex = -1;
+        // Context key for index-based deduplication
+        private const string CONTEXT_WORD_INDEX = "WordsMenu.WordIndex";
+
+        /// <summary>
+        /// Sets the words menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.WORDS_MENU);
+        }
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
-        /// Verifies MenuManager.IsOpen before suppressing.
+        /// State is cleared by transition patch when menu closes.
         /// </summary>
-        public static bool ShouldSuppress()
-        {
-            if (!IsActive)
-                return false;
-
-            try
-            {
-                // Words menu is part of main menu - verify menu is still open
-                var menuManager = MenuManager.Instance;
-                if (menuManager == null || !menuManager.IsOpen)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                // Verify WordsWindowController still exists and is active
-                var controller = UnityEngine.Object.FindObjectOfType<KeyInputWordsWindowController>();
-                if (controller == null)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                var mono = controller.TryCast<MonoBehaviour>();
-                if (mono == null || mono.gameObject == null || !mono.gameObject.activeInHierarchy)
-                {
-                    ClearState();
-                    return false;
-                }
-
-                return true;
-            }
-            catch
-            {
-                ClearState();
-                return false;
-            }
-        }
+        public static bool ShouldSuppress() => IsActive;
 
         public static void ClearState()
         {
-            IsActive = false;
-            lastAnnouncement = "";
-            lastAnnouncementTime = 0f;
-            lastWordIndex = -1;
-        }
-
-        public static bool ShouldAnnounce(string announcement)
-        {
-            float currentTime = Time.time;
-            if (announcement == lastAnnouncement && (currentTime - lastAnnouncementTime) < 0.15f)
-                return false;
-
-            lastAnnouncement = announcement;
-            lastAnnouncementTime = currentTime;
-            return true;
+            MenuStateRegistry.Reset(MenuStateRegistry.WORDS_MENU);
+            AnnouncementDeduplicator.Reset(CONTEXT_WORDS_MENU, CONTEXT_WORD_INDEX);
         }
 
         public static bool WordIndexChanged(int index)
         {
-            if (index == lastWordIndex)
-                return false;
-            lastWordIndex = index;
-            return true;
+            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_WORD_INDEX, index);
         }
     }
 
@@ -382,12 +240,11 @@ namespace FFII_ScreenReader.Patches
 
                 string commandName = KeywordMenuState.GetCommandName(index);
 
-                if (!KeywordMenuState.ShouldAnnounce(commandName))
+                if (!ShouldAnnounce(CONTEXT_KEYWORD_COMMAND, commandName))
                     return;
 
                 // Set active state AFTER validation
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Keyword");
-                KeywordMenuState.IsActive = true;
+                KeywordMenuState.SetActive();
 
                 // Use interrupt: false to avoid cutting off NPC intro dialogue
                 FFII_ScreenReaderMod.SpeakText(commandName, interrupt: false);
@@ -415,11 +272,10 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!KeywordMenuState.ShouldAnnounce(keywordAnnouncement))
+                if (!ShouldAnnounce(CONTEXT_KEYWORD_WORD, keywordAnnouncement))
                     return;
 
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Keyword");
-                KeywordMenuState.IsActive = true;
+                KeywordMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch (Exception ex)
@@ -445,11 +301,10 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(itemAnnouncement))
                     return;
 
-                if (!KeywordMenuState.ShouldAnnounce(itemAnnouncement))
+                if (!ShouldAnnounce(CONTEXT_KEYWORD_WORD, itemAnnouncement))
                     return;
 
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Keyword");
-                KeywordMenuState.IsActive = true;
+                KeywordMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(itemAnnouncement, interrupt: true);
             }
             catch (Exception ex)
@@ -483,11 +338,10 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!WordsMenuState.ShouldAnnounce(keywordAnnouncement))
+                if (!ShouldAnnounce(CONTEXT_WORDS_MENU, keywordAnnouncement))
                     return;
 
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Words");
-                WordsMenuState.IsActive = true;
+                WordsMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch (Exception ex)
@@ -516,11 +370,10 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!WordsMenuState.ShouldAnnounce(keywordAnnouncement))
+                if (!ShouldAnnounce(CONTEXT_WORDS_MENU, keywordAnnouncement))
                     return;
 
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Words");
-                WordsMenuState.IsActive = true;
+                WordsMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch (Exception ex)

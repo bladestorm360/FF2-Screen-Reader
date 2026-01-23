@@ -4,6 +4,7 @@ using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using Il2CppLast.Management;
@@ -17,14 +18,13 @@ using AbilityWindowController = Il2CppSerial.FF2.UI.KeyInput.AbilityWindowContro
 using AbilityCommandController = Il2CppSerial.FF2.UI.KeyInput.AbilityCommandController;
 using AbilityCommandContentView = Il2CppSerial.FF2.UI.KeyInput.AbilityCommandContentView;
 using AbilityUseContentListController = Il2CppSerial.FF2.UI.KeyInput.AbilityUseContentListController;
-using AbilityCommandContentData = Il2CppLast.UI.AbilityCommandContentData;
 using BattleAbilityInfomationContentController = Il2CppLast.UI.KeyInput.BattleAbilityInfomationContentController;
 using OwnedAbility = Il2CppLast.Data.User.OwnedAbility;
 using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
 using AbilityCommandId = Il2CppLast.Defaine.UI.AbilityCommandId;
 using GameCursor = Il2CppLast.UI.Cursor;
 using ItemTargetSelectContentController = Il2CppLast.UI.KeyInput.ItemTargetSelectContentController;
-using Condition = Il2CppLast.Data.Master.Condition;
+using CommonGauge = Il2CppLast.UI.CommonGauge;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -65,11 +65,15 @@ namespace FFII_ScreenReader.Patches
         public static bool IsSpellListActive => _isSpellListFocused;
         public static bool IsTargetSelectionActive => _isTargetSelectionActive;
         public static bool IsCommandMenuActive => _isCommandMenuActive;
-        public static bool IsActive => _isSpellListFocused || _isTargetSelectionActive || _isCommandMenuActive;
+
+        /// <summary>
+        /// True when any magic menu sub-state is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.MAGIC_MENU);
 
         public static void OnSpellListFocused()
         {
-            FFII_ScreenReaderMod.ClearOtherMenuStates("Magic");
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MAGIC_MENU);
             _isSpellListFocused = true;
             lastSpellId = -1;
         }
@@ -79,11 +83,12 @@ namespace FFII_ScreenReader.Patches
             _isSpellListFocused = false;
             lastSpellId = -1;
             _currentCharacter = null;
+            UpdateRegistryState();
         }
 
         public static void OnTargetSelectionActive()
         {
-            FFII_ScreenReaderMod.ClearOtherMenuStates("Magic");
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MAGIC_MENU);
             _isTargetSelectionActive = true;
             lastTargetAnnouncement = "";
         }
@@ -92,11 +97,12 @@ namespace FFII_ScreenReader.Patches
         {
             _isTargetSelectionActive = false;
             lastTargetAnnouncement = "";
+            UpdateRegistryState();
         }
 
         public static void OnCommandMenuActive()
         {
-            FFII_ScreenReaderMod.ClearOtherMenuStates("Magic");
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MAGIC_MENU);
             _isCommandMenuActive = true;
             _isSpellListFocused = false;  // Command menu excludes spell list
             lastCommandAnnouncement = "";
@@ -106,6 +112,18 @@ namespace FFII_ScreenReader.Patches
         {
             _isCommandMenuActive = false;
             lastCommandAnnouncement = "";
+            UpdateRegistryState();
+        }
+
+        /// <summary>
+        /// Clears registry state if no sub-states are active.
+        /// </summary>
+        private static void UpdateRegistryState()
+        {
+            if (!_isSpellListFocused && !_isTargetSelectionActive && !_isCommandMenuActive)
+            {
+                MenuStateRegistry.Reset(MenuStateRegistry.MAGIC_MENU);
+            }
         }
 
         public static bool ShouldAnnounceCommand(string announcement)
@@ -124,65 +142,33 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
-        /// Suppresses during spell list, target selection, or command menu states.
+        /// Suppresses when magic menu is active - specialized patches handle all states.
         /// </summary>
         public static bool ShouldSuppress()
         {
-            if (!_isSpellListFocused && !_isTargetSelectionActive && !_isCommandMenuActive)
+            if (!IsActive)
                 return false;
 
-            try
-            {
-                var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
-                if (windowController != null)
-                {
-                    int currentState = GetCurrentState(windowController);
-
-                    // Popup state - let generic cursor handle it
-                    if (currentState == STATE_POPUP)
-                    {
-                        ResetState();
-                        return false;
-                    }
-
-                    if (currentState == STATE_NONE)
-                    {
-                        // Menu closed
-                        ResetState();
-                        return false;
-                    }
-
-                    // Command state - we handle it ourselves
-                    if (currentState == STATE_COMMAND && _isCommandMenuActive)
-                    {
-                        return true;
-                    }
-                }
-                else
-                {
-                    // No controller found - reset
-                    ResetState();
-                    return false;
-                }
-
-                // Validate spell list controller is active
-                if (_isSpellListFocused)
-                {
-                    var listController = UnityEngine.Object.FindObjectOfType<AbilityContentListController>();
-                    if (listController == null || !listController.gameObject.activeInHierarchy)
-                    {
-                        _isSpellListFocused = false;
-                        return _isTargetSelectionActive || _isCommandMenuActive;
-                    }
-                }
-
-                return true;
-            }
-            catch
+            // Validate the window controller exists
+            var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
+            if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
                 ResetState();
                 return false;
             }
+
+            int state = GetCurrentState(windowController);
+            if (state == STATE_NONE)
+            {
+                ResetState();
+                return false;  // Menu closed - don't suppress
+            }
+
+            // Suppress for ALL active states including COMMAND
+            // CommandController_UpdateFocus_Postfix handles Use/Forget announcements
+            // SetCursor_Postfix handles spell list announcements
+            // We must suppress MenuTextDiscovery to prevent duplicate/wrong readings
+            return true;
         }
 
         /// <summary>
@@ -241,6 +227,7 @@ namespace FFII_ScreenReader.Patches
             lastTargetAnnouncement = "";
             lastCommandAnnouncement = "";
             _currentCharacter = null;
+            MenuStateRegistry.Reset(MenuStateRegistry.MAGIC_MENU);
         }
 
         public static string GetSpellName(OwnedAbility ability)
@@ -340,33 +327,6 @@ namespace FFII_ScreenReader.Patches
             catch { }
 
             return 0;
-        }
-
-        /// <summary>
-        /// Gets condition/status name from Condition data.
-        /// </summary>
-        public static string GetConditionName(Condition condition)
-        {
-            if (condition == null)
-                return null;
-
-            try
-            {
-                string mesId = condition.MesIdName;
-                if (!string.IsNullOrEmpty(mesId))
-                {
-                    var messageManager = MessageManager.Instance;
-                    if (messageManager != null)
-                    {
-                        string name = messageManager.GetMessage(mesId, false);
-                        if (!string.IsNullOrWhiteSpace(name))
-                            return TextUtils.StripIconMarkup(name);
-                    }
-                }
-            }
-            catch { }
-
-            return null;
         }
     }
 
@@ -636,7 +596,7 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 // Verify we're in command state
-                var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
+                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
                 if (windowController != null)
                 {
                     int currentState = MagicMenuState.GetCurrentState(windowController);
@@ -718,7 +678,7 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 // Check if we're in a spell list state
-                var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
+                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
                 if (windowController != null)
                 {
                     int currentState = MagicMenuState.GetCurrentState(windowController);
@@ -771,9 +731,6 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                if (!MagicMenuState.IsSpellListActive)
-                    return;
-
                 if (__instance == null || targetCursor == null)
                     return;
 
@@ -781,17 +738,24 @@ namespace FFII_ScreenReader.Patches
                 if (controller == null || !controller.gameObject.activeInHierarchy)
                     return;
 
-                // Verify we're still in spell list state
-                var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
+                // PRIMARY CHECK: Verify state machine FIRST before any flag checks.
+                // This prevents reading spells when in COMMAND state (Use/Forget menu).
+                // The state machine is the authoritative source, flags can race.
+                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
                 if (windowController != null)
                 {
                     int currentState = MagicMenuState.GetCurrentState(windowController);
+                    // Only announce spells in USE_LIST or FORGET states
                     if (currentState != MagicMenuState.STATE_USE_LIST &&
                         currentState != MagicMenuState.STATE_FORGET)
                     {
                         return;
                     }
                 }
+
+                // Secondary check: flag must also indicate spell list is active
+                if (!MagicMenuState.IsSpellListActive)
+                    return;
 
                 int cursorIndex = targetCursor.Index;
                 AnnounceSpellAtIndex(controller, cursorIndex);
@@ -818,7 +782,7 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 // Verify we're in target selection state
-                var windowController = UnityEngine.Object.FindObjectOfType<AbilityWindowController>();
+                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
                 if (windowController != null)
                 {
                     int currentState = MagicMenuState.GetCurrentState(windowController);
@@ -884,7 +848,7 @@ namespace FFII_ScreenReader.Patches
                                 var statusNames = new List<string>();
                                 foreach (var condition in conditionList)
                                 {
-                                    string conditionName = MagicMenuState.GetConditionName(condition);
+                                    string conditionName = LocalizationUtility.GetConditionName(condition);
                                     if (!string.IsNullOrWhiteSpace(conditionName))
                                     {
                                         statusNames.Add(conditionName);
@@ -927,7 +891,7 @@ namespace FFII_ScreenReader.Patches
                 if (controllerPtr == IntPtr.Zero)
                     return;
 
-                // Read contentList pointer at offset 0x60
+                // Read contentList pointer at offset 0x50
                 IntPtr contentListPtr;
                 unsafe
                 {
@@ -956,7 +920,8 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                AnnounceSpell(ability);
+                // Pass contentController to read gauge for percentage
+                AnnounceSpell(ability, contentController);
             }
             catch (Exception ex)
             {
@@ -972,7 +937,10 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        private static void AnnounceSpell(OwnedAbility ability)
+        // Memory offset for CommonGauge.gaugeImage (private field)
+        private const int OFFSET_GAUGE_IMAGE = 0x18;
+
+        private static void AnnounceSpell(OwnedAbility ability, BattleAbilityInfomationContentController contentController = null)
         {
             try
             {
@@ -1001,11 +969,73 @@ namespace FFII_ScreenReader.Patches
                 string announcement = spellName;
 
                 // Add proficiency level (FF2 specific: spells level up 1-16 with use)
-                // NOTE: Spell level calculation not working correctly - see Known Issues
                 int proficiency = MagicMenuState.GetSpellProficiency(ability);
                 if (proficiency > 0)
                 {
                     announcement += $" lv{proficiency}";
+                }
+
+                // Try to read percentage from gauge (FF2 specific: spell level progress)
+                int percentage = -1;
+                if (contentController != null)
+                {
+                    try
+                    {
+                        MelonLogger.Msg($"[Magic Menu] Attempting to read gauge from contentController...");
+                        CommonGauge gauge = contentController.Gauge;
+                        if (gauge != null)
+                        {
+                            MelonLogger.Msg($"[Magic Menu] Got CommonGauge, reading gaugeImage...");
+                            // gaugeImage is private, access via offset
+                            IntPtr gaugePtr = gauge.Pointer;
+                            if (gaugePtr != IntPtr.Zero)
+                            {
+                                IntPtr imagePtr;
+                                unsafe
+                                {
+                                    imagePtr = *(IntPtr*)((byte*)gaugePtr + OFFSET_GAUGE_IMAGE);
+                                }
+                                if (imagePtr != IntPtr.Zero)
+                                {
+                                    var gaugeImage = new Image(imagePtr);
+                                    if (gaugeImage != null)
+                                    {
+                                        float fillAmount = gaugeImage.fillAmount;
+                                        percentage = (int)(fillAmount * 100);
+                                        if (percentage < 0) percentage = 0;
+                                        if (percentage > 99) percentage = 99;
+                                        MelonLogger.Msg($"[Magic Menu] Spell gauge fillAmount={fillAmount} -> {percentage}%");
+                                    }
+                                    else
+                                    {
+                                        MelonLogger.Msg("[Magic Menu] gaugeImage wrapper is null");
+                                    }
+                                }
+                                else
+                                {
+                                    MelonLogger.Msg("[Magic Menu] gaugeImage pointer is zero");
+                                }
+                            }
+                            else
+                            {
+                                MelonLogger.Msg("[Magic Menu] gauge pointer is zero");
+                            }
+                        }
+                        else
+                        {
+                            MelonLogger.Msg("[Magic Menu] contentController.Gauge is null");
+                        }
+                    }
+                    catch (Exception gaugeEx)
+                    {
+                        MelonLogger.Warning($"[Magic Menu] Error reading spell gauge: {gaugeEx.Message}");
+                    }
+                }
+
+                // Add percentage if available
+                if (percentage >= 0)
+                {
+                    announcement += $", {percentage} percent";
                 }
 
                 // Add MP cost (FF2 specific)

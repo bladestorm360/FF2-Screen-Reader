@@ -41,16 +41,7 @@ namespace FFII_ScreenReader.Field
         public FilterContext()
         {
             // Use FieldPlayerController - first try cache, then find it
-            PlayerController = GameObjectCache.Get<FieldPlayerController>();
-
-            if (PlayerController == null)
-            {
-                PlayerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
-                if (PlayerController != null)
-                {
-                    GameObjectCache.Register(PlayerController);
-                }
-            }
+            PlayerController = GameObjectCache.GetOrRefresh<FieldPlayerController>();
 
             if (PlayerController == null)
             {

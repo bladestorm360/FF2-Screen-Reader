@@ -114,15 +114,6 @@ namespace FFII_ScreenReader.Patches
                 MelonLogger.Msg($"[BattleResult] Patched Show ({variant})");
             }
 
-            // Patch ShowLevelUpAbilitysInit
-            var showLevelUpAbilitysInitMethod = AccessTools.Method(controllerType, "ShowLevelUpAbilitysInit");
-            if (showLevelUpAbilitysInitMethod != null)
-            {
-                var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowLevelUpAbilitysInit_Postfix_Generic));
-                harmony.Patch(showLevelUpAbilitysInitMethod, postfix: new HarmonyMethod(postfix));
-                MelonLogger.Msg($"[BattleResult] Patched ShowLevelUpAbilitysInit ({variant})");
-            }
-
             // Patch ShowSkillLevelsInit - Weapon skill level-ups (State = 3)
             var showSkillLevelsInitMethod = AccessTools.Method(controllerType, "ShowSkillLevelsInit");
             if (showSkillLevelsInitMethod != null)
@@ -194,41 +185,6 @@ namespace FFII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error in ShowGetItemsInit_Generic patch: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Generic ShowLevelUpAbilitysInit postfix.
-        /// KeyInput controller uses this for BOTH magic level-ups AND weapon skills.
-        /// Touch controller uses ShowSkillLevelsInit for weapon skills instead.
-        /// </summary>
-        public static void ShowLevelUpAbilitysInit_Postfix_Generic(object __instance)
-        {
-            try
-            {
-                MelonLogger.Msg($"[BattleResult] ShowLevelUpAbilitysInit_Postfix_Generic fired for {__instance?.GetType().Name}");
-
-                dynamic controller = __instance;
-                BattleResultData data = controller.targetData;
-
-                if (data != null)
-                {
-                    // Announce magic/ability level-ups
-                    AnnounceAbilityLevelUps(data);
-
-                    // For KeyInput controller, also announce weapon skills here
-                    // (Touch controller uses ShowSkillLevelsInit instead)
-                    if (!announcedWeaponSkills)
-                    {
-                        announcedWeaponSkills = true;
-                        MelonLogger.Msg("[BattleResult] Announcing weapon skills from ShowLevelUpAbilitysInit (KeyInput path)");
-                        AnnounceAllWeaponSkills(data);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowLevelUpAbilitysInit_Generic patch: {ex.Message}");
             }
         }
 
@@ -536,138 +492,6 @@ namespace FFII_ScreenReader.Patches
                 SkillLevelTarget.AbilityAvoidance => "Magic Defense",
                 _ => target.ToString()
             };
-        }
-
-        #endregion
-
-        #region ShowLevelUpAbilitysInit - Ability Level-Ups
-
-        public static void ShowLevelUpAbilitysInit_Postfix(ResultMenuController __instance)
-        {
-            try
-            {
-                MelonLogger.Msg("[BattleResult] ShowLevelUpAbilitysInit_Postfix fired");
-                var data = __instance.targetData;
-                if (data != null)
-                {
-                    AnnounceAbilityLevelUps(data);
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowLevelUpAbilitysInit patch: {ex.Message}");
-            }
-        }
-
-        private static void AnnounceAbilityLevelUps(BattleResultData data)
-        {
-            try
-            {
-                var characterList = data.CharacterList;
-                if (characterList == null) return;
-
-                foreach (var charResult in characterList)
-                {
-                    if (charResult == null) continue;
-                    AnnounceCharacterAbilityLevelUps(charResult);
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in AnnounceAbilityLevelUps: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Announce abilities that leveled up this battle.
-        /// Format: "Firion, Fire level up!"
-        /// </summary>
-        private static void AnnounceCharacterAbilityLevelUps(BattleResultCharacterData charResult)
-        {
-            try
-            {
-                var afterData = charResult.AfterData;
-                var beforeData = charResult.BeforData;
-                if (afterData == null) return;
-
-                string charName = afterData.Name;
-                if (string.IsNullOrEmpty(charName)) return;
-
-                // Get abilities that changed this battle
-                var abilityList = charResult.AbilityList;
-                if (abilityList == null || abilityList.Count == 0) return;
-
-                MelonLogger.Msg($"[BattleResult] {charName}: {abilityList.Count} abilities in list");
-
-                // Get before/after ability lists for comparison
-                var afterAbilities = afterData.OwnedAbilityList;
-                var beforeAbilities = beforeData?.OwnedAbilityList;
-
-                foreach (var ability in abilityList)
-                {
-                    if (ability == null) continue;
-
-                    try
-                    {
-                        // Get ability name
-                        string abilityName = null;
-                        string mesIdName = ability.MesIdName;
-                        if (!string.IsNullOrEmpty(mesIdName))
-                        {
-                            var messageManager = MessageManager.Instance;
-                            if (messageManager != null)
-                            {
-                                abilityName = messageManager.GetMessage(mesIdName);
-                            }
-                        }
-
-                        if (string.IsNullOrEmpty(abilityName))
-                        {
-                            continue; // Skip abilities without names
-                        }
-
-                        // Check if this ability leveled up by comparing before/after
-                        // OwnedAbility.SkillLevel stores raw exp, formula: level = (exp / 100) + 1
-                        int afterExp = ability.SkillLevel;
-                        int beforeExp = 0;
-
-                        if (beforeAbilities != null)
-                        {
-                            // Find matching ability in before list
-                            foreach (var beforeAbility in beforeAbilities)
-                            {
-                                if (beforeAbility != null && beforeAbility.MesIdName == mesIdName)
-                                {
-                                    beforeExp = beforeAbility.SkillLevel;
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Convert raw exp to actual level
-                        int afterLevel = (afterExp / 100) + 1;
-                        int beforeLevel = (beforeExp / 100) + 1;
-                        if (afterLevel > 16) afterLevel = 16;
-                        if (beforeLevel < 1) beforeLevel = 1;
-
-                        // Only announce if level actually increased
-                        if (afterLevel > beforeLevel)
-                        {
-                            string announcement = $"{charName}, {abilityName} lv{afterLevel}!";
-                            MelonLogger.Msg($"[Victory] {announcement}");
-                            FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Warning($"Error announcing ability: {ex.Message}");
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in AnnounceCharacterAbilityLevelUps: {ex.Message}");
-            }
         }
 
         #endregion

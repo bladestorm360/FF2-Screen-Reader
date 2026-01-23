@@ -6,6 +6,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 
 // FF2 Shop UI types
 using ShopListItemContentController = Il2CppLast.UI.KeyInput.ShopListItemContentController;
@@ -24,134 +25,82 @@ namespace FFII_ScreenReader.Patches
 {
     /// <summary>
     /// Tracks shop menu state for 'I' key description access and suppression.
-    /// Uses state machine validation to only suppress during item list navigation.
+    /// State is cleared by transition patch when menu closes.
     /// </summary>
     public static class ShopMenuTracker
     {
-        public static bool IsShopMenuActive { get; set; }
+        /// <summary>
+        /// True when shop menu is active. Delegates to MenuStateRegistry.
+        /// </summary>
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.SHOP_MENU);
 
         /// <summary>
-        /// Alias for IsShopMenuActive for consistency with other menu states.
+        /// Alias for IsActive for backward compatibility.
         /// </summary>
-        public static bool IsActive => IsShopMenuActive;
+        public static bool IsShopMenuActive => IsActive;
+
+        /// <summary>
+        /// Sets the shop menu as active, clearing other menu states.
+        /// </summary>
+        public static void SetActive()
+        {
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
+        }
 
         /// <summary>
         /// Alias for ClearState for consistency with other menu states.
         /// </summary>
         public static void ResetState() => ClearState();
 
+        // State constants from dump.cs (ShopController.State)
+        private const int STATE_NONE = 0;           // Menu closed
+        private const int STATE_SELECT_COMMAND = 1; // Command bar (Buy/Sell)
+
+
         /// <summary>
-        /// Alias for ValidateState for consistency with other menu states.
+        /// Check if GenericCursor should be suppressed.
+        /// Validates state machine to auto-clear when backing to command bar.
         /// </summary>
-        public static bool ShouldSuppress() => ValidateState();
+        public static bool ShouldSuppress()
+        {
+            if (!IsActive)
+                return false;
+
+            // Validate we're actually in a submenu, not command bar
+            var windowController = GameObjectCache.GetOrRefresh<KeyInputShopController>();
+            if (windowController == null || !windowController.gameObject.activeInHierarchy)
+            {
+                ClearState();
+                return false;
+            }
+
+            int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_SHOP_CONTROLLER);
+            if (state == STATE_SELECT_COMMAND || state == STATE_NONE)
+            {
+                ClearState();
+                return false;  // Don't suppress - let generic cursor handle command bar
+            }
+            return true;  // In submenu - suppress generic cursor
+        }
+
+        /// <summary>
+        /// Alias for ShouldSuppress for backward compatibility.
+        /// </summary>
+        public static bool ValidateState() => ShouldSuppress();
+
         public static string LastItemName { get; set; }
         public static string LastItemDescription { get; set; }
         public static string LastItemPrice { get; set; }
         public static string LastItemStats { get; set; }
 
-        // State machine offsets
-        private const int OFFSET_STATE_MACHINE = 0x98;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
-
-        // ShopController.State values
-        private const int STATE_NONE = 0;
-        private const int STATE_SELECT_COMMAND = 1;
-        private const int STATE_SELECT_PRODUCT = 2;
-        private const int STATE_SELECT_SELL_ITEM = 3;
-        private const int STATE_SELECT_ABILITY_TARGET = 4;
-        private const int STATE_SELECT_EQUIPMENT = 5;
-        private const int STATE_CONFIRMATION_BUY_ITEM = 6;
-        private const int STATE_CONFIRMATION_SELL_ITEM = 7;
-        private const int STATE_CONFIRMATION_FORGET_MAGIC = 8;
-        private const int STATE_CONFIRMATION_BUY_MAGIC = 9;
-
-        /// <summary>
-        /// Validates that shop menu is active and should suppress generic cursor.
-        /// </summary>
-        public static bool ValidateState()
-        {
-            if (!IsShopMenuActive)
-                return false;
-
-            try
-            {
-                var shopController = UnityEngine.Object.FindObjectOfType<KeyInputShopController>();
-                if (shopController != null)
-                {
-                    int currentState = GetCurrentState(shopController);
-
-                    if (currentState == STATE_NONE)
-                    {
-                        ClearState();
-                        return false;
-                    }
-
-                    // Command menu: Don't suppress
-                    if (currentState == STATE_SELECT_COMMAND)
-                    {
-                        return false;
-                    }
-
-                    // Item list states: Suppress
-                    if (currentState >= STATE_SELECT_PRODUCT)
-                    {
-                        return true;
-                    }
-                }
-
-                var shopItemController = UnityEngine.Object.FindObjectOfType<ShopListItemContentController>();
-                if (shopItemController != null && shopItemController.gameObject.activeInHierarchy)
-                {
-                    return true;
-                }
-
-                ClearState();
-                return false;
-            }
-            catch
-            {
-                ClearState();
-                return false;
-            }
-        }
-
-        private static int GetCurrentState(KeyInputShopController controller)
-        {
-            try
-            {
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return -1;
-
-                unsafe
-                {
-                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_STATE_MACHINE);
-                    if (stateMachinePtr == IntPtr.Zero)
-                        return -1;
-
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
-                    if (currentStatePtr == IntPtr.Zero)
-                        return -1;
-
-                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
-                    return stateValue;
-                }
-            }
-            catch
-            {
-                return -1;
-            }
-        }
-
         public static void ClearState()
         {
-            IsShopMenuActive = false;
+            MenuStateRegistry.Reset(MenuStateRegistry.SHOP_MENU);
             LastItemName = null;
             LastItemDescription = null;
             LastItemPrice = null;
             LastItemStats = null;
-            ShopPatches.ResetQuantityTracking();
+            AnnouncementDeduplicator.Reset(CONTEXT_SHOP_ITEM, CONTEXT_SHOP_QUANTITY);
         }
     }
 
@@ -210,11 +159,6 @@ namespace FFII_ScreenReader.Patches
     public static class ShopPatches
     {
         private static bool isPatched = false;
-        private static string lastAnnouncedText = "";
-        private static float lastAnnouncedTime = 0f;
-        private const float DIFFERENT_ITEM_DEBOUNCE = 0.1f;
-        private const float SAME_ITEM_DEBOUNCE = 0.15f;
-        private static int lastAnnouncedQuantity = -1;
 
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
@@ -288,8 +232,7 @@ namespace FFII_ScreenReader.Patches
                 if (!isFocus)
                     return;
 
-                FFII_ScreenReaderMod.ClearOtherMenuStates("Shop");
-                ShopMenuTracker.IsShopMenuActive = true;
+                ShopMenuTracker.SetActive();
 
                 string itemName = null;
                 try
@@ -378,17 +321,9 @@ namespace FFII_ScreenReader.Patches
                         : $"{itemName}, {price}. {description}";
                 }
 
-                float currentTime = UnityEngine.Time.time;
-                float timeSinceLastAnnouncement = currentTime - lastAnnouncedTime;
-
-                if (announcement != lastAnnouncedText && timeSinceLastAnnouncement < DIFFERENT_ITEM_DEBOUNCE)
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_SHOP_ITEM, announcement))
                     return;
-
-                if (announcement == lastAnnouncedText && timeSinceLastAnnouncement < SAME_ITEM_DEBOUNCE)
-                    return;
-
-                lastAnnouncedText = announcement;
-                lastAnnouncedTime = currentTime;
 
                 MelonLogger.Msg($"[Shop Item] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement);
@@ -545,10 +480,9 @@ namespace FFII_ScreenReader.Patches
 
                 int selectedCount = GetSelectedCount(__instance);
 
-                if (selectedCount == lastAnnouncedQuantity)
+                // Skip duplicates using centralized deduplication
+                if (!ShouldAnnounce(CONTEXT_SHOP_QUANTITY, selectedCount))
                     return;
-
-                lastAnnouncedQuantity = selectedCount;
 
                 string totalPrice = GetTotalPriceText(__instance);
 
@@ -600,9 +534,5 @@ namespace FFII_ScreenReader.Patches
             return null;
         }
 
-        public static void ResetQuantityTracking()
-        {
-            lastAnnouncedQuantity = -1;
-        }
     }
 }

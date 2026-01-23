@@ -140,10 +140,13 @@ namespace FFII_ScreenReader.Field
                     }
                 }
 
-                // Combine area name and map title
+                // Combine area name and map title with en-dash to match game's MSG_LOCATION_STICK format
                 if (!string.IsNullOrEmpty(areaName) && !string.IsNullOrEmpty(mapTitle))
                 {
-                    return $"{areaName} {mapTitle}";
+                    // Skip redundant mapTitle if it equals areaName (e.g., vehicle interiors)
+                    if (mapTitle == areaName)
+                        return areaName;
+                    return $"{areaName} – {mapTitle}";  // en-dash U+2013
                 }
                 else if (!string.IsNullOrEmpty(areaName))
                 {

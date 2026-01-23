@@ -150,6 +150,7 @@ namespace FFII_ScreenReader.Menus
                 string location = slotData.CurrentArea;
                 string floor = slotData.CurrentLocation;
                 double playTimeSeconds = slotData.PlayTime;
+                string saveDate = slotData.TimeStamp;
 
                 // Translate message keys to localized text
                 var msgManager = MessageManager.Instance;
@@ -207,7 +208,7 @@ namespace FFII_ScreenReader.Menus
                     location += " - " + floor;
                 }
 
-                return BuildAnnouncement(slotId, location, characterName, hours, minutes);
+                return BuildAnnouncement(slotId, saveDate, location, characterName, hours, minutes);
             }
             catch (Exception ex)
             {
@@ -238,10 +239,16 @@ namespace FFII_ScreenReader.Menus
         /// <summary>
         /// Build the announcement string from collected values.
         /// </summary>
-        private static string BuildAnnouncement(string slotId, string location,
+        private static string BuildAnnouncement(string slotId, string saveDate, string location,
             string characterName, string hours, string minutes)
         {
             string announcement = slotId;
+
+            // Add save date
+            if (!string.IsNullOrEmpty(saveDate))
+            {
+                announcement += ", " + saveDate;
+            }
 
             // Add location
             if (!string.IsNullOrEmpty(location))

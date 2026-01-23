@@ -7,11 +7,23 @@ using UnityEngine;
 using HarmonyLib;
 using System;
 using System.Reflection;
+using System.Collections;
 using GameCursor = Il2CppLast.UI.Cursor;
 using FieldMap = Il2Cpp.FieldMap;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
 using FieldMapProvisionInformation = Il2CppLast.Map.FieldMapProvisionInformation;
 using FieldPlayerController = Il2CppLast.Map.FieldPlayerController;
+
+// Menu controller types for transition patches
+using KeyInputItemWindowController = Il2CppLast.UI.KeyInput.ItemWindowController;
+using KeyInputEquipmentWindowController = Il2CppLast.UI.KeyInput.EquipmentWindowController;
+using KeyInputStatusWindowController = Il2CppLast.UI.KeyInput.StatusWindowController;
+using KeyInputAbilityWindowController = Il2CppSerial.FF2.UI.KeyInput.AbilityWindowController;
+using KeyInputConfigController = Il2CppLast.UI.KeyInput.ConfigController;
+using KeyInputShopController = Il2CppLast.UI.KeyInput.ShopController;
+using KeyInputSecretWordController = Il2CppLast.UI.KeyInput.SecretWordController;
+using KeyInputWordsWindowController = Il2CppLast.UI.KeyInput.WordsWindowController;
+using CommonPopup = Il2CppLast.UI.KeyInput.CommonPopup;
 
 [assembly: MelonInfo(typeof(FFII_ScreenReader.Core.FFII_ScreenReaderMod), "FFII Screen Reader", "1.0.0", "Author")]
 [assembly: MelonGame("SQUARE ENIX, Inc.", "FINAL FANTASY II")]
@@ -41,9 +53,10 @@ namespace FFII_ScreenReader.Core
         private InputManager inputManager;
         private EntityScanner entityScanner;
 
-        // Entity scanning
-        private const float ENTITY_SCAN_INTERVAL = 5f;
-        private float lastEntityScanTime = 0f;
+        /// <summary>
+        /// Singleton instance for access from patches.
+        /// </summary>
+        public static FFII_ScreenReaderMod Instance { get; private set; }
 
         private static readonly int CategoryCount = Enum.GetValues(typeof(EntityCategory)).Length;
         private EntityCategory currentCategory = EntityCategory.All;
@@ -52,6 +65,9 @@ namespace FFII_ScreenReader.Core
         private bool filterByPathfinding = false;
         private bool filterMapExits = false;
 
+        // Map transition tracking
+        private int lastAnnouncedMapId = -1;
+
         // Preferences
         private static MelonPreferences_Category prefsCategory;
         private static MelonPreferences_Entry<bool> prefPathfindingFilter;
@@ -59,6 +75,7 @@ namespace FFII_ScreenReader.Core
 
         public override void OnInitializeMelon()
         {
+            Instance = this;
             LoggerInstance.Msg("FFII Screen Reader Mod loaded!");
 
             // Subscribe to scene load events
@@ -76,8 +93,9 @@ namespace FFII_ScreenReader.Core
             tolk = new TolkWrapper();
             tolk.Load();
 
-            // Initialize input manager
+            // Initialize input manager with event-driven input handling
             inputManager = new InputManager(this);
+            inputManager.Initialize();
 
             // Initialize entity scanner
             entityScanner = new EntityScanner();
@@ -150,6 +168,49 @@ namespace FFII_ScreenReader.Core
 
             // Patch popup dialogs (Yes/No confirmations)
             PopupPatches.ApplyPatches(harmony);
+
+            // Patch save/load confirmation popups
+            SaveLoadPatches.ApplyPatches(harmony);
+
+            // Patch battle pause menu
+            BattlePausePatches.ApplyPatches(harmony);
+
+            // Apply transition patches to clear menu states when menus close
+            MenuTransitionPatches.ApplyPatches(harmony);
+
+            // Patch entity interactions for event-driven entity refresh
+            TryPatchEntityInteractions(harmony);
+        }
+
+        /// <summary>
+        /// Patches entity interaction methods for event-driven entity scanner refresh.
+        /// Triggers rescan when treasure chests are opened or dialogue ends.
+        /// </summary>
+        private void TryPatchEntityInteractions(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                LoggerInstance.Msg("[EntityRefresh] Applying entity interaction patches...");
+
+                // Patch FieldTresureBox.Open() - triggers entity refresh when chest is opened
+                Type treasureBoxType = typeof(Il2CppLast.Entity.Field.FieldTresureBox);
+                var openMethod = treasureBoxType.GetMethod("Open", BindingFlags.Public | BindingFlags.Instance);
+                var openPostfix = typeof(ManualPatches).GetMethod("TreasureBox_Open_Postfix", BindingFlags.Public | BindingFlags.Static);
+
+                if (openMethod != null && openPostfix != null)
+                {
+                    harmony.Patch(openMethod, postfix: new HarmonyMethod(openPostfix));
+                    LoggerInstance.Msg("[EntityRefresh] Patched FieldTresureBox.Open for entity refresh");
+                }
+                else
+                {
+                    LoggerInstance.Warning($"[EntityRefresh] FieldTresureBox.Open not patched. Method: {openMethod != null}, Postfix: {openPostfix != null}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"[EntityRefresh] Error patching entity interactions: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -234,6 +295,9 @@ namespace FFII_ScreenReader.Core
         {
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= (UnityEngine.Events.UnityAction<UnityEngine.SceneManagement.Scene, UnityEngine.SceneManagement.LoadSceneMode>)OnSceneLoaded;
 
+            // Dispose input manager (unsubscribes from events)
+            inputManager?.Dispose();
+
             CoroutineManager.CleanupAll();
             tolk?.Unload();
         }
@@ -243,12 +307,16 @@ namespace FFII_ScreenReader.Core
             try
             {
                 LoggerInstance.Msg($"[Scene] Loaded: {scene.name}");
-                GameObjectCache.Clear<FieldMap>();
 
-                // Reset vehicle/movement state on scene transitions
-                MovementSpeechPatches.ResetState();
+                // Clear all cached GameObjects from the previous scene
+                GameObjectCache.ClearAll();
+
+                // Reset landing zone state on scene transitions
+                // Note: Do NOT reset MovementSpeechPatches here - it breaks state tracking on game load
                 VehicleLandingPatches.ResetState();
-                MoveStateMonitor.ResetState();
+
+                // Reset location message tracker for new scene
+                LocationMessageTracker.Reset();
 
                 // Clear all battle state flags when leaving battle (any scene transition from battle)
                 // This ensures flags are cleared on flee, defeat, or any other non-victory battle exit
@@ -276,6 +344,7 @@ namespace FFII_ScreenReader.Core
 
         private System.Collections.IEnumerator DelayedInitialScan()
         {
+            // Wait for scene to fully initialize and entities to spawn
             yield return new UnityEngine.WaitForSeconds(0.5f);
 
             try
@@ -285,23 +354,116 @@ namespace FFII_ScreenReader.Core
                 {
                     GameObjectCache.Register(fieldMap);
                     LoggerInstance.Msg("[Cache] Cached FieldMap");
+
+                    // Also cache FieldPlayerController for entity navigation
+                    var playerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
+                    if (playerController != null)
+                    {
+                        GameObjectCache.Register(playerController);
+                        LoggerInstance.Msg("[Cache] Cached FieldPlayerController");
+                    }
+
+                    // Initial entity scan for this map
+                    entityScanner.ScanEntities();
+                    LoggerInstance.Msg($"[Cache] Initial scan found {entityScanner.Entities.Count} entities");
                 }
             }
             catch (Exception ex)
             {
-                LoggerInstance.Warning($"[Cache] Error caching FieldMap: {ex.Message}");
+                LoggerInstance.Warning($"[Cache] Error in DelayedInitialScan: {ex.Message}");
             }
         }
 
         public override void OnUpdate()
         {
-            inputManager.Update();
+            // Check for mod hotkey input using optimized Input System approach
+            // Uses wasPressedThisFrame with early exit on anyKey check - minimal overhead
+            inputManager?.CheckInput();
+
+            // Check for map transitions
+            CheckMapTransition();
+        }
+
+        /// <summary>
+        /// Checks for map transitions and triggers entity rescan when map changes.
+        /// Announces new map name and clears stale entity cache.
+        /// </summary>
+        private void CheckMapTransition()
+        {
+            try
+            {
+                var userDataManager = UserDataManager.Instance();
+                if (userDataManager == null)
+                    return;
+
+                int currentMapId = userDataManager.CurrentMapId;
+
+                if (currentMapId != lastAnnouncedMapId && lastAnnouncedMapId != -1)
+                {
+                    // Map has changed - announce new map
+                    string mapName = MapNameResolver.GetCurrentMapName();
+                    string announcement = $"Entering {mapName}";
+
+                    // Record for deduplication before announcing
+                    // This prevents the game's fade message (e.g., "Altair – 1F") from also being announced
+                    LocationMessageTracker.SetLastMapTransition(announcement);
+
+                    SpeakText(announcement, interrupt: false);
+                    lastAnnouncedMapId = currentMapId;
+
+                    // Clear vehicle type map so it gets repopulated with new map's vehicles
+                    FieldNavigationHelper.ResetTransportationDebug();
+
+                    // Force entity rescan to clear stale entities from previous map
+                    entityScanner.ForceRescan();
+
+                    LoggerInstance.Msg($"[MapTransition] Map changed to {mapName} (ID: {currentMapId}), entities rescanned");
+                }
+                else if (lastAnnouncedMapId == -1)
+                {
+                    // First run - store current map without announcing
+                    lastAnnouncedMapId = currentMapId;
+                }
+            }
+            catch (Exception ex)
+            {
+                LoggerInstance.Warning($"[MapTransition] Error: {ex.Message}");
+            }
         }
 
         #region Entity Navigation
 
+        /// <summary>
+        /// Checks if player is on an active field map.
+        /// Returns true if on valid map (ready for entity navigation), false otherwise.
+        /// Prevents entity navigation on title screen, menus, loading screens.
+        /// </summary>
+        internal bool EnsureFieldContext()
+        {
+            // Check if FieldMap exists and is active
+            var fieldMap = GameObjectCache.Get<FieldMap>();
+            if (fieldMap == null || !fieldMap.gameObject.activeInHierarchy)
+            {
+                SpeakText("Not on map");
+                return false;
+            }
+
+            // Check if player controller exists
+            var playerController = GameObjectCache.Get<FieldPlayerController>();
+            if (playerController?.fieldPlayer == null)
+            {
+                SpeakText("Not on map");
+                return false;
+            }
+
+            return true;
+        }
+
         internal void AnnounceCurrentEntity()
         {
+            if (!EnsureFieldContext())
+                return;
+
             try
             {
                 var entity = entityScanner.CurrentEntity;
@@ -350,17 +512,7 @@ namespace FFII_ScreenReader.Core
             try
             {
                 // Use FieldPlayerController directly - it has direct access to mapHandle and fieldPlayer
-                var playerController = GameObjectCache.Get<FieldPlayerController>();
-
-                // If not in cache, try to find it
-                if (playerController == null)
-                {
-                    playerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
-                    if (playerController != null)
-                    {
-                        GameObjectCache.Register(playerController);
-                    }
-                }
+                var playerController = GameObjectCache.GetOrRefresh<FieldPlayerController>();
 
                 if (playerController?.fieldPlayer == null || playerController.mapHandle == null)
                 {
@@ -390,14 +542,13 @@ namespace FFII_ScreenReader.Core
 
         internal void CycleNext()
         {
+            if (!EnsureFieldContext())
+                return;
+
             try
             {
-                // Rescan if enough time has passed
-                if (Time.time - lastEntityScanTime > ENTITY_SCAN_INTERVAL)
-                {
-                    entityScanner.ScanEntities();
-                    lastEntityScanTime = Time.time;
-                }
+                // Lazy scan if entity list is empty - event-driven hooks handle state updates
+                RefreshEntitiesIfNeeded();
 
                 entityScanner.CurrentCategory = currentCategory;
                 entityScanner.FilterByPathfinding = filterByPathfinding;
@@ -432,14 +583,13 @@ namespace FFII_ScreenReader.Core
 
         internal void CyclePrevious()
         {
+            if (!EnsureFieldContext())
+                return;
+
             try
             {
-                // Rescan if enough time has passed
-                if (Time.time - lastEntityScanTime > ENTITY_SCAN_INTERVAL)
-                {
-                    entityScanner.ScanEntities();
-                    lastEntityScanTime = Time.time;
-                }
+                // Lazy scan if entity list is empty - event-driven hooks handle state updates
+                RefreshEntitiesIfNeeded();
 
                 entityScanner.CurrentCategory = currentCategory;
                 entityScanner.FilterByPathfinding = filterByPathfinding;
@@ -500,23 +650,44 @@ namespace FFII_ScreenReader.Core
             }
         }
 
+        /// <summary>
+        /// Only scans entities if the list is empty.
+        /// Event-driven hooks (treasure chest open, dialogue end) handle state updates.
+        /// </summary>
+        private void RefreshEntitiesIfNeeded()
+        {
+            if (entityScanner.Entities.Count == 0)
+            {
+                entityScanner.ScanEntities();
+            }
+        }
+
+        /// <summary>
+        /// Schedules an entity refresh after a 1-frame delay.
+        /// Called by interaction hooks (treasure chest, dialogue end) to update entity states.
+        /// The delay ensures the game state has fully updated before rescanning.
+        /// </summary>
+        internal void ScheduleEntityRefresh()
+        {
+            CoroutineManager.StartManaged(EntityRefreshCoroutine());
+        }
+
+        private IEnumerator EntityRefreshCoroutine()
+        {
+            // Wait one frame for game state to fully update
+            yield return null;
+
+            // Rescan entities to pick up state changes (e.g., chest opened)
+            entityScanner.ScanEntities();
+            LoggerInstance.Msg("[EntityRefresh] Rescanned entities after interaction");
+        }
+
         private Vector3? GetPlayerPosition()
         {
             try
             {
                 // Try to get FieldPlayerController - first from cache, then find it
-                var playerController = GameObjectCache.Get<FieldPlayerController>();
-
-                // If not in cache, try to find it
-                if (playerController == null)
-                {
-                    playerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
-                    if (playerController != null)
-                    {
-                        GameObjectCache.Register(playerController);
-                        LoggerInstance.Msg("[Cache] Cached FieldPlayerController");
-                    }
-                }
+                var playerController = GameObjectCache.GetOrRefresh<FieldPlayerController>();
 
                 if (playerController?.fieldPlayer != null)
                 {
@@ -532,6 +703,9 @@ namespace FFII_ScreenReader.Core
 
         internal void CycleNextCategory()
         {
+            if (!EnsureFieldContext())
+                return;
+
             int nextCategory = ((int)currentCategory + 1) % CategoryCount;
             currentCategory = (EntityCategory)nextCategory;
             entityScanner.CurrentCategory = currentCategory;
@@ -540,6 +714,9 @@ namespace FFII_ScreenReader.Core
 
         internal void CyclePreviousCategory()
         {
+            if (!EnsureFieldContext())
+                return;
+
             int prevCategory = (int)currentCategory - 1;
             if (prevCategory < 0)
                 prevCategory = CategoryCount - 1;
@@ -551,6 +728,9 @@ namespace FFII_ScreenReader.Core
 
         internal void ResetToAllCategory()
         {
+            if (!EnsureFieldContext())
+                return;
+
             if (currentCategory == EntityCategory.All)
             {
                 SpeakText("Already in All category");
@@ -674,17 +854,7 @@ namespace FFII_ScreenReader.Core
             try
             {
                 // Use FieldPlayerController directly - same pattern as FF3
-                var playerController = GameObjectCache.Get<FieldPlayerController>();
-
-                // If not in cache, try to find it
-                if (playerController == null)
-                {
-                    playerController = UnityEngine.Object.FindObjectOfType<FieldPlayerController>();
-                    if (playerController != null)
-                    {
-                        GameObjectCache.Register(playerController);
-                    }
-                }
+                var playerController = GameObjectCache.GetOrRefresh<FieldPlayerController>();
 
                 if (playerController?.fieldPlayer != null)
                 {
@@ -799,23 +969,35 @@ namespace FFII_ScreenReader.Core
 
         /// <summary>
         /// Clears all menu states except the specified one.
-        /// Called by patches when a menu activates to ensure only one menu suppresses cursor at a time.
+        /// Note: This method is deprecated. Use MenuStateRegistry.SetActiveExclusive() instead.
+        /// Kept for backward compatibility.
         /// </summary>
         public static void ClearOtherMenuStates(string exceptMenu)
         {
-            if (exceptMenu != "Equip") EquipMenuState.ClearState();
-            if (exceptMenu != "BattleCommand") BattleCommandState.ClearState();
-            if (exceptMenu != "BattleTarget") BattleTargetPatches.SetTargetSelectionActive(false);
-            if (exceptMenu != "Item") ItemMenuState.ClearState();
-            if (exceptMenu != "Status") StatusMenuState.ResetState();
-            if (exceptMenu != "Magic") MagicMenuState.ResetState();
-            if (exceptMenu != "Config") ConfigMenuState.ResetState();
-            if (exceptMenu != "Shop") ShopMenuTracker.ResetState();
-            if (exceptMenu != "BattleItem") BattleItemMenuState.Reset();
-            if (exceptMenu != "BattleMagic") BattleMagicMenuState.Reset();
-            if (exceptMenu != "Keyword") KeywordMenuState.ClearState();
-            if (exceptMenu != "Words") WordsMenuState.ClearState();
-            if (exceptMenu != "Popup") PopupState.ClearState();
+            // Map legacy menu names to MenuStateRegistry keys
+            string exceptKey = exceptMenu switch
+            {
+                "Equip" => MenuStateRegistry.EQUIP_MENU,
+                "BattleCommand" => MenuStateRegistry.BATTLE_COMMAND,
+                "BattleTarget" => MenuStateRegistry.BATTLE_TARGET,
+                "Item" => MenuStateRegistry.ITEM_MENU,
+                "Status" => MenuStateRegistry.STATUS_MENU,
+                "Magic" => MenuStateRegistry.MAGIC_MENU,
+                "Config" => MenuStateRegistry.CONFIG_MENU,
+                "Shop" => MenuStateRegistry.SHOP_MENU,
+                "BattleItem" => MenuStateRegistry.BATTLE_ITEM,
+                "BattleMagic" => MenuStateRegistry.BATTLE_MAGIC,
+                "Keyword" => MenuStateRegistry.KEYWORD_MENU,
+                "Words" => MenuStateRegistry.WORDS_MENU,
+                "Popup" => MenuStateRegistry.POPUP,
+                _ => null
+            };
+
+            // Use centralized registry to clear other states
+            if (!string.IsNullOrEmpty(exceptKey))
+            {
+                MenuStateRegistry.ResetAllExcept(exceptKey);
+            }
         }
 
         /// <summary>
@@ -830,41 +1012,14 @@ namespace FFII_ScreenReader.Core
             BattleCommandPatches.ResetCommandCursorState();
             BattleMessagePatches.ResetState();
 
-            // Clear all menu flags
-            EquipMenuState.ClearState();
-            BattleCommandState.ClearState();
-            BattleTargetPatches.SetTargetSelectionActive(false);
-            ItemMenuState.ClearState();
-            StatusMenuState.ResetState();
-            MagicMenuState.ResetState();
-            ConfigMenuState.ResetState();
-            ShopMenuTracker.ResetState();
-            BattleItemMenuState.Reset();
-            BattleMagicMenuState.Reset();
-            KeywordMenuState.ClearState();
-            WordsMenuState.ClearState();
-            PopupState.ClearState();
-        }
+            // Clear all menu flags via centralized registry
+            MenuStateRegistry.ResetAll();
 
-        /// <summary>
-        /// Fast check if any menu state flag is currently set.
-        /// Used to detect when we should check for main menu fallback reset.
-        /// </summary>
-        public static bool AnyMenuStateActive()
-        {
-            return EquipMenuState.IsActive ||
-                   BattleCommandState.IsActive ||
-                   BattleTargetPatches.IsTargetSelectionActive ||
-                   ItemMenuState.IsActive ||
-                   StatusMenuState.IsActive ||
-                   MagicMenuState.IsActive ||
-                   ConfigMenuState.IsActive ||
-                   ShopMenuTracker.IsActive ||
-                   BattleItemMenuState.IsActive ||
-                   BattleMagicMenuState.IsActive ||
-                   KeywordMenuState.IsActive ||
-                   WordsMenuState.IsActive ||
-                   PopupState.IsActive;
+            // Also reset local state in state classes that track additional data
+            // (These methods also call MenuStateRegistry.Reset internally but handle local cleanup)
+            MagicMenuState.ResetState();       // Has multiple sub-flags
+            ShopMenuTracker.ClearState();      // Has item tracking data
+            BattleTargetPatches.ResetState();  // Has index tracking
         }
 
         /// <summary>
@@ -917,64 +1072,6 @@ namespace FFII_ScreenReader.Core
     public static class ManualPatches
     {
         /// <summary>
-        /// Check if the cursor is at the main menu command bar level.
-        /// This indicates we've exited battle or submenus and should clear stuck states.
-        /// </summary>
-        private static bool IsAtMainMenuCommandBar(GameCursor cursor)
-        {
-            try
-            {
-                if (cursor?.transform == null) return false;
-
-                // Check cursor's parent hierarchy for main menu indicators
-                var current = cursor.transform;
-                int depth = 0;
-                while (current != null && depth < 15)
-                {
-                    string name = current.name;
-
-                    // Main menu command bar indicators
-                    if (name.Contains("CommandMenu") ||
-                        name.Contains("MainMenu") ||
-                        name == "CommandContent" ||
-                        name == "CommandList")
-                    {
-                        // Also verify MainMenuController exists and is open
-                        var mainMenuKeyInput = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.KeyInput.MainMenuController>();
-                        if (mainMenuKeyInput != null)
-                        {
-                            return mainMenuKeyInput.IsOpne; // Note: game has typo "IsOpne"
-                        }
-
-                        var mainMenuTouch = UnityEngine.Object.FindObjectOfType<Il2CppLast.UI.Touch.MainMenuController>();
-                        if (mainMenuTouch != null)
-                        {
-                            return mainMenuTouch.IsOpne;
-                        }
-
-                        // If we found command menu structure but no controller, assume main menu
-                        return true;
-                    }
-
-                    // Battle-specific indicators - NOT at main menu
-                    if (name.Contains("Battle") || name.Contains("Target"))
-                    {
-                        return false;
-                    }
-
-                    current = current.parent;
-                    depth++;
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error checking main menu: {ex.Message}");
-            }
-
-            return false;
-        }
-
-        /// <summary>
         /// Postfix for cursor navigation methods.
         /// Uses the Active State Pattern to check if specialized patches handle announcements.
         /// </summary>
@@ -989,16 +1086,27 @@ namespace FFII_ScreenReader.Core
                     return;
                 }
 
-                // === MAIN MENU DETECTION & STATE RESET ===
-                // If battle state or menu states are stuck, check if we're at main menu level
-                // and clear all stuck flags
-                if (FFII_ScreenReaderMod.IsInBattle || FFII_ScreenReaderMod.AnyMenuStateActive())
+                // Build cursor path for pause menu detection
+                string cursorPath = "";
+                try
                 {
-                    if (IsAtMainMenuCommandBar(cursor))
-                    {
-                        MelonLogger.Msg("[CursorNav] Detected main menu command bar - clearing all stuck states");
-                        FFII_ScreenReaderMod.ClearAllMenuStates();
-                    }
+                    var t = cursor.transform;
+                    cursorPath = t?.name ?? "null";
+                    if (t?.parent != null) cursorPath = t.parent.name + "/" + cursorPath;
+                    if (t?.parent?.parent != null) cursorPath = t.parent.parent.name + "/" + cursorPath;
+                }
+                catch { cursorPath = "error"; }
+
+                // === BATTLE PAUSE MENU SPECIAL CASE ===
+                // Must be checked BEFORE battle suppression because battle states would suppress it.
+                // Cursor path contains "curosr_parent" (game typo) when in pause menu.
+                if (cursorPath.Contains("curosr_parent"))
+                {
+                    MelonLogger.Msg("[CursorNav] Battle pause menu detected - reading directly");
+                    CoroutineManager.StartManaged(
+                        MenuTextDiscovery.WaitAndReadCursor(cursor, "Navigate", 0, false)
+                    );
+                    return;
                 }
 
                 // === BATTLE UI CONTEXT CHECK ===
@@ -1050,7 +1158,15 @@ namespace FFII_ScreenReader.Core
                 if (WordsMenuState.ShouldSuppress()) return;
 
                 // Popup dialogs (Yes/No confirmations)
-                if (PopupState.ShouldSuppress()) return;
+                // For SavePopup, read button text since UpdateFocus doesn't exist
+                if (PopupState.ShouldSuppress())
+                {
+                    if (SaveLoadPatches.IsSavePopupActive())
+                    {
+                        SaveLoadPatches.ReadCurrentButton(cursor);
+                    }
+                    return;
+                }
 
                 // === DEFAULT: Read via MenuTextDiscovery ===
                 // Start coroutine to read cursor text after one frame
@@ -1064,5 +1180,160 @@ namespace FFII_ScreenReader.Core
                 MelonLogger.Warning($"Error in CursorNavigation_Postfix: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// Postfix for FieldTresureBox.Open - triggers entity refresh when chest is opened.
+        /// Updates the entity scanner to reflect the chest's new opened state.
+        /// </summary>
+        public static void TreasureBox_Open_Postfix()
+        {
+            MelonLogger.Msg("[TreasureBox] Chest opened, scheduling entity refresh");
+            FFII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
+        }
+    }
+
+    /// <summary>
+    /// Transition patches that clear menu states when menus close.
+    /// Patches SetActive(bool) methods to clear state flags when isActive becomes false.
+    /// </summary>
+    public static class MenuTransitionPatches
+    {
+        private static bool isPatched = false;
+
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            if (isPatched) return;
+
+            try
+            {
+                MelonLogger.Msg("[Transitions] Applying menu transition patches...");
+
+                // ItemWindowController.SetActive
+                TryPatchSetActive<KeyInputItemWindowController>(harmony, nameof(ItemWindowController_SetActive_Postfix));
+
+                // EquipmentWindowController.SetActive
+                TryPatchSetActive<KeyInputEquipmentWindowController>(harmony, nameof(EquipmentWindowController_SetActive_Postfix));
+
+                // StatusWindowController.SetActive
+                TryPatchSetActive<KeyInputStatusWindowController>(harmony, nameof(StatusWindowController_SetActive_Postfix));
+
+                // AbilityWindowController.SetActive (FF2 magic menu)
+                TryPatchSetActive<KeyInputAbilityWindowController>(harmony, nameof(AbilityWindowController_SetActive_Postfix));
+
+                // ConfigController.SetActive
+                TryPatchSetActive<KeyInputConfigController>(harmony, nameof(ConfigController_SetActive_Postfix));
+
+                // ShopController.SetActive
+                TryPatchSetActive<KeyInputShopController>(harmony, nameof(ShopController_SetActive_Postfix));
+
+                // SecretWordController.SetActive (keyword dialogue)
+                TryPatchSetActive<KeyInputSecretWordController>(harmony, nameof(SecretWordController_SetActive_Postfix));
+
+                // WordsWindowController.SetActive (main menu words browser)
+                TryPatchSetActive<KeyInputWordsWindowController>(harmony, nameof(WordsWindowController_SetActive_Postfix));
+
+                isPatched = true;
+                MelonLogger.Msg("[Transitions] Menu transition patches applied");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Transitions] Error applying patches: {ex.Message}");
+            }
+        }
+
+        private static void TryPatchSetActive<T>(HarmonyLib.Harmony harmony, string postfixMethodName)
+        {
+            try
+            {
+                Type controllerType = typeof(T);
+                var setActiveMethod = controllerType.GetMethod("SetActive", new Type[] { typeof(bool) });
+
+                if (setActiveMethod != null)
+                {
+                    var postfix = typeof(MenuTransitionPatches).GetMethod(postfixMethodName, BindingFlags.Public | BindingFlags.Static);
+                    if (postfix != null)
+                    {
+                        harmony.Patch(setActiveMethod, postfix: new HarmonyMethod(postfix));
+                        MelonLogger.Msg($"[Transitions] Patched {controllerType.Name}.SetActive");
+                    }
+                }
+                else
+                {
+                    MelonLogger.Warning($"[Transitions] {controllerType.Name}.SetActive not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Transitions] Error patching {typeof(T).Name}: {ex.Message}");
+            }
+        }
+
+
+        // === Transition Postfixes ===
+
+        public static void ItemWindowController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                ItemMenuState.ClearState();
+            }
+        }
+
+        public static void EquipmentWindowController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                EquipMenuState.ClearState();
+            }
+        }
+
+        public static void StatusWindowController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                StatusMenuState.ResetState();
+            }
+        }
+
+        public static void AbilityWindowController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                MagicMenuState.ResetState();
+            }
+        }
+
+        public static void ConfigController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                ConfigMenuState.ResetState();
+            }
+        }
+
+        public static void ShopController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                ShopMenuTracker.ClearState();
+            }
+        }
+
+        public static void SecretWordController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                KeywordMenuState.ClearState();
+            }
+        }
+
+        public static void WordsWindowController_SetActive_Postfix(bool isActive)
+        {
+            if (!isActive)
+            {
+                WordsMenuState.ClearState();
+            }
+        }
+
     }
 }

@@ -4,6 +4,7 @@ using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Utils;
 
 // Type aliases for IL2CPP types
 using ConfigCommandController = Il2CppLast.UI.KeyInput.ConfigCommandController;
@@ -17,40 +18,30 @@ namespace FFII_ScreenReader.Patches
     public static class ConfigMenuState
     {
         /// <summary>
-        /// True when config menu is active and handling announcements.
+        /// True when config menu is active. Delegates to MenuStateRegistry.
         /// </summary>
-        public static bool IsActive { get; set; } = false;
+        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.CONFIG_MENU);
 
         private static string lastAnnouncedText = "";
         private static string lastAnnouncedSettingName = "";
 
         /// <summary>
-        /// Check if GenericCursor should be suppressed. Validates controller is still active.
+        /// Sets the config menu as active, clearing other menu states.
         /// </summary>
-        public static bool ShouldSuppress()
+        public static void SetActive()
         {
-            if (!IsActive) return false;
-
-            try
-            {
-                var controller = UnityEngine.Object.FindObjectOfType<ConfigActualDetailsControllerBase_KeyInput>();
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                {
-                    IsActive = false;
-                    return false;
-                }
-                return true;
-            }
-            catch
-            {
-                IsActive = false;
-                return false;
-            }
+            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
         }
+
+        /// <summary>
+        /// Check if GenericCursor should be suppressed.
+        /// State is cleared by transition patch when menu closes.
+        /// </summary>
+        public static bool ShouldSuppress() => IsActive;
 
         public static void ResetState()
         {
-            IsActive = false;
+            MenuStateRegistry.Reset(MenuStateRegistry.CONFIG_MENU);
             lastAnnouncedText = "";
             lastAnnouncedSettingName = "";
         }
@@ -298,8 +289,7 @@ namespace FFII_ScreenReader.Patches
                 // Set active state when config menu is in use
                 if (isFocus)
                 {
-                    FFII_ScreenReaderMod.ClearOtherMenuStates("Config");
-                    ConfigMenuState.IsActive = true;
+                    ConfigMenuState.SetActive();
                 }
 
                 // Only announce when gaining focus
@@ -309,14 +299,9 @@ namespace FFII_ScreenReader.Patches
                 if (__instance == null || !__instance.gameObject.activeInHierarchy)
                     return;
 
-                // Verify this controller is the selected one
-                var configDetailsController = UnityEngine.Object.FindObjectOfType<ConfigActualDetailsControllerBase_KeyInput>();
-                if (configDetailsController != null)
-                {
-                    var selectedCommand = configDetailsController.SelectedCommand;
-                    if (selectedCommand != null && selectedCommand != __instance)
-                        return; // Not the selected controller
-                }
+                // Note: Removed SelectedCommand verification check that failed with multiple
+                // ConfigActualDetailsControllerBase instances (regular config + boost menu).
+                // The isFocus parameter and activeInHierarchy check are sufficient.
 
                 var view = __instance.view;
                 if (view == null)
@@ -346,13 +331,10 @@ namespace FFII_ScreenReader.Patches
                 if (!ConfigMenuState.ShouldAnnounce(announcement, out isValueChangeOnly))
                     return;
 
-                if (isValueChangeOnly && !string.IsNullOrWhiteSpace(configValue))
-                {
-                    // Same setting, value changed - announce just the value
-                    MelonLogger.Msg($"[Config Menu] Value: {configValue}");
-                    FFII_ScreenReaderMod.SpeakText(configValue, interrupt: true);
+                // If only value changed (same setting), don't announce here
+                // The SwitchArrowSelectType_Postfix and SwitchSliderType_Postfix patches handle value changes
+                if (isValueChangeOnly)
                     return;
-                }
 
                 MelonLogger.Msg($"[Config Menu] {announcement}");
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
