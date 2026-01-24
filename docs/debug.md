@@ -239,45 +239,72 @@ The `CommonPopup.UpdateFocus` patch was intended for battle context only (since 
 **Cause**: The `IsInBattleUIContext()` guard added to fix duplicates blocked `CommonPopup_UpdateFocus_Postfix` outside battle, relying on `CursorNavigation_Postfix` fallback. The fallback path failed when popup detection didn't set `PopupState` correctly.
 **Fix**: Removed `IsInBattleUIContext()` guard from `CommonPopup_UpdateFocus_Postfix` to align with FF3. Now handles ALL popup button reading directly via `UpdateFocus` patch, with `lastAnnouncedButtonIndex` preventing duplicates.
 
-## Paginated Dialogue System (2026-01-23)
+## Paginated Dialogue System (2026-01-23, updated 2026-01-24)
 
 Ported from FF4 screen reader. Announces dialogue page-by-page as player advances, instead of all pages at once.
+Updated to support multi-line pages (ported from FF1 screen reader).
 
 ### Architecture
 
 ```
-SetContent → Store messages in DialogueTracker.storedMessages[]
+SetContent → Read messageList + newPageLineList from instance via pointer access
 SetSpeker → Store speaker in DialogueTracker.currentSpeaker
-PlayingInit → Announce ONE page (fires each time player advances)
+PlayingInit → Get currentPageNumber, combine lines for page, announce
 Close → Reset DialogueTracker state
+```
+
+### Memory Offsets (MessageWindowManager)
+
+```
+messageList: 0x88           // List<string> - all dialogue lines
+newPageLineList: 0xA0       // List<int> - ending line index per page
+spekerValue: 0xA8           // string - speaker name
+currentPageNumber: 0xF8     // int - current page being displayed
 ```
 
 ### Key Classes
 
 **DialogueTracker** (MessageWindowPatches.cs):
-- `storedMessages[]` - Array of dialogue pages
-- `nextAnnouncementIndex` - Own tracking (game's `messageLineIndex` is stale)
+- `currentMessageList` - All dialogue lines (one per visual line)
+- `currentPageBreaks` - Page start indices (converted from ending indices)
+- `lastAnnouncedPageIndex` - Prevents duplicate announcements
 - `currentSpeaker` / `lastAnnouncedSpeaker` - Speaker deduplication
-- `InvalidSpeakers[]` - Filter menu labels from speakers
+- `GetPageText(pageIndex)` - Combines lines within page boundaries
 
 **LineFadeMessageTracker** (ScrollMessagePatches.cs):
 - `storedMessages[]` - Array of auto-scroll lines
 - `currentLineIndex` - Line tracking for per-line announcement
 
+### Multi-Line Page Support
+
+The game stores dialogue as individual display lines in `messageList`, with `newPageLineList` indicating where pages end.
+
+Example:
+- `messageList` = ["This is", "a long", "sentence.", "Page two."]
+- `newPageLineList` = [2] (page 0 ends at line 2)
+- Page 0 text = "This is a long sentence."
+- Page 1 text = "Page two."
+
+`GetPageText(pageIndex)`:
+1. Looks up start/end line indices for the page
+2. Concatenates all lines with spaces
+3. Returns combined text
+
 ### API Hooks
 
 | Method | Purpose |
 |--------|---------|
-| `MessageWindowManager.SetContent` | Stores content list for per-page retrieval |
+| `MessageWindowManager.SetContent` | Reads messageList + newPageLineList via pointer |
 | `MessageWindowManager.SetSpeker` | Stores speaker for "Speaker: text" format |
-| `MessageWindowManager.PlayingInit` | Announces current page (fires per page) |
+| `MessageWindowManager.PlayingInit` | Gets currentPageNumber, announces combined page |
 | `MessageWindowManager.Close` | Resets tracker state |
 | `LineFadeMessageWindowController.SetData` | Stores lines for per-line announcement |
 | `LineFadeMessageWindowController.PlayInit` | Announces next line (fires per line) |
 
-### Why Own Index Tracking?
+### Pointer-Based Access
 
-The game's `messageLineIndex` is often stale or not incremented when expected. `DialogueTracker.nextAnnouncementIndex` provides reliable page tracking:
-- Incremented after each announcement
-- Reset when new content is stored
-- Reset when dialogue closes
+Uses IL2CPP pointer access instead of reflection for reliability:
+```csharp
+IntPtr listPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + OFFSET_MESSAGE_LIST);
+var il2cppList = new Il2CppSystem.Collections.Generic.List<string>(listPtr);
+```

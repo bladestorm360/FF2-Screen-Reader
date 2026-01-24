@@ -13,7 +13,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 | Config Menu | ✓ | Options with values, I key tooltip, Boost submenu |
 | Shop Menu | ✓ | Buy/sell with prices/stats |
 | Equipment Menu | ✓ | Slot/item selection, stat comparison |
-| Dialogue | ✓ | NPC dialogue, fade/scroll messages |
+| Dialogue | ✓ | NPC dialogue, multi-line pages, fade/scroll messages |
 | Battle Commands | ✓ | Turn, command, target announcements |
 | Battle Items/Magic | ✓ | Item and spell selection |
 | Battle Messages | ✓ | Damage, healing, status, action names |
