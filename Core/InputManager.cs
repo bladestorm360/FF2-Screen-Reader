@@ -1,9 +1,11 @@
 using System;
+using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using MelonLoader;
 using FFII_ScreenReader.Menus;
 using FFII_ScreenReader.Patches;
+using FFII_ScreenReader.Utils;
 using Object = UnityEngine.Object;
 
 // Type aliases for IL2CPP config controllers
@@ -38,6 +40,58 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public void CheckInput()
         {
+            // Handle mod menu input first (consumes all input when open)
+            if (ModMenu.HandleInput())
+                return;
+
+            // F8 to open mod menu (only when not in battle)
+            if (Input.GetKeyDown(KeyCode.F8))
+            {
+                if (!FFII_ScreenReaderMod.IsInBattle)
+                {
+                    ModMenu.Open();
+                }
+                else
+                {
+                    FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                }
+                return;
+            }
+
+            // F5 to toggle enemy HP display (only when not in battle)
+            if (Input.GetKeyDown(KeyCode.F5))
+            {
+                if (!FFII_ScreenReaderMod.IsInBattle)
+                {
+                    // Cycle HP display: 0→1→2→0 (Numbers→Percentage→Hidden→Numbers)
+                    int current = FFII_ScreenReaderMod.EnemyHPDisplay;
+                    int next = (current + 1) % 3;
+                    FFII_ScreenReaderMod.SetEnemyHPDisplay(next);
+
+                    string[] options = { "Numbers", "Percentage", "Hidden" };
+                    FFII_ScreenReaderMod.SpeakText($"Enemy HP: {options[next]}", interrupt: true);
+                }
+                else
+                {
+                    FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                }
+                return;
+            }
+
+            // F1 toggles walk/run speed - announce after game processes it
+            if (Input.GetKeyDown(KeyCode.F1))
+            {
+                CoroutineManager.StartManaged(AnnounceWalkRunState());
+                return;
+            }
+
+            // F3 toggles encounters - announce after game processes it
+            if (Input.GetKeyDown(KeyCode.F3))
+            {
+                CoroutineManager.StartManaged(AnnounceEncounterState());
+                return;
+            }
+
             // Early exit if no key pressed this frame
             if (!Input.anyKeyDown)
                 return;
@@ -59,6 +113,51 @@ namespace FFII_ScreenReader.Core
 
             // Field-specific hotkeys
             HandleFieldInput(shiftHeld);
+        }
+
+        /// <summary>
+        /// Coroutine that announces walk/run state after game processes F1 key.
+        /// </summary>
+        private static IEnumerator AnnounceWalkRunState()
+        {
+            // Wait 3 frames for game to fully process F1 and update dashFlag
+            yield return null; // Frame 1
+            yield return null; // Frame 2
+            yield return null; // Frame 3
+
+            try
+            {
+                // Read actual dash state from MoveStateHelper
+                bool isDashing = MoveStateHelper.GetDashFlag();
+                string state = isDashing ? "Run" : "Walk";
+                FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[F1] Error reading walk/run state: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Coroutine that announces encounter state after game processes F3 key.
+        /// </summary>
+        private static IEnumerator AnnounceEncounterState()
+        {
+            yield return null; // Wait one frame for game to process
+            try
+            {
+                var userData = Il2CppLast.Management.UserDataManager.Instance();
+                if (userData?.CheatSettingsData != null)
+                {
+                    bool enabled = userData.CheatSettingsData.IsEnableEncount;
+                    string state = enabled ? "Encounters on" : "Encounters off";
+                    FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[F3] Error reading encounter state: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -160,13 +259,6 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
-            // 0 (Alpha0) to reset to All category
-            if (Input.GetKeyDown(KeyCode.Alpha0))
-            {
-                mod.ResetToAllCategory();
-                return;
-            }
-
             // Shift+K to reset to All category
             if (Input.GetKeyDown(KeyCode.K) && shiftHeld)
             {
@@ -195,6 +287,27 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
+            // ; (Semicolon) to toggle wall tones
+            if (Input.GetKeyDown(KeyCode.Semicolon))
+            {
+                mod.ToggleWallTones();
+                return;
+            }
+
+            // ' (Quote) to toggle footsteps
+            if (Input.GetKeyDown(KeyCode.Quote))
+            {
+                mod.ToggleFootsteps();
+                return;
+            }
+
+            // 9 (Alpha9) to toggle audio beacons
+            if (Input.GetKeyDown(KeyCode.Alpha9))
+            {
+                mod.ToggleAudioBeacons();
+                return;
+            }
+
             // I to announce tooltip/description (config menu or shop)
             if (Input.GetKeyDown(KeyCode.I))
             {
@@ -206,6 +319,13 @@ namespace FFII_ScreenReader.Core
                 {
                     ShopDetailsAnnouncer.AnnounceCurrentItemDetails();
                 }
+                return;
+            }
+
+            // 0 (Alpha0) to dump untranslated entity names
+            if (Input.GetKeyDown(KeyCode.Alpha0))
+            {
+                DumpUntranslatedEntityNames();
                 return;
             }
         }
@@ -380,6 +500,23 @@ namespace FFII_ScreenReader.Core
             }
 
             return null;
+        }
+
+        /// <summary>
+        /// Dumps untranslated entity names for the current map to a JSON file.
+        /// </summary>
+        private void DumpUntranslatedEntityNames()
+        {
+            try
+            {
+                string result = EntityTranslator.DumpUntranslatedNames();
+                FFII_ScreenReaderMod.SpeakText(result, true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error dumping entity names: {ex.Message}");
+                FFII_ScreenReaderMod.SpeakText("Failed to dump entity names", true);
+            }
         }
 
         /// <summary>

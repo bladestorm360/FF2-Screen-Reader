@@ -58,6 +58,22 @@ namespace FFII_ScreenReader.Field
         public List<NavigableEntity> Entities => filteredEntities;
 
         /// <summary>
+        /// Returns positions of all MapExitEntity instances from the unfiltered entity list.
+        /// Used by wall tone suppression to avoid false positives at map exits/doors/stairs.
+        /// Reads from the unfiltered list so it works regardless of the active category filter.
+        /// </summary>
+        public List<Vector3> GetMapExitPositions()
+        {
+            var positions = new List<Vector3>();
+            foreach (var entity in entities)
+            {
+                if (entity is MapExitEntity)
+                    positions.Add(entity.Position);
+            }
+            return positions;
+        }
+
+        /// <summary>
         /// Current entity index
         /// </summary>
         public int CurrentIndex
@@ -685,7 +701,7 @@ namespace FFII_ScreenReader.Field
                     {
                         string localizedName = messageManager.GetMessage(name, false);
                         if (!string.IsNullOrWhiteSpace(localizedName) && localizedName != name)
-                            return localizedName;
+                            return EntityTranslator.Translate(localizedName);
                     }
                 }
 
@@ -702,11 +718,11 @@ namespace FFII_ScreenReader.Field
                     string formatted = FormatAssetNameAsReadable(name);
                     if (!string.IsNullOrEmpty(formatted))
                     {
-                        return formatted;
+                        return EntityTranslator.Translate(formatted);
                     }
                 }
 
-                return name;
+                return EntityTranslator.Translate(name);
             }
             catch (Exception ex)
             {
@@ -894,7 +910,7 @@ namespace FFII_ScreenReader.Field
                             {
                                 string name = innerProp.GetValue(propertyObj) as string;
                                 if (!string.IsNullOrWhiteSpace(name) && !name.Contains("Clone"))
-                                    return name;
+                                    return EntityTranslator.Translate(name);
                             }
                         }
 
@@ -918,7 +934,7 @@ namespace FFII_ScreenReader.Field
                                             {
                                                 string name = messageManager.GetMessage(keyFormat);
                                                 if (!string.IsNullOrEmpty(name))
-                                                    return name;
+                                                    return EntityTranslator.Translate(name);
                                             }
                                         }
                                     }

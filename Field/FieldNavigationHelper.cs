@@ -8,6 +8,7 @@ using Il2CppLast.Map;
 using FieldMap = Il2Cpp.FieldMap;
 using MapRouteSearcher = Il2Cpp.MapRouteSearcher;
 using TransportationInfo = Il2CppLast.Map.TransportationInfo;
+using FieldPlayerController = Il2CppLast.Map.FieldPlayerController;
 
 namespace FFII_ScreenReader.Field
 {
@@ -217,6 +218,132 @@ namespace FFII_ScreenReader.Field
                 return "STUCK - No walkable directions!";
 
             return string.Join(", ", directions);
+        }
+
+        /// <summary>
+        /// Result structure for wall proximity detection.
+        /// Distance values: -1 = no wall within range, 0 = adjacent/blocked
+        /// </summary>
+        public struct WallDistances
+        {
+            public int NorthDist;
+            public int SouthDist;
+            public int EastDist;
+            public int WestDist;
+
+            public WallDistances(int north, int south, int east, int west)
+            {
+                NorthDist = north;
+                SouthDist = south;
+                EastDist = east;
+                WestDist = west;
+            }
+        }
+
+        /// <summary>
+        /// Gets distance to nearest wall in each cardinal direction (in tiles).
+        /// Returns -1 for a direction if no wall adjacent (1 tile away).
+        /// </summary>
+        public static WallDistances GetNearbyWallsWithDistance(FieldPlayer player)
+        {
+            if (player == null || player.transform == null)
+                return new WallDistances(-1, -1, -1, -1);
+
+            Vector3 pos = player.transform.localPosition;
+
+            return new WallDistances(
+                GetWallDistance(player, pos, new Vector3(0, 16, 0)),
+                GetWallDistance(player, pos, new Vector3(0, -16, 0)),
+                GetWallDistance(player, pos, new Vector3(16, 0, 0)),
+                GetWallDistance(player, pos, new Vector3(-16, 0, 0))
+            );
+        }
+
+        /// <summary>
+        /// Gets the distance to a wall in a given direction using pathfinding.
+        /// Returns: 0 = adjacent/blocked, -1 = no wall adjacent
+        /// Only checks the immediately adjacent tile to reduce confusion from distant walls.
+        /// </summary>
+        private static int GetWallDistance(FieldPlayer player, Vector3 pos, Vector3 step)
+        {
+            if (IsAdjacentTileBlocked(player, pos, step))
+                return 0;
+
+            return -1;
+        }
+
+        /// <summary>
+        /// Checks if an adjacent tile is blocked using pathfinding.
+        /// More reliable than IsCanMoveToDestPosition for predictive checks.
+        /// </summary>
+        private static bool IsAdjacentTileBlocked(FieldPlayer player, Vector3 playerPos, Vector3 direction)
+        {
+            try
+            {
+                var playerController = GameObjectCache.Get<FieldPlayerController>();
+                if (playerController == null)
+                    return false;
+
+                var mapHandle = playerController.mapHandle;
+                if (mapHandle == null)
+                    return false;
+
+                int mapWidth = mapHandle.GetCollisionLayerWidth();
+                int mapHeight = mapHandle.GetCollisionLayerHeight();
+
+                if (mapWidth <= 0 || mapHeight <= 0 || mapWidth > 10000 || mapHeight > 10000)
+                    return false;
+
+                // Convert world position to cell coordinates
+                Vector3 startCell = new Vector3(
+                    Mathf.FloorToInt(mapWidth * 0.5f + playerPos.x * 0.0625f),
+                    Mathf.FloorToInt(mapHeight * 0.5f - playerPos.y * 0.0625f),
+                    player.gameObject.layer - 9
+                );
+
+                Vector3 targetPos = playerPos + direction;
+                Vector3 destCell = new Vector3(
+                    Mathf.FloorToInt(mapWidth * 0.5f + targetPos.x * 0.0625f),
+                    Mathf.FloorToInt(mapHeight * 0.5f - targetPos.y * 0.0625f),
+                    startCell.z
+                );
+
+                bool playerCollisionState = player._IsOnCollision_k__BackingField;
+
+                var pathPoints = MapRouteSearcher.Search(mapHandle, startCell, destCell, playerCollisionState);
+                return pathPoints == null || pathPoints.Count == 0;
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[WallTones] IsAdjacentTileBlocked error: {ex.Message}");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Checks if a direction from the player position leads to a map exit entity.
+        /// Used to suppress wall tones at map exits, doors, and stairs where
+        /// MapRouteSearcher.Search() reports blocked but the tile is actually accessible.
+        /// </summary>
+        public static bool IsDirectionNearMapExit(Vector3 playerPos, Vector3 direction,
+            List<Vector3> mapExitPositions, float tolerance = 12.0f)
+        {
+            if (mapExitPositions == null || mapExitPositions.Count == 0)
+                return false;
+
+            Vector3 adjacentTilePos = playerPos + direction;
+
+            foreach (var exitPos in mapExitPositions)
+            {
+                float dx = adjacentTilePos.x - exitPos.x;
+                float dy = adjacentTilePos.y - exitPos.y;
+                float dist2D = Mathf.Sqrt(dx * dx + dy * dy);
+
+                if (dist2D <= tolerance)
+                    return true;
+            }
+
+            return false;
         }
 
         private static bool CheckPositionWalkable(FieldPlayer player, Vector3 position)

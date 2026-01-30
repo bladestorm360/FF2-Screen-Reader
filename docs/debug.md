@@ -153,8 +153,12 @@ KeyInput and Touch often have different method names:
 | L/] | Next entity (Shift: next category) |
 | P/\ | Pathfinding (Shift: toggle filter) |
 | V | Current vehicle/movement mode |
-| 0 | Reset to All category |
+| Shift+K | Reset to All category |
 | =/- | Cycle category |
+| 0 | Dump untranslated entity names |
+| ; | Toggle wall tones |
+| ' | Toggle footsteps |
+| 9 | Toggle audio beacons |
 
 ## Status Details Hotkeys
 
@@ -308,3 +312,72 @@ Uses IL2CPP pointer access instead of reflection for reliability:
 IntPtr listPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + OFFSET_MESSAGE_LIST);
 var il2cppList = new Il2CppSystem.Collections.Generic.List<string>(listPtr);
 ```
+
+## External Sound Player (2026-01-27)
+
+Ported from FF1 screen reader. Replaces game's `AudioManager.PlaySe(4)` wall bump with procedural tones via Windows waveOut API.
+
+### Architecture
+```
+SoundPlayer.cs (Utils/) - waveOut P/Invoke, 4 channels, procedural tone generation
+├── Channel 0: Movement (footsteps)
+├── Channel 1: WallBump (thud)
+├── Channel 2: WallTone (looping directional tones)
+└── Channel 3: Beacon (panning pings)
+```
+
+### Audio Features
+- **Wall bumps**: Procedural thud (27Hz, 60ms) on collision detection via coroutine
+- **Wall tones**: Looping directional tones (N=330Hz, S=110Hz, E=220Hz, W=200Hz) with constant-power stereo panning
+- **Footsteps**: Click sound (500Hz noise burst, 25ms) on tile change
+- **Audio beacons**: Panning ping (400Hz north / 280Hz south) toward selected entity every 2s
+
+### Movement Sound Patches
+- Patches `FieldPlayerKeyController.OnTouchPadCallback` (prefix)
+- Coroutine waits 0.08s, compares position before/after
+- Wall bump: requires 2+ consecutive hits at same position, 300ms cooldown
+- Footstep: on tile change, gated by `IsFootstepsEnabled()`, 150ms cooldown
+
+### Wall Tone Loop
+- 100ms coroutine interval
+- Uses `FieldNavigationHelper.GetNearbyWallsWithDistance()` + `MapRouteSearcher.Search()`
+- Suppresses at map exits via `EntityScanner.GetMapExitPositions()` + `IsDirectionNearMapExit()`
+- Suppresses during screen fades via `MapTransitionPatches.IsScreenFading`
+- Suppresses 1s after map transitions via `wallToneSuppressedUntil`
+
+### Map ID for FF2
+Uses `UserDataManager.Instance().CurrentMapId` (not FF1's `FieldMapProvisionInformation.Instance.CurrentMapId`)
+
+## Entity Name Translation (2026-01-27)
+
+Ported from FF1 screen reader. Translates Japanese entity names to English using a JSON dictionary.
+
+### Architecture
+```
+EntityTranslator.cs (Utils/)
+├── Initialize() - loads FF2_translations.json from UserData/FFII_ScreenReader/
+├── Translate(name) - exact match → prefix-stripped match → track untranslated
+└── DumpUntranslatedNames() - writes EntityNames.json grouped by map
+```
+
+### Translation Lookup
+1. Exact match in translations dictionary
+2. Strip numeric/SC prefix (e.g., "6:" or "SC01:"), lookup base name
+3. No match → track as untranslated for current map (if contains Japanese characters)
+
+### Integration Points
+- `EntityScanner.GetEntityNameFromProperty()` - 2 return points wrapped with `Translate()`
+- `EntityScanner.GetNpcDisplayName()` - 2 return points wrapped with `Translate()`
+- `InputManager.HandleGlobalInput()` - `0` key triggers `DumpUntranslatedNames()`
+
+### Files
+- `UserData/FFII_ScreenReader/FF2_translations.json` - translation dictionary (created empty on first run)
+- `UserData/FFII_ScreenReader/EntityNames.json` - dumped untranslated names by map
+
+### Hotkey
+| Key | Action |
+|-----|--------|
+| `0` | Dump untranslated entity names for current map |
+
+### Preferences
+Saved to MelonLoader prefs: WallTones, Footsteps, AudioBeacons (all default false)
