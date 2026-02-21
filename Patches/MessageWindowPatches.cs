@@ -246,12 +246,6 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class MessageWindowPatches
     {
-        // Memory offsets for MessageWindowManager (from dump.cs)
-        private const int OFFSET_MESSAGE_LIST = 0x88;        // List<string> messageList
-        private const int OFFSET_NEW_PAGE_LINE_LIST = 0xA0;  // List<int> newPageLineList
-        private const int OFFSET_SPEAKER_VALUE = 0xA8;       // string spekerValue
-        private const int OFFSET_CURRENT_PAGE_NUMBER = 0xF8; // int currentPageNumber
-
         /// <summary>
         /// Applies message window patches using manual Harmony patching.
         /// </summary>
@@ -262,11 +256,10 @@ namespace FFII_ScreenReader.Patches
                 Type managerType = FindType("Il2CppLast.Message.MessageWindowManager");
                 if (managerType == null)
                 {
-                    MelonLogger.Warning("MessageWindowManager type not found");
+                    MelonLogger.Error("MessageWindowManager type not found");
                     return;
                 }
 
-                MelonLogger.Msg($"[MessageWindow] Found MessageWindowManager: {managerType.FullName}");
 
                 // Patch SetContent - stores dialogue pages for per-page retrieval
                 var setContentMethod = AccessTools.Method(managerType, "SetContent");
@@ -275,11 +268,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MessageWindowPatches).GetMethod("SetContent_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setContentMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MessageWindow] Patched MessageWindowManager.SetContent");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MessageWindow] SetContent method not found");
+                    MelonLogger.Error("[MessageWindow] SetContent method not found");
                 }
 
                 // Patch SetSpeker - stores speaker name for announcement
@@ -289,11 +281,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MessageWindowPatches).GetMethod("SetSpeker_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(setSpekerMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MessageWindow] Patched MessageWindowManager.SetSpeker");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MessageWindow] SetSpeker method not found");
+                    MelonLogger.Error("[MessageWindow] SetSpeker method not found");
                 }
 
                 // Patch PlayingInit - fires once per page, triggers announcement
@@ -303,11 +294,10 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MessageWindowPatches).GetMethod("PlayingInit_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(playingInitMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MessageWindow] Patched MessageWindowManager.PlayingInit");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MessageWindow] PlayingInit method not found");
+                    MelonLogger.Error("[MessageWindow] PlayingInit method not found");
                 }
 
                 // Patch Close - resets dialogue state
@@ -317,14 +307,12 @@ namespace FFII_ScreenReader.Patches
                     var postfix = typeof(MessageWindowPatches).GetMethod("Close_Postfix",
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(closeMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MessageWindow] Patched MessageWindowManager.Close");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MessageWindow] Close method not found");
+                    MelonLogger.Error("[MessageWindow] Close method not found");
                 }
 
-                MelonLogger.Msg("[MessageWindow] Message window patches applied successfully");
             }
             catch (Exception ex)
             {
@@ -374,7 +362,7 @@ namespace FFII_ScreenReader.Patches
 
                 unsafe
                 {
-                    IntPtr listPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + OFFSET_MESSAGE_LIST);
+                    IntPtr listPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + IL2CppOffsets.MessageWindow.OFFSET_MESSAGE_LIST);
                     if (listPtr == IntPtr.Zero)
                         return null;
 
@@ -394,9 +382,8 @@ namespace FFII_ScreenReader.Patches
                     return result;
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[MessageWindow] Error reading messageList: {ex.Message}");
                 return null;
             }
         }
@@ -421,7 +408,7 @@ namespace FFII_ScreenReader.Patches
 
                 unsafe
                 {
-                    IntPtr listPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + OFFSET_NEW_PAGE_LINE_LIST);
+                    IntPtr listPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + IL2CppOffsets.MessageWindow.OFFSET_NEW_PAGE_LINE_LIST);
                     if (listPtr == IntPtr.Zero)
                         return null;
 
@@ -440,9 +427,8 @@ namespace FFII_ScreenReader.Patches
                     return result;
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[MessageWindow] Error reading newPageLineList: {ex.Message}");
                 return null;
             }
         }
@@ -467,16 +453,15 @@ namespace FFII_ScreenReader.Patches
 
                 unsafe
                 {
-                    IntPtr stringPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + OFFSET_SPEAKER_VALUE);
+                    IntPtr stringPtr = *(IntPtr*)((byte*)instancePtr.ToPointer() + IL2CppOffsets.MessageWindow.OFFSET_SPEAKER_VALUE);
                     if (stringPtr == IntPtr.Zero)
                         return null;
 
                     return IL2CPP.Il2CppStringToManaged(stringPtr);
                 }
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[MessageWindow] Error reading speaker: {ex.Message}");
                 return null;
             }
         }
@@ -501,7 +486,7 @@ namespace FFII_ScreenReader.Patches
 
                 unsafe
                 {
-                    int pageNum = *(int*)((byte*)instancePtr.ToPointer() + OFFSET_CURRENT_PAGE_NUMBER);
+                    int pageNum = *(int*)((byte*)instancePtr.ToPointer() + IL2CppOffsets.MessageWindow.OFFSET_CURRENT_PAGE_NUMBER);
                     return pageNum;
                 }
             }
@@ -528,10 +513,7 @@ namespace FFII_ScreenReader.Patches
                 // Store in tracker for per-page retrieval
                 DialogueTracker.StoreMessages(messageList, pageBreaks);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MessageWindow] Error in SetContent_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -548,10 +530,7 @@ namespace FFII_ScreenReader.Patches
                     DialogueTracker.SetSpeaker(speaker);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MessageWindow] Error in SetSpeker_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -572,10 +551,7 @@ namespace FFII_ScreenReader.Patches
                 // Announce the page
                 DialogueTracker.AnnounceForPage(currentPage, speaker);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MessageWindow] Error in PlayingInit_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

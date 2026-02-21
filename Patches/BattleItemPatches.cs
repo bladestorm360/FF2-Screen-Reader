@@ -52,7 +52,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[Battle Item] SelectContent method not found");
+                    MelonLogger.Error("[Battle Item] SelectContent method not found");
                 }
             }
             catch (Exception ex)
@@ -67,22 +67,16 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleItemMenuState
     {
-        /// <summary>
-        /// True when battle item menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_ITEM);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_ITEM, AnnouncementContexts.BATTLE_ITEM);
 
-        /// <summary>
-        /// Sets the battle item menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        static BattleItemMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_ITEM);
+            _helper.RegisterResetHandler();
         }
 
-        // State constants for BattleCommandSelectController
-        private const int STATE_NORMAL = 1;
-        private const int STATE_EXTRA = 2;
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
 
         public static bool ShouldSuppress()
         {
@@ -101,7 +95,7 @@ namespace FFII_ScreenReader.Patches
                 if (cmdController != null && cmdController.gameObject.activeInHierarchy)
                 {
                     int state = StateReaderHelper.ReadStateTag(cmdController.Pointer, StateReaderHelper.OFFSET_BATTLE_COMMAND_CONTROLLER);
-                    if (state == STATE_NORMAL || state == STATE_EXTRA)
+                    if (state == IL2CppOffsets.BattleCommand.STATE_NORMAL || state == IL2CppOffsets.BattleCommand.STATE_EXTRA)
                     {
                         Reset();
                         return false;
@@ -117,11 +111,7 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        public static void Reset()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_ITEM);
-            AnnouncementDeduplicator.Reset(AnnouncementDeduplicator.CONTEXT_BATTLE_ITEM);
-        }
+        public static void Reset() => _helper.IsActive = false;
     }
 
     /// <summary>
@@ -147,7 +137,7 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(announcement))
                     return;
 
-                if (!ShouldAnnounce(CONTEXT_BATTLE_ITEM, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.BATTLE_ITEM, announcement))
                     return;
 
                 BattleItemMenuState.SetActive();
@@ -160,9 +150,6 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        // Offset for displayDataList in KeyInput.BattleItemInfomationController (from dump.cs line 432825)
-        // This is List<ItemListContentData> which directly contains the data we need
-        private const int OFFSET_DISPLAY_DATA_LIST = 0xE0;
 
         private static string TryGetItemFromContentList(BattleItemInfomationController controller, int cursorIndex)
         {
@@ -221,7 +208,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read displayDataList pointer at offset 0xE0
-                    IntPtr listPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_DISPLAY_DATA_LIST);
+                    IntPtr listPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.BattleItem.OFFSET_DISPLAY_DATA_LIST);
                     if (listPtr == IntPtr.Zero)
                         return null;
 
@@ -245,7 +232,9 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(name))
                     return null;
 
-                string announcement = name;
+                // Add quantity if more than 1
+                int quantity = data.Count;
+                string announcement = quantity > 1 ? $"{name} ({quantity})" : name;
 
                 try
                 {

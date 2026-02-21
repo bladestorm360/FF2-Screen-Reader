@@ -28,34 +28,18 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class ItemMenuState
     {
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.ITEM_MENU, AnnouncementContexts.ITEM_MENU);
 
-        /// <summary>
-        /// True when item list or item target selection is active.
-        /// Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.ITEM_MENU);
-
-        /// <summary>
-        /// Sets the item menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        static ItemMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.ITEM_MENU);
+            _helper.RegisterResetHandler(() => { LastSelectedItem = null; });
         }
 
-        /// <summary>
-        /// Stores the currently selected item data for 'I' key lookup.
-        /// </summary>
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
+
         public static ItemListContentData LastSelectedItem { get; set; } = null;
-
-        // State constants from dump.cs (KeyInput.ItemWindowController.State)
-        private const int STATE_NONE = 0;            // Menu closed
-        private const int STATE_COMMAND_SELECT = 1;  // Command bar (Use/Key Items/Sort)
-        private const int STATE_USE_SELECT = 2;      // Regular item list
-        private const int STATE_IMPORTANT_SELECT = 3; // Key items list
-        private const int STATE_ORGANIZE_SELECT = 4;  // Organize/Sort mode
-        private const int STATE_TARGET_SELECT = 5;    // Character target selection
-
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
@@ -66,7 +50,6 @@ namespace FFII_ScreenReader.Patches
             if (!IsActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             var windowController = GameObjectCache.GetOrRefresh<KeyInputItemWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
@@ -75,27 +58,16 @@ namespace FFII_ScreenReader.Patches
             }
 
             int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_ITEM_WINDOW);
-            if (state == STATE_COMMAND_SELECT || state == STATE_NONE)
+            if (state == IL2CppOffsets.Item.STATE_COMMAND_SELECT || state == IL2CppOffsets.Item.STATE_NONE)
             {
                 ClearState();
-                return false;  // Don't suppress - let generic cursor handle command bar
+                return false;
             }
-            return true;  // In submenu - suppress generic cursor
+            return true;
         }
 
-        /// <summary>
-        /// Clears item menu state when menu is closed.
-        /// </summary>
-        public static void ClearState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.ITEM_MENU);
-            LastSelectedItem = null;
-            AnnouncementDeduplicator.Reset(CONTEXT_ITEM_MENU);
-        }
+        public static void ClearState() => _helper.IsActive = false;
 
-        /// <summary>
-        /// Gets the localized name for an ItemCommandId.
-        /// </summary>
         public static string GetItemCommandName(ItemCommandId commandId)
         {
             switch (commandId)
@@ -209,8 +181,9 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(itemName))
                     return;
 
-                // Build announcement: "Item Name: Description"
-                string announcement = itemName;
+                // Build announcement: "Item Name (quantity): Description"
+                int quantity = itemData.Count;
+                string announcement = quantity > 1 ? $"{itemName} ({quantity})" : itemName;
 
                 // Add description if available
                 string description = itemData.Description;
@@ -225,7 +198,7 @@ namespace FFII_ScreenReader.Patches
                 }
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_ITEM_MENU, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.ITEM_MENU, announcement))
                     return;
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
@@ -329,7 +302,7 @@ namespace FFII_ScreenReader.Patches
                 }
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_ITEM_MENU, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.ITEM_MENU, announcement))
                     return;
 
                 // Set active state AFTER validation

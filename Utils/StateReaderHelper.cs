@@ -8,10 +8,6 @@ namespace FFII_ScreenReader.Utils
     /// </summary>
     public static class StateReaderHelper
     {
-        // Common offsets (state machine internals are consistent across controller types)
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10; // State current pointer
-        private const int OFFSET_STATE_TAG = 0x10;             // int Tag value
-
         // Controller-specific state machine offsets (from dump.cs)
         public const int OFFSET_ITEM_WINDOW = 0x70;            // ItemWindowController (line 452378)
         public const int OFFSET_EQUIP_WINDOW = 0x60;           // EquipmentWindowController (line 448755)
@@ -46,12 +42,12 @@ namespace FFII_ScreenReader.Utils
                         return -1;
 
                     // Read current State<T> pointer at offset 0x10
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
+                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + IL2CppOffsets.StateMachine.OFFSET_CURRENT);
                     if (currentStatePtr == IntPtr.Zero)
                         return -1;
 
                     // Read Tag (int) at offset 0x10
-                    int stateTag = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
+                    int stateTag = *(int*)((byte*)currentStatePtr.ToPointer() + IL2CppOffsets.StateMachine.OFFSET_TAG);
                     return stateTag;
                 }
             }

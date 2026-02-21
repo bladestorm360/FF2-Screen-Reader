@@ -214,10 +214,7 @@ namespace FFII_ScreenReader.Menus
                     return string.Join(", ", parts);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"CharacterSelectionReader: Error in ReadFromCharacterData: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }

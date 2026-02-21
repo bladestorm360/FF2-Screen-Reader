@@ -24,30 +24,19 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class StatusMenuState
     {
-        /// <summary>
-        /// True when status/character selection menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.STATUS_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.STATUS_MENU, AnnouncementContexts.STATUS_MENU);
 
-        /// <summary>
-        /// Sets the status menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        static StatusMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.STATUS_MENU);
+            _helper.RegisterResetHandler();
         }
 
-        public static void ResetState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.STATUS_MENU);
-            AnnouncementDeduplicator.Reset(CONTEXT_STATUS_MENU);
-        }
+        public static bool IsActive => _helper.IsActive;
 
-        /// <summary>
-        /// Returns true if generic cursor reading should be suppressed.
-        /// Called by CursorNavigation_Postfix to prevent double-reading.
-        /// State is cleared by transition patch when menu closes.
-        /// </summary>
+        public static void SetActive() => _helper.SetActiveExclusive();
+
+        public static void ResetState() => _helper.IsActive = false;
+
         public static bool ShouldSuppress() => IsActive;
 
     }
@@ -75,10 +64,7 @@ namespace FFII_ScreenReader.Patches
                 TryPatchSelectContent(harmony);
                 isPatched = true;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Status Menu] Error applying patches: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -242,7 +228,7 @@ namespace FFII_ScreenReader.Patches
                 }
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_STATUS_MENU, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.STATUS_MENU, announcement))
                     return;
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -276,10 +262,7 @@ namespace FFII_ScreenReader.Patches
                 TryPatchExitDisplay(harmony);
                 isPatched = true;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Status Details] Error applying patches: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

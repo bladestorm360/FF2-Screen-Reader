@@ -31,15 +31,8 @@ namespace FFII_ScreenReader.Patches
             if (isPatched)
                 return;
 
-            try
-            {
-                TryPatchSwitchLandable(harmony);
-                isPatched = true;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Landing] Error applying patches: {ex.Message}");
-            }
+            TryPatchSwitchLandable(harmony);
+            isPatched = true;
         }
 
         /// <summary>
@@ -62,7 +55,6 @@ namespace FFII_ScreenReader.Patches
                         var parameters = method.GetParameters();
                         if (parameters.Length == 1 && parameters[0].ParameterType == typeof(bool))
                         {
-                            MelonLogger.Msg($"[Landing] Found SwitchLandable(bool)");
                             targetMethod = method;
                             break;
                         }
@@ -75,17 +67,13 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[Landing] Patched SwitchLandable successfully");
                 }
                 else
                 {
-                    MelonLogger.Warning("[Landing] Could not find SwitchLandable method");
+                    MelonLogger.Error("[Landing] Could not find SwitchLandable method");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Landing] Error patching SwitchLandable: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

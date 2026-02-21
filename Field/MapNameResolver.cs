@@ -1,8 +1,10 @@
 using Il2CppLast.Management;
 using Il2CppLast.Data.Master;
 using MelonLoader;
+using FFII_ScreenReader.Utils;
 using Map = Il2CppLast.Data.Master.Map;
 using Area = Il2CppLast.Data.Master.Area;
+using FieldMap = Il2Cpp.FieldMap;
 
 namespace FFII_ScreenReader.Field
 {
@@ -34,9 +36,8 @@ namespace FFII_ScreenReader.Field
 
                 return $"Map {currentMapId}";
             }
-            catch (System.Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[MapNameResolver] Error getting current map name: {ex.Message}");
                 return "Unknown";
             }
         }
@@ -155,9 +156,29 @@ namespace FFII_ScreenReader.Field
 
                 return null;
             }
-            catch (System.Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[MapNameResolver] Error resolving map ID {mapId}: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Checks if the current map is the overworld (world map).
+        /// Uses fieldMap.fieldController.mapManager.CurrentMapModel.IsAreaTypeWorld (same as FF3).
+        /// Returns null if map data isn't ready yet (timing issue during load).
+        /// </summary>
+        public static bool? IsOverworldMap()
+        {
+            try
+            {
+                var fieldMap = GameObjectCache.Get<FieldMap>();
+                if (fieldMap?.fieldController?.mapManager?.CurrentMapModel == null)
+                    return null;  // Unknown - map not loaded yet
+
+                return fieldMap.fieldController.mapManager.CurrentMapModel.IsAreaTypeWorld;
+            }
+            catch
+            {
                 return null;
             }
         }

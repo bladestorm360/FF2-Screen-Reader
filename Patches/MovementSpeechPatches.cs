@@ -22,22 +22,8 @@ namespace FFII_ScreenReader.Patches
     {
         private static bool isPatched = false;
 
-        // TransportationType enum values (from MapConstants.TransportationType in dump.cs)
-        private const int TRANSPORT_NONE = 0;
-        private const int TRANSPORT_PLAYER = 1;
-        private const int TRANSPORT_SHIP = 2;
-        private const int TRANSPORT_PLANE = 3;       // Airship
-        private const int TRANSPORT_SYMBOL = 4;
-        private const int TRANSPORT_CONTENT = 5;
-        private const int TRANSPORT_SUBMARINE = 6;
-        private const int TRANSPORT_LOWFLYING = 7;
-        private const int TRANSPORT_SPECIALPLANE = 8;
-        private const int TRANSPORT_YELLOWCHOCOBO = 9;
-        private const int TRANSPORT_BLACKCHOCOBO = 10;
-        private const int TRANSPORT_BOKO = 11;
-
         // Track previous transportation for change detection (prevents duplicate announcements)
-        private static int lastTransportationId = TRANSPORT_PLAYER;
+        private static int lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
         private static int lastAnnouncedTransportId = -1;
 
         /// <summary>
@@ -63,10 +49,7 @@ namespace FFII_ScreenReader.Patches
 
                 isPatched = true;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error applying patches: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -101,17 +84,13 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched ChangeTransportation successfully");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MoveState] Could not find ChangeTransportation method");
+                    MelonLogger.Error("[MoveState] Could not find ChangeTransportation method");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error patching ChangeTransportation: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -140,7 +119,7 @@ namespace FFII_ScreenReader.Patches
 
                 bool wasOnVehicle = IsVehicleTransportation(previousId);
                 bool isOnVehicle = IsVehicleTransportation(transportationId);
-                bool isNowOnFoot = (transportationId == TRANSPORT_PLAYER);
+                bool isNowOnFoot = (transportationId == IL2CppOffsets.Transport.TRANSPORT_PLAYER);
 
                 string announcement = null;
 
@@ -205,17 +184,13 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched ChangeMoveState successfully");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MoveState] Could not find ChangeMoveState method");
+                    MelonLogger.Error("[MoveState] Could not find ChangeMoveState method");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error patching ChangeMoveState: {ex.Message}");
-            }
+            catch { }
         }
 
         // Track last move state for ChangeMoveState backup hook
@@ -261,9 +236,9 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         private static bool IsIntermediateTransportation(int transportationId)
         {
-            return transportationId == TRANSPORT_NONE ||
-                   transportationId == TRANSPORT_SYMBOL ||
-                   transportationId == TRANSPORT_CONTENT;
+            return transportationId == IL2CppOffsets.Transport.TRANSPORT_NONE ||
+                   transportationId == IL2CppOffsets.Transport.TRANSPORT_SYMBOL ||
+                   transportationId == IL2CppOffsets.Transport.TRANSPORT_CONTENT;
         }
 
         /// <summary>
@@ -271,10 +246,10 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         private static bool IsVehicleTransportation(int transportationId)
         {
-            return transportationId != TRANSPORT_NONE &&
-                   transportationId != TRANSPORT_PLAYER &&
-                   transportationId != TRANSPORT_SYMBOL &&
-                   transportationId != TRANSPORT_CONTENT;
+            return transportationId != IL2CppOffsets.Transport.TRANSPORT_NONE &&
+                   transportationId != IL2CppOffsets.Transport.TRANSPORT_PLAYER &&
+                   transportationId != IL2CppOffsets.Transport.TRANSPORT_SYMBOL &&
+                   transportationId != IL2CppOffsets.Transport.TRANSPORT_CONTENT;
         }
 
         /// <summary>
@@ -309,17 +284,13 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched GetOn successfully");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MoveState] Could not find GetOn method");
+                    MelonLogger.Error("[MoveState] Could not find GetOn method");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error patching GetOn: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -354,17 +325,13 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[MoveState] Patched GetOff successfully");
                 }
                 else
                 {
-                    MelonLogger.Warning("[MoveState] Could not find GetOff method");
+                    MelonLogger.Error("[MoveState] Could not find GetOff method");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MoveState] Error patching GetOff: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -377,15 +344,15 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 // FF2 quirk: GetOn(1) = TRANSPORT_PLAYER means disembarking from vehicle
-                if (typeId == TRANSPORT_PLAYER)
+                if (typeId == IL2CppOffsets.Transport.TRANSPORT_PLAYER)
                 {
                     // Skip if already announced as on foot
-                    if (lastAnnouncedTransportId == TRANSPORT_PLAYER)
+                    if (lastAnnouncedTransportId == IL2CppOffsets.Transport.TRANSPORT_PLAYER)
                         return;
 
                     MoveStateHelper.SetOnFoot();
-                    lastAnnouncedTransportId = TRANSPORT_PLAYER;
-                    lastTransportationId = TRANSPORT_PLAYER;
+                    lastAnnouncedTransportId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
+                    lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
                     FFII_ScreenReaderMod.SpeakText("On foot", interrupt: false);
                     return;
                 }
@@ -419,13 +386,13 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 // Skip if already announced via ChangeTransportation
-                if (lastAnnouncedTransportId == TRANSPORT_PLAYER)
+                if (lastAnnouncedTransportId == IL2CppOffsets.Transport.TRANSPORT_PLAYER)
                     return;
 
                 string vehicleName = GetTransportationName(typeId);
                 MoveStateHelper.SetOnFoot();
-                lastAnnouncedTransportId = TRANSPORT_PLAYER;
-                lastTransportationId = TRANSPORT_PLAYER;
+                lastAnnouncedTransportId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
+                lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
 
                 // Only announce "On foot" if we were on a known vehicle
                 if (!string.IsNullOrEmpty(vehicleName))
@@ -446,14 +413,14 @@ namespace FFII_ScreenReader.Patches
         {
             switch (typeId)
             {
-                case TRANSPORT_SHIP: return "ship";
-                case TRANSPORT_PLANE: return "airship";
-                case TRANSPORT_SUBMARINE: return "submarine";
-                case TRANSPORT_LOWFLYING: return "airship";
-                case TRANSPORT_SPECIALPLANE: return "airship";
-                case TRANSPORT_YELLOWCHOCOBO: return "chocobo";
-                case TRANSPORT_BLACKCHOCOBO: return "chocobo";
-                case TRANSPORT_BOKO: return "chocobo";
+                case IL2CppOffsets.Transport.TRANSPORT_SHIP: return "ship";
+                case IL2CppOffsets.Transport.TRANSPORT_PLANE: return "airship";
+                case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return "submarine";
+                case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING: return "airship";
+                case IL2CppOffsets.Transport.TRANSPORT_SPECIALPLANE: return "airship";
+                case IL2CppOffsets.Transport.TRANSPORT_YELLOWCHOCOBO: return "chocobo";
+                case IL2CppOffsets.Transport.TRANSPORT_BLACKCHOCOBO: return "chocobo";
+                case IL2CppOffsets.Transport.TRANSPORT_BOKO: return "chocobo";
                 default: return null;
             }
         }
@@ -463,7 +430,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void ResetState()
         {
-            lastTransportationId = TRANSPORT_PLAYER;
+            lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
             lastAnnouncedTransportId = -1;
             lastMoveState = -1;
             MoveStateHelper.ResetState();
@@ -474,8 +441,8 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void SyncToOnFoot()
         {
-            lastTransportationId = TRANSPORT_PLAYER;
-            lastAnnouncedTransportId = TRANSPORT_PLAYER;
+            lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
+            lastAnnouncedTransportId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
         }
     }
 }

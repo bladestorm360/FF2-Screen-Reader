@@ -24,24 +24,10 @@ namespace FFII_ScreenReader.Utils
         public const int MOVE_STATE_GIMMICK = 6;
         public const int MOVE_STATE_UNIQUE = 7;
 
-        // TransportationType enum values (from MapConstants.TransportationType in dump.cs)
-        private const int TRANSPORT_NONE = 0;
-        private const int TRANSPORT_PLAYER = 1;
-        private const int TRANSPORT_SHIP = 2;
-        private const int TRANSPORT_PLANE = 3;       // Airship
-        private const int TRANSPORT_SYMBOL = 4;
-        private const int TRANSPORT_CONTENT = 5;
-        private const int TRANSPORT_SUBMARINE = 6;
-        private const int TRANSPORT_LOWFLYING = 7;
-        private const int TRANSPORT_SPECIALPLANE = 8;
-        private const int TRANSPORT_YELLOWCHOCOBO = 9;
-        private const int TRANSPORT_BLACKCHOCOBO = 10;
-        private const int TRANSPORT_BOKO = 11;
-
         // Cached state tracking (event-driven, no timeouts)
         private static int cachedMoveState = MOVE_STATE_WALK;
         private static int cachedTransportationType = 0;
-        private const string CONTEXT_STATE = "Movement.State";
+        private static int lastAnnouncedState = -1;
 
         // Cached dashFlag state (set by SetDashFlag patch)
         private static bool cachedDashFlag = false;
@@ -87,14 +73,14 @@ namespace FFII_ScreenReader.Utils
         {
             switch (transportationType)
             {
-                case TRANSPORT_SHIP: return MOVE_STATE_SHIP;
-                case TRANSPORT_PLANE: return MOVE_STATE_AIRSHIP;
-                case TRANSPORT_SUBMARINE: return MOVE_STATE_SHIP;  // Treat submarine like ship
-                case TRANSPORT_LOWFLYING: return MOVE_STATE_LOWFLYING;
-                case TRANSPORT_SPECIALPLANE: return MOVE_STATE_AIRSHIP;
-                case TRANSPORT_YELLOWCHOCOBO:
-                case TRANSPORT_BLACKCHOCOBO:
-                case TRANSPORT_BOKO: return MOVE_STATE_CHOCOBO;
+                case IL2CppOffsets.Transport.TRANSPORT_SHIP: return MOVE_STATE_SHIP;
+                case IL2CppOffsets.Transport.TRANSPORT_PLANE: return MOVE_STATE_AIRSHIP;
+                case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return MOVE_STATE_SHIP;  // Treat submarine like ship
+                case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING: return MOVE_STATE_LOWFLYING;
+                case IL2CppOffsets.Transport.TRANSPORT_SPECIALPLANE: return MOVE_STATE_AIRSHIP;
+                case IL2CppOffsets.Transport.TRANSPORT_YELLOWCHOCOBO:
+                case IL2CppOffsets.Transport.TRANSPORT_BLACKCHOCOBO:
+                case IL2CppOffsets.Transport.TRANSPORT_BOKO: return MOVE_STATE_CHOCOBO;
                 default: return MOVE_STATE_WALK;
             }
         }
@@ -139,11 +125,9 @@ namespace FFII_ScreenReader.Utils
 
             if (announcement != null)
             {
-                // Use deduplicator to prevent duplicate announcements
-                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_STATE, newState))
-                {
-                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-                }
+                if (newState == lastAnnouncedState) return;
+                lastAnnouncedState = newState;
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
         }
 
@@ -260,7 +244,6 @@ namespace FFII_ScreenReader.Utils
         public static void SetCachedDashFlag(bool value)
         {
             cachedDashFlag = value;
-            MelonLogger.Msg($"[MoveState] DashFlag set to: {value}");
         }
 
         /// <summary>
@@ -276,44 +259,15 @@ namespace FFII_ScreenReader.Utils
         {
             try
             {
-                // Read AutoDash from ConfigSaveData via UserDataManager
-                // UserDataManager.configSaveData at offset 0xB8
-                // ConfigSaveData.isAutoDash at offset 0x40 (int: 0=off, 1=on)
-                bool autoDash = false;
                 var userData = Il2CppLast.Management.UserDataManager.Instance();
-
-                if (userData != null)
-                {
-                    unsafe
-                    {
-                        IntPtr userDataPtr = userData.Pointer;
-                        if (userDataPtr != IntPtr.Zero)
-                        {
-                            // Get configSaveData pointer at offset 0xB8
-                            IntPtr configPtr = *(IntPtr*)((byte*)userDataPtr.ToPointer() + 0xB8);
-                            if (configPtr != IntPtr.Zero)
-                            {
-                                // Read isAutoDash (int) at offset 0x40
-                                int autoDashValue = *(int*)((byte*)configPtr.ToPointer() + 0x40);
-                                autoDash = autoDashValue != 0;
-                            }
-                        }
-                    }
-                }
-
-                // Use cached dashFlag from SetDashFlag patch
-                bool dashFlag = cachedDashFlag;
-
-                // Effective running state: XOR of autoDash and dashFlag
-                bool result = autoDash != dashFlag;
-                MelonLogger.Msg($"[DashDebug] autoDash={autoDash}, dashFlag={dashFlag}, result={result}");
-                return result;
+                bool autoDash = (userData?.Config?.IsAutoDash ?? 0) != 0;
+                return autoDash != cachedDashFlag;
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[MoveState] Error reading dash state: {ex.Message}");
+                MelonLogger.Warning($"Error reading dash state: {ex.Message}");
+                return false;
             }
-            return false;
         }
 
         /// <summary>
@@ -324,7 +278,7 @@ namespace FFII_ScreenReader.Utils
             cachedMoveState = MOVE_STATE_WALK;
             cachedTransportationType = 0;
             cachedDashFlag = false;
-            AnnouncementDeduplicator.Reset(CONTEXT_STATE);
+            lastAnnouncedState = -1;
         }
 
         /// <summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using MelonLoader;
 
 // Type aliases for IL2CPP types
@@ -17,6 +18,12 @@ namespace FFII_ScreenReader.Utils
     /// </summary>
     public static class LocalizationUtility
     {
+        // Fallback mapping for conditions with empty/missing MesIdName
+        private static readonly Dictionary<int, string> ConditionTypeFallbacks = new Dictionary<int, string>
+        {
+            { 9, "Poison" },     // ConditionType 9 (confirmed from logs)
+            { 204, "???" },      // Unknown condition - investigate later if needed
+        };
         /// <summary>
         /// Gets a localized message by message ID.
         /// </summary>
@@ -48,6 +55,8 @@ namespace FFII_ScreenReader.Utils
 
         /// <summary>
         /// Gets a localized condition/status effect name from a Condition object.
+        /// Uses primary localization lookup, with fallback by ConditionType for conditions
+        /// with empty/missing MesIdName (e.g., Poison).
         /// </summary>
         /// <param name="condition">The Condition object.</param>
         /// <returns>The localized condition name, or null if not found.</returns>
@@ -59,10 +68,21 @@ namespace FFII_ScreenReader.Utils
             try
             {
                 string mesId = condition.MesIdName;
-                if (string.IsNullOrEmpty(mesId))
-                    return null;
+                int condType = condition.ConditionType;
 
-                return GetMessage(mesId, stripIcons: false);
+                // Primary path: use localization (skip if mesId is empty or "None")
+                if (!string.IsNullOrEmpty(mesId) && mesId != "None")
+                {
+                    string localized = GetMessage(mesId, stripIcons: false);
+                    if (!string.IsNullOrEmpty(localized))
+                        return localized;
+                }
+
+                // Fallback: use hardcoded name by ConditionType
+                if (ConditionTypeFallbacks.TryGetValue(condType, out string fallback))
+                    return fallback;
+
+                return null;
             }
             catch
             {

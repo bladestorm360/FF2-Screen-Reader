@@ -54,53 +54,32 @@ namespace FFII_ScreenReader.Core
         private static TolkWrapper tolk;
         private InputManager inputManager;
         private EntityScanner entityScanner;
+        private AudioLoopManager audioLoopManager;
+        private WaypointManager waypointManager;
+        private WaypointNavigator waypointNavigator;
+        private WaypointController waypointController;
 
         /// <summary>
         /// Singleton instance for access from patches.
         /// </summary>
         public static FFII_ScreenReaderMod Instance { get; private set; }
 
+        internal EntityScanner EntityScanner => entityScanner;
+
         private static readonly int CategoryCount = Enum.GetValues(typeof(EntityCategory)).Length;
         private EntityCategory currentCategory = EntityCategory.All;
 
-        // Filter toggles
+        // Filter toggles (backed by PreferencesManager)
         private bool filterByPathfinding = false;
         private bool filterMapExits = false;
+        private bool filterToLayer = false;
 
-        // Audio feedback toggles
+        // Audio feedback toggles (backed by PreferencesManager)
         private bool enableWallTones = false;
         private bool enableFootsteps = false;
         private bool enableAudioBeacons = false;
 
-        // Coroutine-based audio loops (replace per-frame polling)
-        private IEnumerator wallToneCoroutine = null;
-        private IEnumerator beaconCoroutine = null;
-        private const float BEACON_INTERVAL = 2.0f;
-        private const float WALL_TONE_LOOP_INTERVAL = 0.1f;
 
-        // Map transition suppression for wall tones
-        private int wallToneMapId = -1;
-        private float wallToneSuppressedUntil = 0f;
-
-        // Reusable direction list buffer to avoid per-cycle allocations
-        private static readonly List<SoundPlayer.Direction> wallDirectionsBuffer = new List<SoundPlayer.Direction>(4);
-
-        // Preferences
-        private static MelonPreferences_Category prefsCategory;
-        private static MelonPreferences_Entry<bool> prefPathfindingFilter;
-        private static MelonPreferences_Entry<bool> prefMapExitFilter;
-        private static MelonPreferences_Entry<bool> prefWallTones;
-        private static MelonPreferences_Entry<bool> prefFootsteps;
-        private static MelonPreferences_Entry<bool> prefAudioBeacons;
-
-        // Volume controls (0-100, default 50 = current volume)
-        private static MelonPreferences_Entry<int> prefWallBumpVolume;
-        private static MelonPreferences_Entry<int> prefFootstepVolume;
-        private static MelonPreferences_Entry<int> prefWallToneVolume;
-        private static MelonPreferences_Entry<int> prefBeaconVolume;
-
-        // Enemy HP display mode (0=Numbers, 1=Percentage, 2=Hidden)
-        private static MelonPreferences_Entry<int> prefEnemyHPDisplay;
 
         public override void OnInitializeMelon()
         {
@@ -111,27 +90,14 @@ namespace FFII_ScreenReader.Core
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += (UnityEngine.Events.UnityAction<UnityEngine.SceneManagement.Scene, UnityEngine.SceneManagement.LoadSceneMode>)OnSceneLoaded;
 
             // Initialize preferences
-            prefsCategory = MelonPreferences.CreateCategory("FFII_ScreenReader");
-            prefPathfindingFilter = prefsCategory.CreateEntry<bool>("PathfindingFilter", false, "Pathfinding Filter", "Only show entities with valid paths when cycling");
-            prefMapExitFilter = prefsCategory.CreateEntry<bool>("MapExitFilter", false, "Map Exit Filter", "Filter multiple map exits to the same destination");
-            prefWallTones = prefsCategory.CreateEntry<bool>("WallTones", false, "Wall Tones", "Play directional tones when approaching walls");
-            prefFootsteps = prefsCategory.CreateEntry<bool>("Footsteps", false, "Footsteps", "Play click sound on each tile movement");
-            prefAudioBeacons = prefsCategory.CreateEntry<bool>("AudioBeacons", false, "Audio Beacons", "Play ping toward selected entity");
+            PreferencesManager.Initialize();
 
-            // Volume controls (0-100, default 50)
-            prefWallBumpVolume = prefsCategory.CreateEntry<int>("WallBumpVolume", 50, "Wall Bump Volume", "Volume for wall bump sounds (0-100)");
-            prefFootstepVolume = prefsCategory.CreateEntry<int>("FootstepVolume", 50, "Footstep Volume", "Volume for footstep sounds (0-100)");
-            prefWallToneVolume = prefsCategory.CreateEntry<int>("WallToneVolume", 50, "Wall Tone Volume", "Volume for wall proximity tones (0-100)");
-            prefBeaconVolume = prefsCategory.CreateEntry<int>("BeaconVolume", 50, "Beacon Volume", "Volume for audio beacon pings (0-100)");
-
-            // Enemy HP display mode
-            prefEnemyHPDisplay = prefsCategory.CreateEntry<int>("EnemyHPDisplay", 0, "Enemy HP Display", "0=Numbers, 1=Percentage, 2=Hidden");
-
-            filterByPathfinding = prefPathfindingFilter.Value;
-            filterMapExits = prefMapExitFilter.Value;
-            enableWallTones = prefWallTones.Value;
-            enableFootsteps = prefFootsteps.Value;
-            enableAudioBeacons = prefAudioBeacons.Value;
+            filterByPathfinding = PreferencesManager.PathfindingFilterEnabled;
+            filterMapExits = PreferencesManager.MapExitFilterEnabled;
+            filterToLayer = PreferencesManager.ToLayerFilterEnabled;
+            enableWallTones = PreferencesManager.WallTonesEnabled;
+            enableFootsteps = PreferencesManager.FootstepsEnabled;
+            enableAudioBeacons = PreferencesManager.AudioBeaconsEnabled;
 
             // Initialize Tolk for screen reader support
             tolk = new TolkWrapper();
@@ -140,8 +106,7 @@ namespace FFII_ScreenReader.Core
             // Initialize external sound player for distinct audio feedback
             SoundPlayer.Initialize();
 
-            // Initialize entity name translator (Japanese → English)
-            EntityTranslator.Initialize();
+            // EntityTranslator now uses embedded dictionary - no initialization needed
 
             // Initialize input manager with event-driven input handling
             inputManager = new InputManager(this);
@@ -149,6 +114,15 @@ namespace FFII_ScreenReader.Core
 
             // Initialize entity scanner
             entityScanner = new EntityScanner();
+            entityScanner.FilterToLayer = filterToLayer;
+
+            // Initialize audio loop manager
+            audioLoopManager = new AudioLoopManager(this);
+
+            // Initialize waypoint system
+            waypointManager = new WaypointManager();
+            waypointNavigator = new WaypointNavigator(waypointManager);
+            waypointController = new WaypointController(this, waypointManager, waypointNavigator);
 
             // Apply Harmony patches
             TryManualPatching();
@@ -362,8 +336,8 @@ namespace FFII_ScreenReader.Core
             UnityEngine.SceneManagement.SceneManager.sceneLoaded -= (UnityEngine.Events.UnityAction<UnityEngine.SceneManagement.Scene, UnityEngine.SceneManagement.LoadSceneMode>)OnSceneLoaded;
 
             // Stop audio loops
-            StopWallToneLoop();
-            StopBeaconLoop();
+            audioLoopManager?.StopWallToneLoop();
+            audioLoopManager?.StopBeaconLoop();
 
             // Shutdown sound player (closes waveOut handles, frees unmanaged memory)
             SoundPlayer.Shutdown();
@@ -385,9 +359,9 @@ namespace FFII_ScreenReader.Core
                 GameObjectCache.ClearAll();
 
                 // Stop audio loops during scene transition and suppress wall tones briefly
-                StopWallToneLoop();
-                StopBeaconLoop();
-                wallToneSuppressedUntil = Time.time + 1.0f;
+                audioLoopManager.StopWallToneLoop();
+                audioLoopManager.StopBeaconLoop();
+                audioLoopManager.wallToneSuppressedUntil = Time.time + 1.0f;
 
                 // Reset movement state for new map
                 MovementSoundPatches.ResetState();
@@ -450,8 +424,8 @@ namespace FFII_ScreenReader.Core
                 }
 
                 // Restart audio loops after scene has settled
-                if (enableWallTones) StartWallToneLoop();
-                if (enableAudioBeacons) StartBeaconLoop();
+                if (enableWallTones) audioLoopManager.StartWallToneLoop();
+                if (enableAudioBeacons) audioLoopManager.StartBeaconLoop();
             }
             catch (Exception ex)
             {
@@ -789,8 +763,7 @@ namespace FFII_ScreenReader.Core
         {
             filterByPathfinding = !filterByPathfinding;
             entityScanner.FilterByPathfinding = filterByPathfinding;
-            prefPathfindingFilter.Value = filterByPathfinding;
-            prefsCategory.SaveToFile(false);
+            PreferencesManager.SaveToggle("PathfindingFilter", filterByPathfinding);
 
             string status = filterByPathfinding ? "on" : "off";
             SpeakText($"Pathfinding filter {status}");
@@ -799,11 +772,23 @@ namespace FFII_ScreenReader.Core
         internal void ToggleMapExitFilter()
         {
             filterMapExits = !filterMapExits;
-            prefMapExitFilter.Value = filterMapExits;
-            prefsCategory.SaveToFile(false);
+            PreferencesManager.SaveToggle("MapExitFilter", filterMapExits);
 
             string status = filterMapExits ? "on" : "off";
             SpeakText($"Map exit filter {status}");
+        }
+
+        internal void ToggleToLayerFilter()
+        {
+            filterToLayer = !filterToLayer;
+
+            if (entityScanner != null)
+                entityScanner.FilterToLayer = filterToLayer;
+
+            PreferencesManager.SaveToggle("ToLayerFilter", filterToLayer);
+
+            string status = filterToLayer ? "on" : "off";
+            SpeakText($"Layer transition filter {status}");
         }
 
         internal void ToggleWallTones()
@@ -811,12 +796,11 @@ namespace FFII_ScreenReader.Core
             enableWallTones = !enableWallTones;
 
             if (enableWallTones)
-                StartWallToneLoop();
+                audioLoopManager.StartWallToneLoop();
             else
-                StopWallToneLoop();
+                audioLoopManager.StopWallToneLoop();
 
-            prefWallTones.Value = enableWallTones;
-            prefsCategory.SaveToFile(false);
+            PreferencesManager.SaveToggle("WallTones", enableWallTones);
 
             string status = enableWallTones ? "on" : "off";
             SpeakText($"Wall tones {status}");
@@ -825,9 +809,7 @@ namespace FFII_ScreenReader.Core
         internal void ToggleFootsteps()
         {
             enableFootsteps = !enableFootsteps;
-
-            prefFootsteps.Value = enableFootsteps;
-            prefsCategory.SaveToFile(false);
+            PreferencesManager.SaveToggle("Footsteps", enableFootsteps);
 
             string status = enableFootsteps ? "on" : "off";
             SpeakText($"Footsteps {status}");
@@ -838,83 +820,18 @@ namespace FFII_ScreenReader.Core
             enableAudioBeacons = !enableAudioBeacons;
 
             if (enableAudioBeacons)
-                StartBeaconLoop();
+                audioLoopManager.StartBeaconLoop();
             else
-                StopBeaconLoop();
+                audioLoopManager.StopBeaconLoop();
 
-            prefAudioBeacons.Value = enableAudioBeacons;
-            prefsCategory.SaveToFile(false);
+            PreferencesManager.SaveToggle("AudioBeacons", enableAudioBeacons);
 
             string status = enableAudioBeacons ? "on" : "off";
             SpeakText($"Audio beacons {status}");
         }
 
         // Accessors for audio feedback state (used by MovementSoundPatches)
-        internal bool IsWallTonesEnabled() => enableWallTones;
         internal bool IsFootstepsEnabled() => enableFootsteps;
-        internal bool IsAudioBeaconsEnabled() => enableAudioBeacons;
-
-        // Public static accessors for volume settings (used by SoundPlayer and ModMenu)
-        public static int WallBumpVolume => prefWallBumpVolume?.Value ?? 50;
-        public static int FootstepVolume => prefFootstepVolume?.Value ?? 50;
-        public static int WallToneVolume => prefWallToneVolume?.Value ?? 50;
-        public static int BeaconVolume => prefBeaconVolume?.Value ?? 50;
-
-        // Public static accessor for enemy HP display mode (used by battle patches and ModMenu)
-        public static int EnemyHPDisplay => prefEnemyHPDisplay?.Value ?? 0;
-
-        // Public static accessors for filter settings (used by ModMenu)
-        public static bool PathfindingFilterEnabled => Instance?.filterByPathfinding ?? false;
-        public static bool MapExitFilterEnabled => Instance?.filterMapExits ?? false;
-        public static bool WallTonesEnabled => Instance?.enableWallTones ?? false;
-        public static bool FootstepsEnabled => Instance?.enableFootsteps ?? false;
-        public static bool AudioBeaconsEnabled => Instance?.enableAudioBeacons ?? false;
-
-        // Public static setters for ModMenu
-        public static void SetWallBumpVolume(int value)
-        {
-            if (prefWallBumpVolume != null)
-            {
-                prefWallBumpVolume.Value = Math.Clamp(value, 0, 100);
-                prefsCategory?.SaveToFile(false);
-            }
-        }
-
-        public static void SetFootstepVolume(int value)
-        {
-            if (prefFootstepVolume != null)
-            {
-                prefFootstepVolume.Value = Math.Clamp(value, 0, 100);
-                prefsCategory?.SaveToFile(false);
-            }
-        }
-
-        public static void SetWallToneVolume(int value)
-        {
-            if (prefWallToneVolume != null)
-            {
-                prefWallToneVolume.Value = Math.Clamp(value, 0, 100);
-                prefsCategory?.SaveToFile(false);
-            }
-        }
-
-        public static void SetBeaconVolume(int value)
-        {
-            if (prefBeaconVolume != null)
-            {
-                prefBeaconVolume.Value = Math.Clamp(value, 0, 100);
-                prefsCategory?.SaveToFile(false);
-            }
-        }
-
-        public static void SetEnemyHPDisplay(int value)
-        {
-            if (prefEnemyHPDisplay != null)
-            {
-                prefEnemyHPDisplay.Value = Math.Clamp(value, 0, 2);
-                prefsCategory?.SaveToFile(false);
-            }
-        }
 
         private void AnnounceCategoryChange()
         {
@@ -934,187 +851,6 @@ namespace FFII_ScreenReader.Core
                 case EntityCategory.Vehicles: return "Vehicles";
                 default: return "Unknown";
             }
-        }
-
-        #endregion
-
-        #region Audio Loop Management
-
-        private void StartWallToneLoop()
-        {
-            if (wallToneCoroutine != null) return;
-            wallToneCoroutine = WallToneLoop();
-            CoroutineManager.StartManaged(wallToneCoroutine);
-        }
-
-        private void StopWallToneLoop()
-        {
-            if (wallToneCoroutine != null)
-            {
-                try { MelonCoroutines.Stop(wallToneCoroutine); }
-                catch { }
-                wallToneCoroutine = null;
-            }
-            if (SoundPlayer.IsWallTonePlaying())
-                SoundPlayer.StopWallTone();
-        }
-
-        private void StartBeaconLoop()
-        {
-            if (beaconCoroutine != null) return;
-            beaconCoroutine = BeaconLoop();
-            CoroutineManager.StartManaged(beaconCoroutine);
-        }
-
-        private void StopBeaconLoop()
-        {
-            if (beaconCoroutine != null)
-            {
-                try { MelonCoroutines.Stop(beaconCoroutine); }
-                catch { }
-                beaconCoroutine = null;
-            }
-        }
-
-        private IEnumerator WallToneLoop()
-        {
-            var waitInterval = new WaitForSeconds(WALL_TONE_LOOP_INTERVAL);
-
-            while (enableWallTones)
-            {
-                yield return waitInterval;
-
-                // Check flag immediately after resuming - exit if toggled off during yield
-                if (!enableWallTones)
-                    break;
-
-                try
-                {
-                    float currentTime = Time.time;
-
-                    // Detect sub-map transitions and suppress tones briefly
-                    int currentMapId = GetCurrentMapId();
-                    if (currentMapId > 0 && wallToneMapId > 0 && currentMapId != wallToneMapId)
-                    {
-                        wallToneSuppressedUntil = currentTime + 1.0f;
-                        if (SoundPlayer.IsWallTonePlaying())
-                            SoundPlayer.StopWallTone();
-                    }
-                    if (currentMapId > 0)
-                        wallToneMapId = currentMapId;
-
-                    if (currentTime < wallToneSuppressedUntil)
-                    {
-                        if (SoundPlayer.IsWallTonePlaying())
-                            SoundPlayer.StopWallTone();
-                        continue;
-                    }
-
-                    if (MapTransitionPatches.IsScreenFading)
-                    {
-                        if (SoundPlayer.IsWallTonePlaying())
-                            SoundPlayer.StopWallTone();
-                        continue;
-                    }
-
-                    var player = GetFieldPlayer();
-                    if (player == null)
-                    {
-                        if (SoundPlayer.IsWallTonePlaying())
-                            SoundPlayer.StopWallTone();
-                        continue;
-                    }
-
-                    var walls = FieldNavigationHelper.GetNearbyWallsWithDistance(player);
-                    var mapExitPositions = entityScanner?.GetMapExitPositions();
-                    Vector3 playerPos = player.transform.localPosition;
-
-                    // Reuse static buffer to avoid per-cycle allocations
-                    wallDirectionsBuffer.Clear();
-
-                    if (walls.NorthDist == 0 &&
-                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, new Vector3(0, 16, 0), mapExitPositions))
-                        wallDirectionsBuffer.Add(SoundPlayer.Direction.North);
-
-                    if (walls.SouthDist == 0 &&
-                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, new Vector3(0, -16, 0), mapExitPositions))
-                        wallDirectionsBuffer.Add(SoundPlayer.Direction.South);
-
-                    if (walls.EastDist == 0 &&
-                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, new Vector3(16, 0, 0), mapExitPositions))
-                        wallDirectionsBuffer.Add(SoundPlayer.Direction.East);
-
-                    if (walls.WestDist == 0 &&
-                        !FieldNavigationHelper.IsDirectionNearMapExit(playerPos, new Vector3(-16, 0, 0), mapExitPositions))
-                        wallDirectionsBuffer.Add(SoundPlayer.Direction.West);
-
-                    // Pass buffer directly (IList<Direction>) - no ToArray() allocation
-                    SoundPlayer.PlayWallTonesLooped(wallDirectionsBuffer);
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[WallTones] Error: {ex.Message}");
-                }
-            }
-
-            // Cleanup when loop exits (ensures audio stops when toggled off)
-            if (SoundPlayer.IsWallTonePlaying())
-                SoundPlayer.StopWallTone();
-        }
-
-        private IEnumerator BeaconLoop()
-        {
-            var waitInterval = new WaitForSeconds(BEACON_INTERVAL);
-
-            while (true)
-            {
-                yield return waitInterval;
-
-                try
-                {
-                    var entity = entityScanner?.CurrentEntity;
-                    if (entity == null) continue;
-
-                    var playerController = GameObjectCache.Get<FieldPlayerController>();
-                    if (playerController?.fieldPlayer == null) continue;
-
-                    Vector3 playerPos = playerController.fieldPlayer.transform.localPosition;
-                    Vector3 entityPos = entity.Position;
-
-                    float distance = Vector3.Distance(playerPos, entityPos);
-                    float maxDist = 500f;
-                    float volumeScale = Mathf.Clamp(1f - (distance / maxDist), 0.15f, 0.60f);
-
-                    float deltaX = entityPos.x - playerPos.x;
-                    float pan = Mathf.Clamp(deltaX / 100f, -1f, 1f) * 0.5f + 0.5f;
-
-                    bool isSouth = entityPos.y < playerPos.y - 8f;
-
-                    SoundPlayer.PlayBeacon(isSouth, pan, volumeScale);
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[Beacon] Error: {ex.Message}");
-                }
-            }
-        }
-
-        /// <summary>
-        /// Gets the current map ID from UserDataManager (FF2-specific).
-        /// Returns -1 if unable to retrieve.
-        /// </summary>
-        private int GetCurrentMapId()
-        {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager != null)
-                {
-                    return userDataManager.CurrentMapId;
-                }
-            }
-            catch { }
-            return -1;
         }
 
         #endregion
@@ -1183,7 +919,7 @@ namespace FFII_ScreenReader.Core
         /// Gets the FieldPlayer from the FieldPlayerController.
         /// Uses direct IL2CPP property access (not reflection, which doesn't work on IL2CPP types).
         /// </summary>
-        private Il2CppLast.Entity.Field.FieldPlayer GetFieldPlayer()
+        internal Il2CppLast.Entity.Field.FieldPlayer GetFieldPlayer()
         {
             try
             {
@@ -1206,96 +942,35 @@ namespace FFII_ScreenReader.Core
 
         #region Status Announcements
 
-        internal void AnnounceGilAmount()
+        internal void AnnounceGilAmount() => GameInfoAnnouncer.AnnounceGilAmount();
+        internal void AnnounceCurrentMap() => GameInfoAnnouncer.AnnounceCurrentMap();
+        internal void AnnounceCharacterStatus() => GameInfoAnnouncer.AnnounceCharacterStatus();
+
+        #endregion
+
+        #region Waypoint Methods
+
+        internal string GetCurrentMapIdString()
         {
             try
             {
                 var userDataManager = UserDataManager.Instance();
                 if (userDataManager != null)
-                {
-                    int gil = userDataManager.OwendGil;
-                    SpeakText($"{gil} Gil");
-                    return;
-                }
+                    return userDataManager.CurrentMapId.ToString();
             }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"Error getting gil: {ex.Message}");
-            }
-            SpeakText("Gil not available");
+            catch { }
+            return "unknown";
         }
 
-        internal void AnnounceCurrentMap()
-        {
-            try
-            {
-                string mapName = MapNameResolver.GetCurrentMapName();
-                SpeakText(mapName);
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"Error getting map name: {ex.Message}");
-                SpeakText("Map name not available");
-            }
-        }
-
-        internal void AnnounceCharacterStatus()
-        {
-            try
-            {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
-                {
-                    SpeakText("Character data not available");
-                    return;
-                }
-
-                var partyList = userDataManager.GetOwnedCharactersClone(false);
-                if (partyList == null || partyList.Count == 0)
-                {
-                    SpeakText("No party members");
-                    return;
-                }
-
-                var sb = new System.Text.StringBuilder();
-                foreach (var charData in partyList)
-                {
-                    try
-                    {
-                        if (charData != null)
-                        {
-                            string name = charData.Name;
-                            var param = charData.Parameter;
-                            if (param != null)
-                            {
-                                int currentHp = param.CurrentHP;
-                                int maxHp = param.ConfirmedMaxHp();
-                                int currentMp = param.CurrentMP;
-                                int maxMp = param.ConfirmedMaxMp();
-
-                                sb.AppendLine($"{name}: HP {currentHp}/{maxHp}, MP {currentMp}/{maxMp}");
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                string status = sb.ToString().Trim();
-                if (!string.IsNullOrEmpty(status))
-                {
-                    SpeakText(status);
-                }
-                else
-                {
-                    SpeakText("No character status available");
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"Error getting character status: {ex.Message}");
-                SpeakText("Character status not available");
-            }
-        }
+        internal void WaypointCycleNext() => waypointController.CycleNext();
+        internal void WaypointCyclePrevious() => waypointController.CyclePrevious();
+        internal void WaypointCycleNextCategory() => waypointController.CycleNextCategory();
+        internal void WaypointCyclePreviousCategory() => waypointController.CyclePreviousCategory();
+        internal void WaypointPathfind() => waypointController.Pathfind();
+        internal void WaypointAdd() => waypointController.Add();
+        internal void WaypointRename() => waypointController.Rename();
+        internal void WaypointDelete() => waypointController.Delete();
+        internal void WaypointClearAll() => waypointController.ClearAll();
 
         #endregion
 
@@ -1382,10 +1057,7 @@ namespace FFII_ScreenReader.Core
             {
                 var cursor = __instance as GameCursor;
                 if (cursor == null)
-                {
-                    MelonLogger.Warning("Cursor is null in postfix");
                     return;
-                }
 
                 // Build cursor path for pause menu detection
                 string cursorPath = "";
@@ -1403,7 +1075,6 @@ namespace FFII_ScreenReader.Core
                 // Cursor path contains "curosr_parent" (game typo) when in pause menu.
                 if (cursorPath.Contains("curosr_parent"))
                 {
-                    MelonLogger.Msg("[CursorNav] Battle pause menu detected - reading directly");
                     CoroutineManager.StartManaged(
                         MenuTextDiscovery.WaitAndReadCursor(cursor, "Navigate", 0, false)
                     );
@@ -1418,51 +1089,13 @@ namespace FFII_ScreenReader.Core
                     return;
                 }
 
-                // === ACTIVE STATE CHECKS ===
-                // Each ShouldSuppress() validates its controller is still active.
-                // If controller is gone, it auto-clears and returns false (preventing stuck flags).
-
-                // Equipment menu (slot and item list) - needs stat comparison
-                if (EquipMenuState.ShouldSuppress()) return;
-
-                // Battle command menu - handled by SetCursor patch
-                if (BattleCommandState.ShouldSuppress()) return;
-
-                // Battle target selection - handled by SelectContent patches
-                if (BattleTargetPatches.ShouldSuppress()) return;
-
-                // Item menu - item list and target selection
-                if (ItemMenuState.ShouldSuppress()) return;
-
-                // Status menu - character selection
-                if (StatusMenuState.ShouldSuppress()) return;
-
-                // Magic menu - spell selection
-                if (MagicMenuState.ShouldSuppress()) return;
-
-                // Config menu - config options
-                if (ConfigMenuState.ShouldSuppress()) return;
-
-                // Shop menus - buy/sell lists
-                if (ShopMenuTracker.ShouldSuppress()) return;
-
-                // Battle item menu
-                if (BattleItemMenuState.ShouldSuppress()) return;
-
-                // Battle magic menu
-                if (BattleMagicMenuState.ShouldSuppress()) return;
-
-                // Keyword dialogue menu (Ask/Remember/Item)
-                if (KeywordMenuState.ShouldSuppress()) return;
-
-                // Words menu (main menu keyword browser)
-                if (WordsMenuState.ShouldSuppress()) return;
-
-                // Popup dialogs (Yes/No confirmations)
-                // Route all popup button reading through PopupPatches.ReadCurrentButton
-                if (PopupState.ShouldSuppress())
+                // === ACTIVE STATE CHECKS (centralized) ===
+                var suppression = CursorSuppressionCheck.Check();
+                if (suppression.ShouldSuppress)
                 {
-                    PopupPatches.ReadCurrentButton(cursor);
+                    // Popup needs special routing through ReadCurrentButton
+                    if (suppression.IsPopup)
+                        PopupPatches.ReadCurrentButton(cursor);
                     return;
                 }
 
@@ -1473,10 +1106,7 @@ namespace FFII_ScreenReader.Core
                     MenuTextDiscovery.WaitAndReadCursor(cursor, "Navigate", 0, false)
                 );
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in CursorNavigation_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -1485,7 +1115,6 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public static void TreasureBox_Open_Postfix()
         {
-            MelonLogger.Msg("[TreasureBox] Chest opened, scheduling entity refresh");
             FFII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
     }
@@ -1504,65 +1133,23 @@ namespace FFII_ScreenReader.Core
 
             try
             {
-                MelonLogger.Msg("[Transitions] Applying menu transition patches...");
+                var patchType = typeof(MenuTransitionPatches);
+                const string log = "[Transitions]";
 
-                // ItemWindowController.SetActive
-                TryPatchSetActive<KeyInputItemWindowController>(harmony, nameof(ItemWindowController_SetActive_Postfix));
-
-                // EquipmentWindowController.SetActive
-                TryPatchSetActive<KeyInputEquipmentWindowController>(harmony, nameof(EquipmentWindowController_SetActive_Postfix));
-
-                // StatusWindowController.SetActive
-                TryPatchSetActive<KeyInputStatusWindowController>(harmony, nameof(StatusWindowController_SetActive_Postfix));
-
-                // AbilityWindowController.SetActive (FF2 magic menu)
-                TryPatchSetActive<KeyInputAbilityWindowController>(harmony, nameof(AbilityWindowController_SetActive_Postfix));
-
-                // ConfigController.SetActive
-                TryPatchSetActive<KeyInputConfigController>(harmony, nameof(ConfigController_SetActive_Postfix));
-
-                // ShopController.SetActive
-                TryPatchSetActive<KeyInputShopController>(harmony, nameof(ShopController_SetActive_Postfix));
-
-                // SecretWordController.SetActive (keyword dialogue)
-                TryPatchSetActive<KeyInputSecretWordController>(harmony, nameof(SecretWordController_SetActive_Postfix));
-
-                // WordsWindowController.SetActive (main menu words browser)
-                TryPatchSetActive<KeyInputWordsWindowController>(harmony, nameof(WordsWindowController_SetActive_Postfix));
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputItemWindowController), patchType, nameof(ItemWindowController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputEquipmentWindowController), patchType, nameof(EquipmentWindowController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputStatusWindowController), patchType, nameof(StatusWindowController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputAbilityWindowController), patchType, nameof(AbilityWindowController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputConfigController), patchType, nameof(ConfigController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputShopController), patchType, nameof(ShopController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputSecretWordController), patchType, nameof(SecretWordController_SetActive_Postfix), log);
+                HarmonyPatchHelper.PatchSetActive(harmony, typeof(KeyInputWordsWindowController), patchType, nameof(WordsWindowController_SetActive_Postfix), log);
 
                 isPatched = true;
-                MelonLogger.Msg("[Transitions] Menu transition patches applied");
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[Transitions] Error applying patches: {ex.Message}");
-            }
-        }
-
-        private static void TryPatchSetActive<T>(HarmonyLib.Harmony harmony, string postfixMethodName)
-        {
-            try
-            {
-                Type controllerType = typeof(T);
-                var setActiveMethod = controllerType.GetMethod("SetActive", new Type[] { typeof(bool) });
-
-                if (setActiveMethod != null)
-                {
-                    var postfix = typeof(MenuTransitionPatches).GetMethod(postfixMethodName, BindingFlags.Public | BindingFlags.Static);
-                    if (postfix != null)
-                    {
-                        harmony.Patch(setActiveMethod, postfix: new HarmonyMethod(postfix));
-                        MelonLogger.Msg($"[Transitions] Patched {controllerType.Name}.SetActive");
-                    }
-                }
-                else
-                {
-                    MelonLogger.Warning($"[Transitions] {controllerType.Name}.SetActive not found");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Transitions] Error patching {typeof(T).Name}: {ex.Message}");
             }
         }
 

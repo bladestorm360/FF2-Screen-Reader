@@ -14,6 +14,8 @@ using BattleUtility = Il2CppLast.Battle.BattleUtility;
 using BattleController = Il2CppLast.Battle.BattleController;
 using BattlePlugManager = Il2CppLast.Battle.BattlePlugManager;
 using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
+using HitType = Il2CppLast.Systems.HitType;
+using BattleBasicFunction = Il2CppLast.Battle.Function.BattleBasicFunction;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -36,7 +38,7 @@ namespace FFII_ScreenReader.Patches
             string cleanMessage = message.Trim();
 
             // Use centralized deduplication
-            if (!ShouldAnnounce(CONTEXT_BATTLE_MESSAGE, cleanMessage))
+            if (!ShouldAnnounce(AnnouncementContexts.BATTLE_MESSAGE, cleanMessage))
             {
                 return false;
             }
@@ -51,7 +53,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void Reset()
         {
-            AnnouncementDeduplicator.Reset(CONTEXT_BATTLE_ACTION, CONTEXT_BATTLE_MESSAGE, CONTEXT_BATTLE_CONDITION);
+            AnnouncementDeduplicator.Reset(AnnouncementContexts.BATTLE_ACTION, AnnouncementContexts.BATTLE_MESSAGE, AnnouncementContexts.BATTLE_CONDITION);
         }
     }
 
@@ -61,6 +63,36 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleMessagePatches
     {
+        #region Damage Source Tracking
+
+        /// <summary>
+        /// Tracks the source of damage (e.g., "Poison") for status effect damage.
+        /// Set before CreateDamageView is called, consumed when damage is announced.
+        /// </summary>
+        private static string pendingDamageSource = null;
+
+        /// <summary>
+        /// Sets the pending damage source (called before damage generation).
+        /// </summary>
+        public static void SetDamageSource(string source) => pendingDamageSource = source;
+
+        /// <summary>
+        /// Consumes and returns the pending damage source.
+        /// </summary>
+        public static string ConsumeDamageSource()
+        {
+            var source = pendingDamageSource;
+            pendingDamageSource = null;
+            return source;
+        }
+
+        /// <summary>
+        /// Tracks the last battle command message to prevent duplicates.
+        /// </summary>
+        private static string lastBattleCommandMessage = "";
+
+        #endregion
+
         /// <summary>
         /// Apply all battle message patches manually.
         /// </summary>
@@ -89,6 +121,19 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(utilityDamageViewMethod, postfix: new HarmonyMethod(postfix));
                 }
 
+                // Patch BattleBasicFunction.CreateDamageView for HP/MP distinction
+                // This version has HitType parameter that distinguishes HP recovery (4) from MP recovery (6)
+                var basicFunctionDamageViewMethod = AccessTools.Method(
+                    typeof(BattleBasicFunction),
+                    "CreateDamageView",
+                    new Type[] { typeof(BattleUnitData), typeof(int), typeof(HitType), typeof(bool), typeof(bool) }
+                );
+                if (basicFunctionDamageViewMethod != null)
+                {
+                    var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(CreateDamageViewWithHitType_Postfix));
+                    harmony.Patch(basicFunctionDamageViewMethod, postfix: new HarmonyMethod(postfix));
+                }
+
                 // Patch BattleConditionController.Add for status effect announcements
                 var addConditionMethod = AccessTools.Method(typeof(BattleConditionController), "Add");
                 if (addConditionMethod != null)
@@ -106,7 +151,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[BattleMessage] Could not find StartPreeMptiveMes method");
+                    MelonLogger.Error("[BattleMessage] Could not find StartPreeMptiveMes method");
                 }
 
                 // Patch BattleController.StartEscape for escape announcements
@@ -118,13 +163,143 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[BattleMessage] Could not find StartEscape method");
+                    MelonLogger.Error("[BattleMessage] Could not find StartEscape method");
                 }
+
+                // Patch PoisonConditionFunction.GeneratePoisonDamage for poison damage source tracking
+                var poisonType = AccessTools.TypeByName("Il2CppLast.Battle.PoisonConditionFunction");
+                if (poisonType != null)
+                {
+                    var generatePoisonMethod = AccessTools.Method(poisonType, "GeneratePoisonDamage");
+                    if (generatePoisonMethod != null)
+                    {
+                        harmony.Patch(generatePoisonMethod,
+                            prefix: new HarmonyMethod(typeof(BattleMessagePatches), nameof(GeneratePoisonDamage_Prefix)),
+                            postfix: new HarmonyMethod(typeof(BattleMessagePatches), nameof(GeneratePoisonDamage_Postfix)));
+                    }
+                    else
+                    {
+                        MelonLogger.Error("[BattleMessage] Could not find GeneratePoisonDamage method");
+                    }
+                }
+                else
+                {
+                    MelonLogger.Error("[BattleMessage] Could not find PoisonConditionFunction type");
+                }
+
+                // Patch BattleCommandMessageController for system messages like "The party was defeated"
+                PatchBattleCommandMessage(harmony);
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[BattleMessage] Error applying patches: {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Finds a type by name across all loaded assemblies.
+        /// </summary>
+        private static Type FindType(string fullName)
+        {
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    foreach (var type in assembly.GetTypes())
+                    {
+                        if (type.FullName == fullName)
+                        {
+                            return type;
+                        }
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Patch BattleCommandMessageController.SetMessage for system messages like "The party was defeated".
+        /// </summary>
+        private static void PatchBattleCommandMessage(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                // KeyInput version (primary)
+                var keyInputType = FindType("Il2CppLast.UI.KeyInput.BattleCommandMessageController");
+                if (keyInputType != null)
+                {
+                    var setMessageMethod = AccessTools.Method(keyInputType, "SetMessage");
+                    if (setMessageMethod != null)
+                    {
+                        var postfix = typeof(BattleMessagePatches).GetMethod(
+                            nameof(SetMessage_Postfix), BindingFlags.Public | BindingFlags.Static);
+                        harmony.Patch(setMessageMethod, postfix: new HarmonyMethod(postfix));
+                    }
+                    else
+                    {
+                        MelonLogger.Error("[BattleMessage] KeyInput.BattleCommandMessageController.SetMessage method not found");
+                    }
+                }
+                else
+                {
+                    MelonLogger.Error("[BattleMessage] KeyInput.BattleCommandMessageController type not found");
+                }
+
+                // Touch version (SetSystemMessage)
+                var touchType = FindType("Il2CppLast.UI.Touch.BattleCommandMessageController");
+                if (touchType != null)
+                {
+                    var setSystemMsgMethod = AccessTools.Method(touchType, "SetSystemMessage");
+                    if (setSystemMsgMethod != null)
+                    {
+                        var postfix = typeof(BattleMessagePatches).GetMethod(
+                            nameof(SetMessage_Postfix), BindingFlags.Public | BindingFlags.Static);
+                        harmony.Patch(setSystemMsgMethod, postfix: new HarmonyMethod(postfix));
+                    }
+                    else
+                    {
+                        MelonLogger.Error("[BattleMessage] Touch.BattleCommandMessageController.SetSystemMessage method not found");
+                    }
+                }
+                else
+                {
+                    MelonLogger.Error("[BattleMessage] Touch.BattleCommandMessageController type not found");
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Postfix for BattleCommandMessageController.SetMessage/SetSystemMessage.
+        /// Announces battle messages including "The party was defeated".
+        /// </summary>
+        public static void SetMessage_Postfix(object __0)
+        {
+            try
+            {
+                // __0 is the message string (using __0 to avoid IL2CPP string param crash)
+                string message = __0?.ToString();
+                if (string.IsNullOrEmpty(message)) return;
+
+                // Deduplicate
+                if (message == lastBattleCommandMessage) return;
+                lastBattleCommandMessage = message;
+
+                // Clean up the message
+                string cleanMessage = TextUtils.StripIconMarkup(message);
+                cleanMessage = cleanMessage.Replace("\n", " ").Replace("\r", " ").Trim();
+                while (cleanMessage.Contains("  "))
+                    cleanMessage = cleanMessage.Replace("  ", " ");
+
+                if (string.IsNullOrEmpty(cleanMessage)) return;
+
+                // Use interrupt for defeat message
+                bool isDefeatMessage = cleanMessage.Contains("defeated", StringComparison.OrdinalIgnoreCase);
+
+                FFII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: isDefeatMessage);
+            }
+            catch { }
         }
 
         #region CreateActFunction - Action Announcements
@@ -168,15 +343,12 @@ namespace FFII_ScreenReader.Patches
 
                 // Use object-based deduplication so different enemies with same name
                 // attacking in sequence are both announced (each has unique BattleActData)
-                if (AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_BATTLE_ACTION, battleActData))
+                if (AnnouncementDeduplicator.ShouldAnnounce(AnnouncementContexts.BATTLE_ACTION, battleActData))
                 {
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in CreateActFunction patch: {ex.Message}");
-            }
+            catch { }
         }
 
         private static string GetActorName(BattleActData battleActData)
@@ -209,10 +381,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error getting actor name: {ex.Message}");
-            }
+            catch { }
             return null;
         }
 
@@ -271,10 +440,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error getting action name: {ex.Message}");
-            }
+            catch { }
             return null;
         }
 
@@ -297,10 +463,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error getting item name: {ex.Message}");
-            }
+            catch { }
             return null;
         }
 
@@ -309,8 +472,102 @@ namespace FFII_ScreenReader.Patches
         #region CreateDamageView - Damage/Healing Announcements
 
         /// <summary>
-        /// Postfix for static BattleUtility.CreateDamageView - handles both damage and healing display.
+        /// Helper method to get the target name from BattleUnitData.
+        /// </summary>
+        private static string GetTargetName(BattleUnitData targetUnitData)
+        {
+            string targetName = "Unknown";
+            var playerData = targetUnitData.TryCast<BattlePlayerData>();
+            if (playerData?.ownedCharacterData != null)
+            {
+                targetName = playerData.ownedCharacterData.Name;
+            }
+            else
+            {
+                var enemyData = targetUnitData.TryCast<BattleEnemyData>();
+                if (enemyData != null)
+                {
+                    string mesIdName = enemyData.GetMesIdName();
+                    var messageManager = MessageManager.Instance;
+                    if (messageManager != null && !string.IsNullOrEmpty(mesIdName))
+                    {
+                        string localizedName = messageManager.GetMessage(mesIdName);
+                        if (!string.IsNullOrEmpty(localizedName))
+                            targetName = localizedName;
+                    }
+                }
+            }
+            return targetName;
+        }
+
+        /// <summary>
+        /// Tracks recently announced damage to avoid duplicates from both patches.
+        /// Key: "targetName:value:type" where type is "damage", "hp", or "mp"
+        /// </summary>
+        private static string lastDamageAnnouncement = null;
+        private static DateTime lastDamageTime = DateTime.MinValue;
+        private const int DAMAGE_DEDUPE_MS = 100;
+
+        /// <summary>
+        /// Postfix for BattleBasicFunction.CreateDamageView with HitType parameter.
+        /// This distinguishes HP recovery (HitType.Recovery=4) from MP recovery (HitType.MPRecovery=6).
+        /// </summary>
+        public static void CreateDamageViewWithHitType_Postfix(BattleUnitData data, int value, HitType hitType, bool isRecovery)
+        {
+            try
+            {
+                if (data == null) return;
+
+                string targetName = GetTargetName(data);
+                var damageSource = ConsumeDamageSource();
+
+                string message;
+                string dedupeKey;
+
+                if (hitType == HitType.Miss || value == 0)
+                {
+                    message = $"{targetName}: Miss";
+                    dedupeKey = $"{targetName}:miss";
+                }
+                else if (hitType == HitType.MPRecovery)
+                {
+                    message = $"{targetName}: Recovered {value} MP";
+                    dedupeKey = $"{targetName}:{value}:mp";
+                }
+                else if (isRecovery || hitType == HitType.Recovery)
+                {
+                    message = $"{targetName}: Recovered {value} HP";
+                    dedupeKey = $"{targetName}:{value}:hp";
+                }
+                else if (!string.IsNullOrEmpty(damageSource))
+                {
+                    message = $"{damageSource}: {targetName}: {value} damage";
+                    dedupeKey = $"{targetName}:{value}:damage:{damageSource}";
+                }
+                else
+                {
+                    message = $"{targetName}: {value} damage";
+                    dedupeKey = $"{targetName}:{value}:damage";
+                }
+
+                // Deduplicate against both this patch and CreateDamageViewUtility_Postfix
+                var now = DateTime.UtcNow;
+                if (dedupeKey == lastDamageAnnouncement && (now - lastDamageTime).TotalMilliseconds < DAMAGE_DEDUPE_MS)
+                {
+                    return;
+                }
+                lastDamageAnnouncement = dedupeKey;
+                lastDamageTime = now;
+
+                FFII_ScreenReaderMod.SpeakText(message, interrupt: false);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Postfix for static BattleUtility.CreateDamageView - handles damage display only.
         /// Signature: CreateDamageView(BattleUnitData targetUnitData, int damage, bool isRecovery, bool isMiss, bool isPlaySe)
+        /// Note: Recovery is handled by CreateDamageViewWithHitType_Postfix which has HitType for HP/MP distinction.
         /// </summary>
         public static void CreateDamageViewUtility_Postfix(BattleUnitData targetUnitData, int damage, bool isRecovery, bool isMiss)
         {
@@ -318,52 +575,46 @@ namespace FFII_ScreenReader.Patches
             {
                 if (targetUnitData == null) return;
 
-                string targetName = "Unknown";
+                // Skip recovery - let CreateDamageViewWithHitType_Postfix handle it
+                // since it has the HitType parameter for HP/MP distinction
+                if (isRecovery) return;
 
-                var playerData = targetUnitData.TryCast<BattlePlayerData>();
-                if (playerData?.ownedCharacterData != null)
-                {
-                    targetName = playerData.ownedCharacterData.Name;
-                }
-                else
-                {
-                    var enemyData = targetUnitData.TryCast<BattleEnemyData>();
-                    if (enemyData != null)
-                    {
-                        string mesIdName = enemyData.GetMesIdName();
-                        var messageManager = MessageManager.Instance;
-                        if (messageManager != null && !string.IsNullOrEmpty(mesIdName))
-                        {
-                            string localizedName = messageManager.GetMessage(mesIdName);
-                            if (!string.IsNullOrEmpty(localizedName))
-                            {
-                                targetName = localizedName;
-                            }
-                        }
-                    }
-                }
+                string targetName = GetTargetName(targetUnitData);
+
+                // Check for damage source (e.g., "Poison" from status effects)
+                var damageSource = ConsumeDamageSource();
 
                 string message;
+                string dedupeKey;
                 if (isMiss || damage == 0)
                 {
                     message = $"{targetName}: Miss";
+                    dedupeKey = $"{targetName}:miss";
                 }
-                else if (isRecovery)
+                else if (!string.IsNullOrEmpty(damageSource))
                 {
-                    message = $"{targetName}: Recovered {damage} HP";
+                    message = $"{damageSource}: {targetName}: {damage} damage";
+                    dedupeKey = $"{targetName}:{damage}:damage:{damageSource}";
                 }
                 else
                 {
                     message = $"{targetName}: {damage} damage";
+                    dedupeKey = $"{targetName}:{damage}:damage";
                 }
+
+                // Deduplicate against CreateDamageViewWithHitType_Postfix
+                var now = DateTime.UtcNow;
+                if (dedupeKey == lastDamageAnnouncement && (now - lastDamageTime).TotalMilliseconds < DAMAGE_DEDUPE_MS)
+                {
+                    return;
+                }
+                lastDamageAnnouncement = dedupeKey;
+                lastDamageTime = now;
 
                 // Damage/healing doesn't interrupt - queues after action announcement
                 FFII_ScreenReaderMod.SpeakText(message, interrupt: false);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in CreateDamageViewUtility patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -452,15 +703,12 @@ namespace FFII_ScreenReader.Patches
                 string announcement = $"{targetName}: {conditionName}";
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_BATTLE_CONDITION, announcement)) return;
+                if (!ShouldAnnounce(AnnouncementContexts.BATTLE_CONDITION, announcement)) return;
 
                 // Status doesn't interrupt
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in BattleConditionController.Add patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -508,10 +756,7 @@ namespace FFII_ScreenReader.Patches
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[BattleMessage] Could not get preemptive state: {ex.Message}");
-                }
+                catch { }
 
                 // Avoid repeat announcements
                 if (preemptiveState == lastPreemptiveState && preemptiveState == 0)
@@ -520,12 +765,12 @@ namespace FFII_ScreenReader.Patches
 
                 string announcement = preemptiveState switch
                 {
-                    1 => "Preemptive strike!",      // PreeMptive
-                    2 => "Back attack!",            // BackAttack
-                    3 => "Enemy preemptive!",      // EnemyPreeMptive
-                    4 => "Enemy side attack!",     // EnemySideAttack
-                    5 => "Side attack!",           // SideAttack
-                    _ => null                       // Normal (0) or Non (-1) - no announcement
+                    FF2Constants.BattleStartStates.STATE_PREEMPTIVE => "Preemptive strike!",
+                    FF2Constants.BattleStartStates.STATE_BACK_ATTACK => "Back attack!",
+                    FF2Constants.BattleStartStates.STATE_ENEMY_PREEMPTIVE => "Enemy preemptive!",
+                    FF2Constants.BattleStartStates.STATE_ENEMY_SIDE_ATTACK => "Enemy side attack!",
+                    FF2Constants.BattleStartStates.STATE_SIDE_ATTACK => "Side attack!",
+                    _ => null
                 };
 
                 if (!string.IsNullOrEmpty(announcement))
@@ -533,10 +778,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in StartPreeMptiveMes patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -553,10 +795,28 @@ namespace FFII_ScreenReader.Patches
                 string announcement = "Party escaped!";
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in StartEscape patch: {ex.Message}");
-            }
+            catch { }
+        }
+
+        #endregion
+
+        #region GeneratePoisonDamage - Poison Source Tracking
+
+        /// <summary>
+        /// Prefix for PoisonConditionFunction.GeneratePoisonDamage - sets damage source to "Poison".
+        /// </summary>
+        public static void GeneratePoisonDamage_Prefix()
+        {
+            SetDamageSource("Poison");
+        }
+
+        /// <summary>
+        /// Postfix for PoisonConditionFunction.GeneratePoisonDamage - clears damage source if not consumed.
+        /// </summary>
+        public static void GeneratePoisonDamage_Postfix()
+        {
+            // Clear in case CreateDamageView wasn't called (e.g., target died)
+            pendingDamageSource = null;
         }
 
         #endregion
@@ -568,6 +828,7 @@ namespace FFII_ScreenReader.Patches
         {
             GlobalBattleMessageTracker.Reset();
             lastPreemptiveState = 0;
+            lastBattleCommandMessage = "";
         }
     }
 }

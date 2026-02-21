@@ -93,6 +93,46 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
+        /// Gets the last announced string for a context without updating it.
+        /// </summary>
+        public static string GetLastString(string context)
+        {
+            return _lastStrings.TryGetValue(context, out var last) ? last : null;
+        }
+
+        /// <summary>
+        /// Gets the last announced index for a context without updating it.
+        /// </summary>
+        public static int GetLastIndex(string context)
+        {
+            return _lastInts.TryGetValue(context, out var last) ? last : -1;
+        }
+
+        /// <summary>
+        /// Convenience: checks dedup and speaks if new. Combines the common two-line pattern.
+        /// Returns true if the announcement was made.
+        /// </summary>
+        public static bool AnnounceIfNew(string context, string text, bool interrupt = true)
+        {
+            if (!ShouldAnnounce(context, text))
+                return false;
+            FFII_ScreenReader.Core.FFII_ScreenReaderMod.SpeakText(text, interrupt);
+            return true;
+        }
+
+        /// <summary>
+        /// Convenience: checks dedup with index+text and speaks if new.
+        /// Returns true if the announcement was made.
+        /// </summary>
+        public static bool AnnounceIfNew(string context, int index, string text, bool interrupt = true)
+        {
+            if (!ShouldAnnounce(context, index, text))
+                return false;
+            FFII_ScreenReader.Core.FFII_ScreenReaderMod.SpeakText(text, interrupt);
+            return true;
+        }
+
+        /// <summary>
         /// Resets tracking for a specific context.
         /// Call this when a menu opens/closes or state changes.
         /// </summary>
@@ -124,26 +164,5 @@ namespace FFII_ScreenReader.Utils
             _lastInts.Clear();
             _lastObjects.Clear();
         }
-
-        #region Context Constants
-        // Battle contexts
-        public const string CONTEXT_BATTLE_ACTION = "BattleAction";  // Object-based: per-actor action deduplication
-        public const string CONTEXT_BATTLE_ITEM = "BattleItem.Selection";
-        public const string CONTEXT_BATTLE_MAGIC = "BattleMagic.Selection";
-        public const string CONTEXT_BATTLE_MESSAGE = "BattleMessage.Action";
-        public const string CONTEXT_BATTLE_CONDITION = "BattleMessage.Condition";
-
-        // Menu contexts
-        public const string CONTEXT_EQUIP_MENU = "EquipMenu.Selection";
-        public const string CONTEXT_ITEM_MENU = "ItemMenu.Selection";
-        public const string CONTEXT_STATUS_MENU = "StatusMenu.Selection";
-        public const string CONTEXT_SHOP_ITEM = "Shop.Item";
-        public const string CONTEXT_SHOP_QUANTITY = "Shop.Quantity";
-
-        // Keyword contexts
-        public const string CONTEXT_KEYWORD_COMMAND = "Keyword.Command";
-        public const string CONTEXT_KEYWORD_WORD = "Keyword.Word";
-        public const string CONTEXT_WORDS_MENU = "WordsMenu.Selection";
-        #endregion
     }
 }

@@ -111,10 +111,7 @@ namespace FFII_ScreenReader.Patches
                 string announcement = $"{characterName}'s turn";
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SetCommandData patch: {ex.Message}");
-            }
+            catch { }
         }
 
         public static void ResetTurnState()
@@ -165,10 +162,7 @@ namespace FFII_ScreenReader.Patches
                 // Use delayed speech - allows target selection to activate before speaking
                 CoroutineManager.StartManaged(DelayedCommandSpeech(commandName));
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SetCursor patch: {ex.Message}");
-            }
+            catch { }
         }
 
         private static IEnumerator DelayedCommandSpeech(string text)
@@ -201,10 +195,7 @@ namespace FFII_ScreenReader.Patches
             {
                 BattleTargetPatches.SetTargetSelectionActive(isShow);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowWindow patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -225,10 +216,7 @@ namespace FFII_ScreenReader.Patches
             {
                 BattleTargetPatches.AnnouncePlayerTarget(list, index);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SelectContent(Player) patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -249,10 +237,7 @@ namespace FFII_ScreenReader.Patches
             {
                 BattleTargetPatches.AnnounceEnemyTarget(list, index);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SelectContent(Enemy) patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -264,19 +249,16 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleCommandState
     {
-        /// <summary>
-        /// True when battle command menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_COMMAND);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_COMMAND);
 
-        /// <summary>
-        /// Called when battle command menu activates.
-        /// Clears other menu states to prevent conflicts.
-        /// </summary>
-        public static void SetActive()
+        static BattleCommandState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_COMMAND);
+            _helper.RegisterResetHandler();
         }
+
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
 
         /// <summary>
         /// Check if GenericCursor announcements should be suppressed.
@@ -303,13 +285,7 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        /// <summary>
-        /// Clear state when battle command menu closes.
-        /// </summary>
-        public static void ClearState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_COMMAND);
-        }
+        public static void ClearState() => _helper.IsActive = false;
     }
 
     /// <summary>
@@ -445,10 +421,7 @@ namespace FFII_ScreenReader.Patches
                 string announcement = $"{name}: HP {currentHp}/{maxHp}, MP {currentMp}/{maxMp}";
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error announcing player target: {ex.Message}");
-            }
+            catch { }
         }
 
         public static void AnnounceEnemyTarget(Il2CppSystem.Collections.Generic.IEnumerable<BattleEnemyData> list, int index)
@@ -535,10 +508,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error announcing enemy target: {ex.Message}");
-            }
+            catch { }
         }
     }
 }

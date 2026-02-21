@@ -32,6 +32,7 @@ namespace FFII_ScreenReader.Field
         private EntityCategory currentCategory = EntityCategory.All;
         private List<NavigableEntity> filteredEntities = new List<NavigableEntity>();
         private PathfindingFilter pathfindingFilter = new PathfindingFilter();
+        private ToLayerFilter toLayerFilter = new ToLayerFilter();
 
         // Incremental scanning: map FieldEntity to its NavigableEntity conversion
         // This avoids re-converting the same entities every scan
@@ -50,6 +51,23 @@ namespace FFII_ScreenReader.Field
         {
             get => pathfindingFilter.IsEnabled;
             set => pathfindingFilter.IsEnabled = value;
+        }
+
+        /// <summary>
+        /// Whether to filter out ToLayer (layer transition) entities.
+        /// When enabled, hides layer transitions from the navigation list.
+        /// </summary>
+        public bool FilterToLayer
+        {
+            get => toLayerFilter.IsEnabled;
+            set
+            {
+                if (toLayerFilter.IsEnabled != value)
+                {
+                    toLayerFilter.IsEnabled = value;
+                    ApplyFilter();
+                }
+            }
         }
 
         /// <summary>
@@ -234,7 +252,6 @@ namespace FFII_ScreenReader.Field
         public void ForceRescan()
         {
             entityMap.Clear();
-            loggedEntityTypes.Clear(); // Clear debug log tracking for fresh output
             ScanEntities();
         }
 
@@ -252,11 +269,20 @@ namespace FFII_ScreenReader.Field
                 filteredEntities = entities.Where(e => e.Category == currentCategory).ToList();
             }
 
-            // Sort by distance from player
-            var playerPos = GetPlayerPosition();
-            if (playerPos.HasValue)
+            // Sort by distance from player using helper
+            var playerPos = PlayerPositionHelper.GetLocalPosition();
+            if (playerPos != Vector3.zero)
             {
-                filteredEntities = filteredEntities.OrderBy(e => Vector3.Distance(e.Position, playerPos.Value)).ToList();
+                filteredEntities = CollectionHelper.SortByDistance(
+                    filteredEntities,
+                    playerPos,
+                    e => e.Position);
+            }
+
+            // Apply ToLayer filter if enabled
+            if (toLayerFilter.IsEnabled)
+            {
+                filteredEntities = filteredEntities.Where(e => toLayerFilter.PassesFilter(e, null)).ToList();
             }
 
             // Just clamp index to valid bounds - don't try to restore previous selection
@@ -265,49 +291,6 @@ namespace FFII_ScreenReader.Field
             {
                 currentIndex = 0;
             }
-        }
-
-        /// <summary>
-        /// Gets the current player position.
-        /// </summary>
-        private Vector3? GetPlayerPosition()
-        {
-            try
-            {
-                // Use FieldPlayerController
-                var playerController = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>();
-                if (playerController?.fieldPlayer != null)
-                {
-                    // Use localPosition for pathfinding
-                    return playerController.fieldPlayer.transform.localPosition;
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        /// <summary>
-        /// Gets the FieldPlayer from the FieldController using reflection.
-        /// The player field is private in the main game's FieldController.
-        /// </summary>
-        private FieldPlayer GetFieldPlayer()
-        {
-            try
-            {
-                var fieldMap = GameObjectCache.Get<FieldMap>();
-                if (fieldMap?.fieldController == null)
-                    return null;
-
-                // Access private 'player' field using reflection
-                var fieldType = fieldMap.fieldController.GetType();
-                var playerField = fieldType.GetField("player", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                if (playerField != null)
-                {
-                    return playerField.GetValue(fieldMap.fieldController) as FieldPlayer;
-                }
-            }
-            catch { }
-            return null;
         }
 
         /// <summary>
@@ -394,10 +377,6 @@ namespace FFII_ScreenReader.Field
             currentIndex = startIndex;
         }
 
-        // Debug: track logged entity types to avoid spam
-        private static HashSet<string> loggedEntityTypes = new HashSet<string>();
-        private static bool vehicleDebugEnabled = false;
-
         /// <summary>
         /// Converts a FieldEntity to a NavigableEntity.
         /// Order matters - check specific types before generic ones.
@@ -476,11 +455,7 @@ namespace FFII_ScreenReader.Field
             }
             catch { }
 
-            // 1. Check for MoveArea FIRST - these are area boundaries, not map exits
-            if (goNameLower.Contains("movearea"))
-                return new EventEntity(fieldEntity, position, "Area Boundary", "AreaBoundary");
-
-            // 2. Check for map exit/door (GotoMap and other exit types)
+            // 1. Check for map exit/door (GotoMap and other exit types)
             if (typeName.Contains("MapChange") || typeName.Contains("Door") ||
                 typeName.Contains("Exit") || typeName.Contains("Gate") ||
                 typeName.Contains("Warp") || typeName.Contains("Transfer") ||
@@ -494,7 +469,7 @@ namespace FFII_ScreenReader.Field
                 return new MapExitEntity(fieldEntity, position, "Exit", destMapId, destName);
             }
 
-            // 3. Check for treasure chest - first by type cast (most reliable), then by name
+            // 2. Check for treasure chest - first by type cast (most reliable), then by name
             var treasureBox = fieldEntity.TryCast<FieldTresureBox>();
             if (treasureBox != null)
             {
@@ -511,11 +486,11 @@ namespace FFII_ScreenReader.Field
                 return new TreasureChestEntity(fieldEntity, position, name, isOpened);
             }
 
-            // 4. Check for save point
+            // 3. Check for save point
             if (typeName.Contains("Save") || goNameLower.Contains("save"))
                 return new SavePointEntity(fieldEntity, position, "Save Point");
 
-            // 5. Check for transportation/vehicles (string-based fallback)
+            // 4. Check for transportation/vehicles (string-based fallback)
             if (typeName.Contains("Transport") || goNameLower.Contains("ship") ||
                 goNameLower.Contains("canoe") || goNameLower.Contains("airship") ||
                 goNameLower.Contains("chocobo"))
@@ -524,45 +499,39 @@ namespace FFII_ScreenReader.Field
                 return new VehicleEntity(fieldEntity, position, vehicleName, 0);
             }
 
-            // 6. Check for SavePointEventEntity by type casting
+            // 5. Check for SavePointEventEntity by type casting
             var savePointEvent = fieldEntity.TryCast<SavePointEventEntity>();
             if (savePointEvent != null)
                 return new SavePointEntity(fieldEntity, position, "Save Point");
 
-            // 7. Check for EventTriggerEntity by type casting
+            // 6. Check for EventTriggerEntity by type casting
             var eventTrigger = fieldEntity.TryCast<EventTriggerEntity>();
             if (eventTrigger != null)
             {
-                string entityName = GetEntityNameFromProperty(fieldEntity);
-                if (string.IsNullOrEmpty(entityName))
-                    entityName = CleanObjectName(goName, "Event");
-                return new EventEntity(fieldEntity, position, entityName, "Event");
+                var (eventRaw, eventDisplay) = GetEntityNameWithRaw(fieldEntity);
+                // Use raw name for filtering (Japanese), fallback to goName if null
+                string filterName = eventRaw ?? goName;
+
+                if (IsPlaceholderEntity(filterName))
+                    return null;
+                // Use display name for entity, fallback to cleaned goName
+                if (string.IsNullOrEmpty(eventDisplay))
+                    eventDisplay = CleanObjectName(goName, "Event");
+                return new EventEntity(fieldEntity, position, eventDisplay, "Event");
             }
 
-            // 8. Check for FieldNonPlayer (NPCs) by type casting - most reliable
+            // 7. Check for FieldNonPlayer (NPCs) by type casting - most reliable
             var fieldNonPlayer = fieldEntity.TryCast<FieldNonPlayer>();
             if (fieldNonPlayer != null)
             {
-                string name = GetNpcDisplayName(fieldEntity, goName);
-                bool isShop = goNameLower.Contains("shop") || goNameLower.Contains("merchant");
-                return new NPCEntity(fieldEntity, position, name, "", isShop);
-            }
+                var (npcRaw, npcDisplay) = GetNpcDisplayNameWithRaw(fieldEntity, goName);
+                // Use goName for filtering when raw name is null/empty (matches FF3)
+                string filterName = string.IsNullOrWhiteSpace(npcRaw) || npcRaw == "NPC" ? goName : npcRaw;
 
-            // 9. Check for NPC by GameObject name "FieldNpc" (fallback)
-            if (goNameLower.Contains("fieldnpc"))
-            {
-                string name = GetNpcDisplayName(fieldEntity, goName);
+                if (IsPlaceholderEntity(filterName))
+                    return null;
                 bool isShop = goNameLower.Contains("shop") || goNameLower.Contains("merchant");
-                return new NPCEntity(fieldEntity, position, name, "", isShop);
-            }
-
-            // 10. Check for NPC/character by type name (fallback)
-            if ((typeName.Contains("Chara") || typeName.Contains("Npc") || typeName.Contains("NPC"))
-                && !typeName.Contains("Player") && !typeName.Contains("Resident"))
-            {
-                string name = GetNpcDisplayName(fieldEntity, goName);
-                bool isShop = goNameLower.Contains("shop") || goNameLower.Contains("merchant");
-                return new NPCEntity(fieldEntity, position, name, "", isShop);
+                return new NPCEntity(fieldEntity, position, npcDisplay, "", isShop);
             }
 
             // Skip visual effects and non-interactive objects
@@ -571,21 +540,118 @@ namespace FFII_ScreenReader.Field
                 goNameLower.Contains("opentrigger"))
                 return null;
 
-            // 11. Check for interactive objects (generic fallback)
+            // Layer transition detection — create EventEntity with "ToLayer" type so it can be filtered
+            if (goNameLower.Contains("tolayer"))
+            {
+                string entityName = GetEntityNameFromProperty(fieldEntity);
+                if (string.IsNullOrEmpty(entityName)) entityName = goName;
+                return new EventEntity(fieldEntity, position, entityName, "ToLayer");
+            }
+
+            // 8. Check for interactive objects (generic fallback)
             var interactiveEntity = fieldEntity.TryCast<IInteractiveEntity>();
             if (interactiveEntity != null)
             {
-                string entityName = GetEntityNameFromProperty(fieldEntity);
-                if (string.IsNullOrEmpty(entityName))
-                    entityName = CleanObjectName(goName, "Interactive Object");
-                return new EventEntity(fieldEntity, position, entityName, "Interactive");
+                var (intRaw, intDisplay) = GetEntityNameWithRaw(fieldEntity);
+                // Use raw name for filtering
+                string filterName = intRaw ?? goName;
+
+                if (IsPlaceholderEntity(filterName))
+                    return null;
+                // Use display name, fallback to cleaned goName
+                if (string.IsNullOrEmpty(intDisplay))
+                    intDisplay = CleanObjectName(goName, "Interactive Object");
+                return new EventEntity(fieldEntity, position, intDisplay, "Interactive");
             }
 
-            // Include ALL remaining entities as generic events
-            string fallbackName = GetEntityNameFromProperty(fieldEntity);
-            if (string.IsNullOrEmpty(fallbackName))
-                fallbackName = CleanObjectName(goName, typeName);
-            return new EventEntity(fieldEntity, position, fallbackName, "Generic");
+            // Skip unidentifiable entities (match FF3)
+            return null;
+        }
+
+        /// <summary>
+        /// Checks if an entity should be filtered as a placeholder.
+        /// Uses FF3-style simple exact-match filtering - easy to add/remove entries.
+        /// IMPORTANT: Pass the raw Japanese name (property.Name) for filtering to work.
+        /// </summary>
+        /// <param name="rawEntityName">The raw Japanese property name</param>
+        private static bool IsPlaceholderEntity(string rawEntityName)
+        {
+            // Filter empty names (over-filter rather than under-filter)
+            if (string.IsNullOrEmpty(rawEntityName))
+                return true;
+
+            // Exact match filters - Japanese raw names
+            // Add/remove entries here as needed
+            string[] exactFilters = new[]
+            {
+                // Vehicle spawn points
+                "飛空艇",     // Airship
+                "大戦艦",     // Dreadnought
+
+                // Town/village location markers (duplicated by map exits)
+                "アルテア",       // Altair
+                "ガテア",         // Gatrea
+                "パルム",         // Paloom
+                "ポフト",         // Poft
+                "サラマンド",     // Salamand
+                "バフスク",       // Bafsk
+                "フィン",         // Fynn
+                "ミシディア",     // Mysidia
+                "ディスト",       // Deist
+                "ジェイド",       // Jade
+                "パンデモニウム", // Pandaemonium
+                "ガデアの村",     // Gatrea Village
+
+                // Castle/dungeon location markers (duplicated by map exits)
+                "カシュオーン城",   // Kashuan Castle
+                "ディストの城",     // Deist Castle
+                "パラメキア城",     // Palamecia Castle
+                "フィン城",         // Fynn Castle
+                "ミシディアの塔",   // Tower of Mysidia
+                "闘技場",           // Colosseum
+
+                // Zone markers (world map sub-regions)
+                "ミシディアA",
+                "ミシディアB",
+                "ミシディアC",
+            };
+
+            foreach (var filter in exactFilters)
+            {
+                if (rawEntityName == filter)
+                    return true;
+            }
+
+            // StartsWith filters - for names with variable suffixes
+            string[] startsWithFilters = new[]
+            {
+                "飛竜",       // Wyvern - matches 飛竜(sc_e_0080用) etc.
+            };
+
+            foreach (var prefix in startsWithFilters)
+            {
+                if (rawEntityName.StartsWith(prefix))
+                    return true;
+            }
+
+            // Pattern matching for event descriptions
+            if (rawEntityName.Contains("所持して通行すると発生"))  // Event triggers
+                return true;
+            if (rawEntityName.Contains("に行けない"))              // Access restrictions
+                return true;
+            if (rawEntityName.Contains("エフェクト") && rawEntityName.Contains("仮置き"))  // Effect placeholders
+                return true;
+
+            // Check goName patterns (for when property.Name is null and goName is used instead)
+            string nameLower = rawEntityName.ToLower();
+            if (nameLower.Contains("wyvern") || nameLower.Contains("wyrm") ||
+                nameLower.Contains("hiryu") ||      // Japanese: 飛竜 romanized
+                nameLower.Contains("airship") ||
+                nameLower.Contains("transport") ||
+                nameLower.Contains("movearea"))     // Area boundaries (event triggers)
+                return true;
+
+            return false;
         }
 
         /// <summary>
@@ -672,9 +738,11 @@ namespace FFII_ScreenReader.Field
 
         /// <summary>
         /// Gets the entity name from PropertyEntity.Name for event/interactive entities.
-        /// Falls back to trying to resolve via MessageManager if name looks like a message ID.
+        /// Returns both the raw name (for filtering) and display name (for speech).
+        /// Raw name is the original property name (Japanese), display name is localized/translated.
         /// </summary>
-        private string GetEntityNameFromProperty(FieldEntity fieldEntity)
+        /// <returns>Tuple of (raw name for filtering, display name for speech)</returns>
+        private (string raw, string display) GetEntityNameWithRaw(FieldEntity fieldEntity)
         {
             try
             {
@@ -682,53 +750,63 @@ namespace FFII_ScreenReader.Field
                 PropertyEntity property = fieldEntity.Property;
                 if (property == null)
                 {
-                    return null;
+                    return (null, null);
                 }
 
-                // Get the Name property
-                string name = property.Name;
-                if (string.IsNullOrWhiteSpace(name))
-                    return null;
+                // Get the Name property - this is the raw name for filtering
+                string rawName = property.Name;
+                if (string.IsNullOrWhiteSpace(rawName))
+                    return (null, null);
+
+                string displayName = rawName;
 
                 // Check if name looks like a message ID (e.g., starts with "mes_" or similar patterns)
-                if (name.StartsWith("mes_", StringComparison.OrdinalIgnoreCase) ||
-                    name.StartsWith("sys_", StringComparison.OrdinalIgnoreCase) ||
-                    name.StartsWith("field_", StringComparison.OrdinalIgnoreCase))
+                if (rawName.StartsWith("mes_", StringComparison.OrdinalIgnoreCase) ||
+                    rawName.StartsWith("sys_", StringComparison.OrdinalIgnoreCase) ||
+                    rawName.StartsWith("field_", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Try to resolve via MessageManager
+                    // Try to resolve via MessageManager for display
                     var messageManager = MessageManager.Instance;
                     if (messageManager != null)
                     {
-                        string localizedName = messageManager.GetMessage(name, false);
-                        if (!string.IsNullOrWhiteSpace(localizedName) && localizedName != name)
-                            return EntityTranslator.Translate(localizedName);
+                        string localizedName = messageManager.GetMessage(rawName, false);
+                        if (!string.IsNullOrWhiteSpace(localizedName) && localizedName != rawName)
+                            displayName = localizedName;
                     }
                 }
-
                 // If name looks like a readable name (not a code), use it directly
-                if (!name.Contains("_") && !name.All(c => char.IsLower(c)))
+                else if (!rawName.Contains("_") && !rawName.All(c => char.IsLower(c)))
                 {
-                    return name;
+                    displayName = rawName;
                 }
-
                 // Try to format underscore-separated names into readable form
-                // e.g., "recovery_spring" -> "Recovery Spring"
-                if (name.Contains("_"))
+                else if (rawName.Contains("_"))
                 {
-                    string formatted = FormatAssetNameAsReadable(name);
+                    string formatted = FormatAssetNameAsReadable(rawName);
                     if (!string.IsNullOrEmpty(formatted))
-                    {
-                        return EntityTranslator.Translate(formatted);
-                    }
+                        displayName = formatted;
                 }
 
-                return EntityTranslator.Translate(name);
+                // Translate display name for speech
+                displayName = EntityTranslator.Translate(displayName);
+
+                return (rawName, displayName);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[EntityScanner] Error getting entity name: {ex.Message}");
-                return null;
+                return (null, null);
             }
+        }
+
+        /// <summary>
+        /// Gets the entity name from PropertyEntity.Name for event/interactive entities.
+        /// Falls back to trying to resolve via MessageManager if name looks like a message ID.
+        /// Returns raw (untranslated) name for filtering - caller should translate for display.
+        /// </summary>
+        private string GetEntityNameFromProperty(FieldEntity fieldEntity)
+        {
+            var (raw, display) = GetEntityNameWithRaw(fieldEntity);
+            return raw;  // Return raw name for backward compatibility
         }
 
         /// <summary>
@@ -885,14 +963,31 @@ namespace FFII_ScreenReader.Field
         /// <summary>
         /// Gets the display name for an NPC entity.
         /// Tries to access Property object for NPC data, falls back to generic name.
+        /// Returns raw (untranslated) name for filtering - caller should translate for display.
         /// </summary>
         private string GetNpcDisplayName(FieldEntity fieldEntity, string gameObjectName)
         {
+            var (raw, display) = GetNpcDisplayNameWithRaw(fieldEntity, gameObjectName);
+            return raw;  // Return raw name for backward compatibility
+        }
+
+        /// <summary>
+        /// Gets the NPC name for both filtering (raw) and display (translated).
+        /// Raw name is from property.Name (Japanese) for filtering.
+        /// Display name is from characterName/npcName fields (may be localized).
+        /// </summary>
+        /// <returns>Tuple of (raw name for filtering, display name for speech)</returns>
+        private (string raw, string display) GetNpcDisplayNameWithRaw(FieldEntity fieldEntity, string gameObjectName)
+        {
             try
             {
-                var entityType = fieldEntity.GetType();
+                // FIRST: Get raw name from property.Name for filtering
+                PropertyEntity property = fieldEntity.Property;
+                string rawName = property?.Name;
 
-                // Try to access the Property object which contains NPC configuration
+                // SECOND: Get display name from characterName/npcName (may be localized)
+                string displayName = null;
+                var entityType = fieldEntity.GetType();
                 var propertyProp = entityType.GetProperty("Property");
                 if (propertyProp != null)
                 {
@@ -901,7 +996,7 @@ namespace FFII_ScreenReader.Field
                     {
                         var propType = propertyObj.GetType();
 
-                        // Try to get character/NPC name from Property
+                        // Try to get character/NPC name for DISPLAY only
                         string[] nameProps = { "characterName", "npcName", "displayName", "Name", "name" };
                         foreach (var nameProp in nameProps)
                         {
@@ -910,45 +1005,63 @@ namespace FFII_ScreenReader.Field
                             {
                                 string name = innerProp.GetValue(propertyObj) as string;
                                 if (!string.IsNullOrWhiteSpace(name) && !name.Contains("Clone"))
-                                    return EntityTranslator.Translate(name);
+                                {
+                                    displayName = EntityTranslator.Translate(name);
+                                    break;
+                                }
                             }
                         }
 
-                        // Try to get character ID from Property and resolve via MessageManager
-                        string[] idProps = { "characterId", "charaId", "npcId", "id" };
-                        foreach (var idPropName in idProps)
+                        // Fallback: character ID resolution for display
+                        if (string.IsNullOrEmpty(displayName))
                         {
-                            var idProp = propType.GetProperty(idPropName);
-                            if (idProp != null)
+                            string[] idProps = { "characterId", "charaId", "npcId", "id" };
+                            foreach (var idPropName in idProps)
                             {
-                                try
+                                var idProp = propType.GetProperty(idPropName);
+                                if (idProp != null)
                                 {
-                                    int charId = Convert.ToInt32(idProp.GetValue(propertyObj));
-                                    if (charId > 0)
+                                    try
                                     {
-                                        var messageManager = MessageManager.Instance;
-                                        if (messageManager != null)
+                                        int charId = Convert.ToInt32(idProp.GetValue(propertyObj));
+                                        if (charId > 0)
                                         {
-                                            string[] keyFormats = { $"chara_name_{charId:D4}", $"npc_name_{charId:D4}", $"character_{charId:D4}" };
-                                            foreach (var keyFormat in keyFormats)
+                                            var messageManager = MessageManager.Instance;
+                                            if (messageManager != null)
                                             {
-                                                string name = messageManager.GetMessage(keyFormat);
-                                                if (!string.IsNullOrEmpty(name))
-                                                    return EntityTranslator.Translate(name);
+                                                string[] keyFormats = { $"chara_name_{charId:D4}", $"npc_name_{charId:D4}", $"character_{charId:D4}" };
+                                                foreach (var keyFormat in keyFormats)
+                                                {
+                                                    string name = messageManager.GetMessage(keyFormat);
+                                                    if (!string.IsNullOrEmpty(name))
+                                                    {
+                                                        displayName = EntityTranslator.Translate(name);
+                                                        break;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
+                                    catch { }
                                 }
-                                catch { }
+                                if (!string.IsNullOrEmpty(displayName)) break;
                             }
                         }
                     }
                 }
-            }
-            catch { }
 
-            // Fallback to generic NPC (don't use GameObject name as it's just "FieldNpc(Clone)")
-            return "NPC";
+                // Fallbacks
+                if (string.IsNullOrWhiteSpace(rawName))
+                    rawName = "NPC";
+                if (string.IsNullOrEmpty(displayName))
+                    displayName = rawName != "NPC" ? EntityTranslator.Translate(rawName) : "NPC";
+
+                return (rawName, displayName);
+            }
+            catch
+            {
+                return ("NPC", "NPC");
+            }
         }
     }
 }

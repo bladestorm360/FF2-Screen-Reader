@@ -16,15 +16,17 @@ namespace FFII_ScreenReader.Core
 {
     /// <summary>
     /// Manages all keyboard input handling for the screen reader mod.
-    /// Uses Unity's legacy Input system for simplicity and reliability.
+    /// Uses KeyBindingRegistry for declarative, context-aware dispatch.
     /// </summary>
     public class InputManager : IDisposable
     {
         private readonly FFII_ScreenReaderMod mod;
+        private readonly KeyBindingRegistry registry = new KeyBindingRegistry();
 
         public InputManager(FFII_ScreenReaderMod mod)
         {
             this.mod = mod;
+            InitializeBindings();
         }
 
         /// <summary>
@@ -34,50 +36,170 @@ namespace FFII_ScreenReader.Core
         {
         }
 
+        private void RegisterFieldWithBattleFeedback(KeyCode key, KeyModifier modifier, Action action, string description)
+        {
+            registry.Register(key, modifier, KeyContext.Field, action, description);
+            registry.Register(key, modifier, KeyContext.Battle, NotAvailableInBattle, description + " (battle blocked)");
+        }
+
+        private static void NotAvailableInBattle()
+        {
+            FFII_ScreenReaderMod.SpeakText("Not available in battle", interrupt: true);
+        }
+
+        private void InitializeBindings()
+        {
+            // --- Status screen: navigation ---
+            registry.Register(KeyCode.UpArrow, KeyModifier.Ctrl, KeyContext.Status, StatusNavigationReader.JumpToTop, "Jump to first stat");
+            registry.Register(KeyCode.UpArrow, KeyModifier.Shift, KeyContext.Status, StatusNavigationReader.JumpToPreviousGroup, "Jump to previous stat group");
+            registry.Register(KeyCode.UpArrow, KeyModifier.None, KeyContext.Status, StatusNavigationReader.NavigatePrevious, "Previous stat");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.Status, StatusNavigationReader.JumpToBottom, "Jump to last stat");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Shift, KeyContext.Status, StatusNavigationReader.JumpToNextGroup, "Jump to next stat group");
+            registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.Status, StatusNavigationReader.NavigateNext, "Next stat");
+            registry.Register(KeyCode.R, KeyContext.Status, StatusNavigationReader.ReadCurrentStat, "Repeat current stat");
+
+            // --- Field: entity navigation (brackets + backslash) -- with battle feedback ---
+            RegisterFieldWithBattleFeedback(KeyCode.LeftBracket, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category");
+            RegisterFieldWithBattleFeedback(KeyCode.LeftBracket, KeyModifier.None, mod.CyclePrevious, "Previous entity");
+            RegisterFieldWithBattleFeedback(KeyCode.RightBracket, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category");
+            RegisterFieldWithBattleFeedback(KeyCode.RightBracket, KeyModifier.None, mod.CycleNext, "Next entity");
+            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter");
+            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter");
+            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.None, mod.AnnounceCurrentEntity, "Announce current entity");
+
+            // --- Field: alternate keys (J/K/L/P) -- with battle feedback ---
+            RegisterFieldWithBattleFeedback(KeyCode.J, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.J, KeyModifier.None, mod.CyclePrevious, "Previous entity (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.K, KeyModifier.None, mod.AnnounceEntityOnly, "Announce entity name (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.L, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.L, KeyModifier.None, mod.CycleNext, "Next entity (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.None, mod.AnnounceCurrentEntity, "Announce current entity (alt)");
+
+            // --- Field: waypoint keys ---
+            registry.Register(KeyCode.Comma, KeyModifier.Shift, KeyContext.Field, mod.WaypointCyclePreviousCategory, "Previous waypoint category");
+            registry.Register(KeyCode.Comma, KeyModifier.None, KeyContext.Field, mod.WaypointCyclePrevious, "Previous waypoint");
+            registry.Register(KeyCode.Period, KeyModifier.Ctrl, KeyContext.Field, mod.WaypointRename, "Rename waypoint");
+            registry.Register(KeyCode.Period, KeyModifier.Shift, KeyContext.Field, mod.WaypointCycleNextCategory, "Next waypoint category");
+            registry.Register(KeyCode.Period, KeyModifier.None, KeyContext.Field, mod.WaypointCycleNext, "Next waypoint");
+            registry.Register(KeyCode.Slash, KeyModifier.CtrlShift, KeyContext.Field, mod.WaypointClearAll, "Clear all waypoints for map");
+            registry.Register(KeyCode.Slash, KeyModifier.Ctrl, KeyContext.Field, mod.WaypointDelete, "Remove current waypoint");
+            registry.Register(KeyCode.Slash, KeyModifier.Shift, KeyContext.Field, mod.WaypointAdd, "Add waypoint with name");
+            registry.Register(KeyCode.Slash, KeyModifier.None, KeyContext.Field, mod.WaypointPathfind, "Pathfind to waypoint");
+
+            // --- Field: teleport (Ctrl+Arrow) ---
+            registry.Register(KeyCode.UpArrow, KeyModifier.Ctrl, KeyContext.Field, () => mod.TeleportInDirection(new Vector2(0, 16)), "Teleport north");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.Field, () => mod.TeleportInDirection(new Vector2(0, -16)), "Teleport south");
+            registry.Register(KeyCode.LeftArrow, KeyModifier.Ctrl, KeyContext.Field, () => mod.TeleportInDirection(new Vector2(-16, 0)), "Teleport west");
+            registry.Register(KeyCode.RightArrow, KeyModifier.Ctrl, KeyContext.Field, () => mod.TeleportInDirection(new Vector2(16, 0)), "Teleport east");
+
+            // --- Global: info/announcements ---
+            registry.Register(KeyCode.G, KeyContext.Global, GameInfoAnnouncer.AnnounceGilAmount, "Announce Gil");
+            registry.Register(KeyCode.M, KeyModifier.Shift, KeyContext.Global, mod.ToggleMapExitFilter, "Toggle map exit filter");
+            registry.Register(KeyCode.M, KeyModifier.None, KeyContext.Global, GameInfoAnnouncer.AnnounceCurrentMap, "Announce current map");
+            registry.Register(KeyCode.V, KeyContext.Global, AnnounceVehicleState, "Announce vehicle state");
+            registry.Register(KeyCode.I, KeyContext.Global, HandleItemDetailsKey, "Item details / config tooltip");
+
+            // --- Battle-only: character status ---
+            registry.Register(KeyCode.H, KeyContext.Battle, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
+
+            // --- Field-only toggles (blocked in battle with feedback) ---
+            RegisterFieldWithBattleFeedback(KeyCode.Quote, KeyModifier.None, mod.ToggleFootsteps, "Toggle footsteps");
+            RegisterFieldWithBattleFeedback(KeyCode.Semicolon, KeyModifier.None, mod.ToggleWallTones, "Toggle wall tones");
+            RegisterFieldWithBattleFeedback(KeyCode.Alpha9, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
+
+            // --- Field-only category shortcuts ---
+            RegisterFieldWithBattleFeedback(KeyCode.K, KeyModifier.Shift, mod.ResetToAllCategory, "Reset to All category");
+            RegisterFieldWithBattleFeedback(KeyCode.Equals, KeyModifier.None, mod.CycleNextCategory, "Next entity category (global)");
+            RegisterFieldWithBattleFeedback(KeyCode.Minus, KeyModifier.None, mod.CyclePreviousCategory, "Previous entity category (global)");
+
+            // --- Debug: dump untranslated entity names ---
+            registry.Register(KeyCode.Alpha0, KeyContext.Global, DumpUntranslatedEntityNames, "Dump untranslated entity names");
+
+            // Sort for correct modifier precedence
+            registry.FinalizeRegistration();
+        }
+
         /// <summary>
         /// Called each frame to check for mod hotkey input.
         /// Uses early exit when no key is pressed to minimize overhead.
         /// </summary>
         public void CheckInput()
         {
-            // Handle mod menu input first (consumes all input when open)
+            // Handle text input window first (consumes all input when open)
+            if (TextInputWindow.HandleInput())
+                return;
+
+            // Handle confirmation dialog (consumes all input when open)
+            if (ConfirmationDialog.HandleInput())
+                return;
+
+            // Handle mod menu input (consumes all input when open)
             if (ModMenu.HandleInput())
+                return;
+
+            if (!Input.anyKeyDown)
                 return;
 
             // F8 to open mod menu (only when not in battle)
             if (Input.GetKeyDown(KeyCode.F8))
             {
                 if (!FFII_ScreenReaderMod.IsInBattle)
-                {
                     ModMenu.Open();
-                }
                 else
-                {
                     FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
-                }
                 return;
             }
 
-            // F5 to toggle enemy HP display (only when not in battle)
-            if (Input.GetKeyDown(KeyCode.F5))
+            // Handle function keys (F1/F3/F5 -- special coroutine/toggle logic)
+            HandleFunctionKeyInput();
+
+            // Skip hotkeys when player is typing in a text field
+            if (IsInputFieldFocused())
+                return;
+
+            // Determine active context and modifiers
+            KeyContext activeContext = DetermineContext();
+            KeyModifier currentModifiers = GetCurrentModifiers();
+
+            // Dispatch all registered bindings
+            DispatchRegisteredBindings(activeContext, currentModifiers);
+        }
+
+        private KeyContext DetermineContext()
+        {
+            var tracker = StatusNavigationTracker.Instance;
+            if (tracker.IsNavigationActive && tracker.ValidateState())
+                return KeyContext.Status;
+
+            if (FFII_ScreenReaderMod.IsInBattle)
+                return KeyContext.Battle;
+
+            return KeyContext.Field;
+        }
+
+        private KeyModifier GetCurrentModifiers()
+        {
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+
+            if (ctrl && shift) return KeyModifier.CtrlShift;
+            if (ctrl) return KeyModifier.Ctrl;
+            if (shift) return KeyModifier.Shift;
+            return KeyModifier.None;
+        }
+
+        private void DispatchRegisteredBindings(KeyContext activeContext, KeyModifier currentModifiers)
+        {
+            foreach (var key in registry.RegisteredKeys)
             {
-                if (!FFII_ScreenReaderMod.IsInBattle)
-                {
-                    // Cycle HP display: 0→1→2→0 (Numbers→Percentage→Hidden→Numbers)
-                    int current = FFII_ScreenReaderMod.EnemyHPDisplay;
-                    int next = (current + 1) % 3;
-                    FFII_ScreenReaderMod.SetEnemyHPDisplay(next);
-
-                    string[] options = { "Numbers", "Percentage", "Hidden" };
-                    FFII_ScreenReaderMod.SpeakText($"Enemy HP: {options[next]}", interrupt: true);
-                }
-                else
-                {
-                    FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
-                }
-                return;
+                if (Input.GetKeyDown(key))
+                    registry.TryExecute(key, currentModifiers, activeContext);
             }
+        }
 
+        private void HandleFunctionKeyInput()
+        {
             // F1 toggles walk/run speed - announce after game processes it
             if (Input.GetKeyDown(KeyCode.F1))
             {
@@ -92,286 +214,49 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
-            // Early exit if no key pressed this frame
-            if (!Input.anyKeyDown)
-                return;
+            // F5 cycles enemy HP display (only when not in battle)
+            if (Input.GetKeyDown(KeyCode.F5))
+            {
+                if (!FFII_ScreenReaderMod.IsInBattle)
+                {
+                    int current = PreferencesManager.EnemyHPDisplay;
+                    int next = (current + 1) % 3;
+                    PreferencesManager.SetEnemyHPDisplay(next);
 
-            // Skip if an input field is focused
-            if (IsInputFieldFocused())
-                return;
-
-            // Get modifier state
-            bool shiftHeld = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-            bool ctrlHeld = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
-
-            // Status navigation keys (takes priority)
-            if (HandleStatusDetailsInput(shiftHeld, ctrlHeld))
-                return;
-
-            // Global hotkeys
-            HandleGlobalInput(shiftHeld, ctrlHeld);
-
-            // Field-specific hotkeys
-            HandleFieldInput(shiftHeld);
+                    string[] options = { "Numbers", "Percentage", "Hidden" };
+                    FFII_ScreenReaderMod.SpeakText($"Enemy HP: {options[next]}", interrupt: true);
+                }
+                else
+                {
+                    FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                }
+            }
         }
 
-        /// <summary>
-        /// Coroutine that announces walk/run state after game processes F1 key.
-        /// </summary>
-        private static IEnumerator AnnounceWalkRunState()
+        private void AnnounceVehicleState()
         {
-            // Wait 3 frames for game to fully process F1 and update dashFlag
-            yield return null; // Frame 1
-            yield return null; // Frame 2
-            yield return null; // Frame 3
+            if (!mod.EnsureFieldContext())
+                return;
 
             try
             {
-                // Read actual dash state from MoveStateHelper
-                bool isDashing = MoveStateHelper.GetDashFlag();
-                string state = isDashing ? "Run" : "Walk";
-                FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
+                int moveState = MoveStateHelper.GetCurrentMoveState();
+                string stateName = MoveStateHelper.GetMoveStateName(moveState);
+                FFII_ScreenReaderMod.SpeakText(stateName);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[F1] Error reading walk/run state: {ex.Message}");
-            }
+            catch { }
         }
 
-        /// <summary>
-        /// Coroutine that announces encounter state after game processes F3 key.
-        /// </summary>
-        private static IEnumerator AnnounceEncounterState()
+        private void HandleItemDetailsKey()
         {
-            yield return null; // Wait one frame for game to process
-            try
+            if (IsConfigMenuActive())
             {
-                var userData = Il2CppLast.Management.UserDataManager.Instance();
-                if (userData?.CheatSettingsData != null)
-                {
-                    bool enabled = userData.CheatSettingsData.IsEnableEncount;
-                    string state = enabled ? "Encounters on" : "Encounters off";
-                    FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
-                }
+                AnnounceConfigTooltip();
             }
-            catch (Exception ex)
+            else if (ShopMenuTracker.ValidateState())
             {
-                MelonLogger.Warning($"[F3] Error reading encounter state: {ex.Message}");
+                ShopDetailsAnnouncer.AnnounceCurrentItemDetails();
             }
-        }
-
-        /// <summary>
-        /// Handles input when on the field (entity navigation).
-        /// </summary>
-        private void HandleFieldInput(bool shiftHeld)
-        {
-            // J or [ to cycle backwards
-            if (Input.GetKeyDown(KeyCode.J) || Input.GetKeyDown(KeyCode.LeftBracket))
-            {
-                if (shiftHeld)
-                    mod.CyclePreviousCategory();
-                else
-                    mod.CyclePrevious();
-                return;
-            }
-
-            // K to repeat current entity (without shift)
-            if (Input.GetKeyDown(KeyCode.K))
-            {
-                if (!shiftHeld)
-                    mod.AnnounceEntityOnly();
-                return;
-            }
-
-            // L or ] to cycle forwards
-            if (Input.GetKeyDown(KeyCode.L) || Input.GetKeyDown(KeyCode.RightBracket))
-            {
-                if (shiftHeld)
-                    mod.CycleNextCategory();
-                else
-                    mod.CycleNext();
-                return;
-            }
-
-            // P or \ to pathfind/announce current entity
-            if (Input.GetKeyDown(KeyCode.P) || Input.GetKeyDown(KeyCode.Backslash))
-            {
-                if (shiftHeld)
-                    mod.TogglePathfindingFilter();
-                else
-                    mod.AnnounceCurrentEntity();
-                return;
-            }
-        }
-
-        /// <summary>
-        /// Handles global input (works everywhere).
-        /// </summary>
-        private void HandleGlobalInput(bool shiftHeld, bool ctrlHeld)
-        {
-            // Ctrl+Arrow to teleport
-            if (ctrlHeld)
-            {
-                if (Input.GetKeyDown(KeyCode.UpArrow))
-                {
-                    mod.TeleportInDirection(new Vector2(0, 16));
-                    return;
-                }
-                if (Input.GetKeyDown(KeyCode.DownArrow))
-                {
-                    mod.TeleportInDirection(new Vector2(0, -16));
-                    return;
-                }
-                if (Input.GetKeyDown(KeyCode.LeftArrow))
-                {
-                    mod.TeleportInDirection(new Vector2(-16, 0));
-                    return;
-                }
-                if (Input.GetKeyDown(KeyCode.RightArrow))
-                {
-                    mod.TeleportInDirection(new Vector2(16, 0));
-                    return;
-                }
-            }
-
-            // H to announce character health/status (battle only)
-            if (Input.GetKeyDown(KeyCode.H))
-            {
-                if (FFII_ScreenReaderMod.IsInBattle)
-                    mod.AnnounceCharacterStatus();
-                return;
-            }
-
-            // G to announce current gil amount
-            if (Input.GetKeyDown(KeyCode.G))
-            {
-                mod.AnnounceGilAmount();
-                return;
-            }
-
-            // M to announce current map name
-            if (Input.GetKeyDown(KeyCode.M))
-            {
-                if (shiftHeld)
-                    mod.ToggleMapExitFilter();
-                else
-                    mod.AnnounceCurrentMap();
-                return;
-            }
-
-            // Shift+K to reset to All category
-            if (Input.GetKeyDown(KeyCode.K) && shiftHeld)
-            {
-                mod.ResetToAllCategory();
-                return;
-            }
-
-            // = (Equals) to cycle to next category
-            if (Input.GetKeyDown(KeyCode.Equals))
-            {
-                mod.CycleNextCategory();
-                return;
-            }
-
-            // - (Minus) to cycle to previous category
-            if (Input.GetKeyDown(KeyCode.Minus))
-            {
-                mod.CyclePreviousCategory();
-                return;
-            }
-
-            // V to announce current vehicle/movement mode
-            if (Input.GetKeyDown(KeyCode.V))
-            {
-                AnnounceCurrentVehicle();
-                return;
-            }
-
-            // ; (Semicolon) to toggle wall tones
-            if (Input.GetKeyDown(KeyCode.Semicolon))
-            {
-                mod.ToggleWallTones();
-                return;
-            }
-
-            // ' (Quote) to toggle footsteps
-            if (Input.GetKeyDown(KeyCode.Quote))
-            {
-                mod.ToggleFootsteps();
-                return;
-            }
-
-            // 9 (Alpha9) to toggle audio beacons
-            if (Input.GetKeyDown(KeyCode.Alpha9))
-            {
-                mod.ToggleAudioBeacons();
-                return;
-            }
-
-            // I to announce tooltip/description (config menu or shop)
-            if (Input.GetKeyDown(KeyCode.I))
-            {
-                if (IsConfigMenuActive())
-                {
-                    AnnounceConfigTooltip();
-                }
-                else if (ShopMenuTracker.ValidateState())
-                {
-                    ShopDetailsAnnouncer.AnnounceCurrentItemDetails();
-                }
-                return;
-            }
-
-            // 0 (Alpha0) to dump untranslated entity names
-            if (Input.GetKeyDown(KeyCode.Alpha0))
-            {
-                DumpUntranslatedEntityNames();
-                return;
-            }
-        }
-
-        /// <summary>
-        /// Handles input for status details screen navigation.
-        /// Returns true if input was consumed (status navigation is active and key was handled).
-        /// </summary>
-        private bool HandleStatusDetailsInput(bool shiftHeld, bool ctrlHeld)
-        {
-            var tracker = StatusNavigationTracker.Instance;
-
-            // Check if status navigation is active
-            if (!tracker.IsNavigationActive || !tracker.ValidateState())
-                return false;
-
-            if (Input.GetKeyDown(KeyCode.UpArrow))
-            {
-                if (ctrlHeld)
-                    StatusNavigationReader.JumpToTop();
-                else if (shiftHeld)
-                    StatusNavigationReader.JumpToPreviousGroup();
-                else
-                    StatusNavigationReader.NavigatePrevious();
-                return true;
-            }
-
-            if (Input.GetKeyDown(KeyCode.DownArrow))
-            {
-                if (ctrlHeld)
-                    StatusNavigationReader.JumpToBottom();
-                else if (shiftHeld)
-                    StatusNavigationReader.JumpToNextGroup();
-                else
-                    StatusNavigationReader.NavigateNext();
-                return true;
-            }
-
-            // R: Repeat current stat
-            if (Input.GetKeyDown(KeyCode.R))
-            {
-                StatusNavigationReader.ReadCurrentStat();
-                return true;
-            }
-
-            return false;
         }
 
         /// <summary>
@@ -381,24 +266,15 @@ namespace FFII_ScreenReader.Core
         {
             try
             {
-                // Check for KeyInput config controller
                 var keyInputController = Object.FindObjectOfType<ConfigActualDetailsControllerBase_KeyInput>();
                 if (keyInputController != null && keyInputController.gameObject.activeInHierarchy)
-                {
                     return true;
-                }
 
-                // Check for Touch config controller
                 var touchController = Object.FindObjectOfType<ConfigActualDetailsControllerBase_Touch>();
                 if (touchController != null && touchController.gameObject.activeInHierarchy)
-                {
                     return true;
-                }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error checking config menu state: {ex.Message}");
-            }
+            catch { }
 
             return false;
         }
@@ -450,7 +326,6 @@ namespace FFII_ScreenReader.Core
 
             try
             {
-                // Access descriptionText at offset 0xA0
                 IntPtr ptr = controller.Pointer;
                 if (ptr == IntPtr.Zero) return null;
 
@@ -463,10 +338,7 @@ namespace FFII_ScreenReader.Core
                     return descText.text.Trim();
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error accessing KeyInput description text: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -481,7 +353,6 @@ namespace FFII_ScreenReader.Core
 
             try
             {
-                // Access descriptionText at offset 0x50
                 IntPtr ptr = controller.Pointer;
                 if (ptr == IntPtr.Zero) return null;
 
@@ -494,17 +365,11 @@ namespace FFII_ScreenReader.Core
                     return descText.text.Trim();
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error accessing Touch description text: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
 
-        /// <summary>
-        /// Dumps untranslated entity names for the current map to a JSON file.
-        /// </summary>
         private void DumpUntranslatedEntityNames()
         {
             try
@@ -512,31 +377,9 @@ namespace FFII_ScreenReader.Core
                 string result = EntityTranslator.DumpUntranslatedNames();
                 FFII_ScreenReaderMod.SpeakText(result, true);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error dumping entity names: {ex.Message}");
                 FFII_ScreenReaderMod.SpeakText("Failed to dump entity names", true);
-            }
-        }
-
-        /// <summary>
-        /// Announces the current vehicle/movement mode.
-        /// </summary>
-        private void AnnounceCurrentVehicle()
-        {
-            // Only announce if on field map (not title screen, menus, etc.)
-            if (!mod.EnsureFieldContext())
-                return;
-
-            try
-            {
-                int moveState = Utils.MoveStateHelper.GetCurrentMoveState();
-                string stateName = Utils.MoveStateHelper.GetMoveStateName(moveState);
-                FFII_ScreenReaderMod.SpeakText(stateName);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error announcing vehicle state: {ex.Message}");
             }
         }
 
@@ -556,11 +399,48 @@ namespace FFII_ScreenReader.Core
 
                 return currentObj.TryGetComponent(out UnityEngine.UI.InputField inputField);
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error checking input field state: {ex.Message}");
                 return false;
             }
+        }
+
+        /// <summary>
+        /// Coroutine that announces walk/run state after game processes F1 key.
+        /// </summary>
+        private static IEnumerator AnnounceWalkRunState()
+        {
+            // Wait 3 frames for game to fully process F1 and update dashFlag
+            yield return null;
+            yield return null;
+            yield return null;
+
+            try
+            {
+                bool isDashing = MoveStateHelper.GetDashFlag();
+                string state = isDashing ? "Run" : "Walk";
+                FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Coroutine that announces encounter state after game processes F3 key.
+        /// </summary>
+        private static IEnumerator AnnounceEncounterState()
+        {
+            yield return null;
+            try
+            {
+                var userData = Il2CppLast.Management.UserDataManager.Instance();
+                if (userData?.CheatSettingsData != null)
+                {
+                    bool enabled = userData.CheatSettingsData.IsEnableEncount;
+                    string state = enabled ? "Encounters on" : "Encounters off";
+                    FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
+                }
+            }
+            catch { }
         }
 
         /// <summary>

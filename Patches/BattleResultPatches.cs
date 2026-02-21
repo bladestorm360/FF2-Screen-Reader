@@ -55,7 +55,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[BattleResult] Could not find Touch.ResultMenuController");
+                    MelonLogger.Error("[BattleResult] Could not find Touch.ResultMenuController");
                 }
             }
             catch (Exception ex)
@@ -86,7 +86,7 @@ namespace FFII_ScreenReader.Patches
             }
             else
             {
-                MelonLogger.Warning($"[BattleResult] Could not find ShowPointsInit on {variant}");
+                MelonLogger.Error($"[BattleResult] Could not find ShowPointsInit on {variant}");
             }
 
             // Patch ShowGetItemsInit
@@ -152,10 +152,7 @@ namespace FFII_ScreenReader.Patches
                 if (data != null)
                     AnnouncePointsGained(data);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowPointsInit_Generic patch: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -171,10 +168,7 @@ namespace FFII_ScreenReader.Patches
                 if (data != null)
                     AnnounceItemsDropped(data);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowGetItemsInit_Generic patch: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -201,10 +195,7 @@ namespace FFII_ScreenReader.Patches
                     AnnounceAllWeaponSkills(data);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowSkillLevelsInit_Generic patch: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -230,10 +221,7 @@ namespace FFII_ScreenReader.Patches
                     AnnounceAllStatGains(data);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowStatusUpInit_Generic patch: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -251,10 +239,7 @@ namespace FFII_ScreenReader.Patches
                     AnnouncePointsGained(data);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowPointsInit patch: {ex.Message}");
-            }
+            catch { }
         }
 
         private static void AnnouncePointsGained(BattleResultData data)
@@ -275,10 +260,7 @@ namespace FFII_ScreenReader.Patches
                     parts.Add($"{gil:N0} gil");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BattleResult] Error getting gil: {ex.Message}");
-            }
+            catch { }
 
             if (parts.Count > 0)
             {
@@ -371,16 +353,10 @@ namespace FFII_ScreenReader.Patches
                             }
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Warning($"Error announcing skill: {ex.Message}");
-                    }
+                    catch { }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in AnnounceWeaponSkillProgress: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -459,10 +435,7 @@ namespace FFII_ScreenReader.Patches
                     AnnounceItemsDropped(data);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ShowGetItemsInit patch: {ex.Message}");
-            }
+            catch { }
         }
 
         private static void AnnounceItemsDropped(BattleResultData data)
@@ -509,10 +482,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error announcing items: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion
@@ -539,10 +509,7 @@ namespace FFII_ScreenReader.Patches
                     AnnounceCharacterStatGains(charResult);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BattleResult] Error in AnnounceAllStatGains: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -579,10 +546,7 @@ namespace FFII_ScreenReader.Patches
                             string skillName = GetWeaponSkillName(skillTarget);
                             levelUps.Add($"{skillName} lv{afterLevel}");
                         }
-                        catch (Exception ex)
-                        {
-                            MelonLogger.Warning($"Error getting skill level: {ex.Message}");
-                        }
+                        catch { }
                     }
                     return levelUps;
                 }
@@ -630,16 +594,10 @@ namespace FFII_ScreenReader.Patches
                             levelUps.Add($"{skillName} lv{afterLevel}");
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        MelonLogger.Warning($"Error checking skill level-up: {ex.Message}");
-                    }
+                    catch { }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BattleResult] Error in GetWeaponSkillLevelUps: {ex.Message}");
-            }
+            catch { }
 
             return levelUps;
         }
@@ -716,10 +674,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BattleResult] Error in AnnounceCharacterStatGains: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -772,10 +727,7 @@ namespace FFII_ScreenReader.Patches
                     AnnounceAllWeaponSkills(data);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ResultMenuController.Show patch: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -799,10 +751,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BattleResult] Error getting gil: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -824,10 +773,7 @@ namespace FFII_ScreenReader.Patches
                     AnnounceWeaponSkillProgress(charResult);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[BattleResult] Error processing character list: {ex.Message}");
-            }
+            catch { }
         }
 
         #endregion

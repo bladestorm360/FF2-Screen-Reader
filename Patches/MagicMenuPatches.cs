@@ -34,6 +34,8 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class MagicMenuState
     {
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.MAGIC_MENU);
+
         private static bool _isSpellListFocused = false;
         private static bool _isTargetSelectionActive = false;
         private static bool _isCommandMenuActive = false;
@@ -42,21 +44,30 @@ namespace FFII_ScreenReader.Patches
         private static string lastCommandAnnouncement = "";
         private static OwnedCharacterData _currentCharacter = null;
 
-        // AbilityWindowController.State enum values (from dump.cs line 279777)
-        public const int STATE_NONE = 0;
-        public const int STATE_USE_LIST = 1;      // Spell list for Use command
-        public const int STATE_USE_TARGET = 2;    // Character selection after selecting spell
-        public const int STATE_FORGET = 3;        // Spell list for Forget command
-        public const int STATE_COMMAND = 4;       // Command menu (Use/Forget)
-        public const int STATE_POPUP = 5;         // Yes/No popup
-        public const int STATE_ORDERLY = 6;
-        public const int STATE_SELF_ORDERLY = 7;
-        public const int STATE_SELF_ORDERLY_TARGET = 8;
+        static MagicMenuState()
+        {
+            _helper.RegisterResetHandler(() =>
+            {
+                _isSpellListFocused = false;
+                _isTargetSelectionActive = false;
+                _isCommandMenuActive = false;
+                lastSpellId = -1;
+                lastTargetAnnouncement = "";
+                lastCommandAnnouncement = "";
+                _currentCharacter = null;
+            });
+        }
 
-        // Memory offsets for KeyInput.AbilityWindowController (from dump.cs line 279546)
-        private const int OFFSET_STATE_MACHINE = 0x88;
-        private const int OFFSET_STATE_MACHINE_CURRENT = 0x10;
-        private const int OFFSET_STATE_TAG = 0x10;
+        // AbilityWindowController.State enum values - centralized in FF2Constants
+        public const int STATE_NONE = FF2Constants.MagicMenuStates.STATE_NONE;
+        public const int STATE_USE_LIST = FF2Constants.MagicMenuStates.STATE_USE_LIST;
+        public const int STATE_USE_TARGET = FF2Constants.MagicMenuStates.STATE_USE_TARGET;
+        public const int STATE_FORGET = FF2Constants.MagicMenuStates.STATE_FORGET;
+        public const int STATE_COMMAND = FF2Constants.MagicMenuStates.STATE_COMMAND;
+        public const int STATE_POPUP = FF2Constants.MagicMenuStates.STATE_POPUP;
+        public const int STATE_ORDERLY = FF2Constants.MagicMenuStates.STATE_ORDERLY;
+        public const int STATE_SELF_ORDERLY = FF2Constants.MagicMenuStates.STATE_SELF_ORDERLY;
+        public const int STATE_SELF_ORDERLY_TARGET = FF2Constants.MagicMenuStates.STATE_SELF_ORDERLY_TARGET;
 
         // Memory offsets for KeyInput.AbilityCommandController (from dump.cs line 278489)
         public const int OFFSET_COMMAND_CONTENT_LIST = 0x48;
@@ -66,14 +77,11 @@ namespace FFII_ScreenReader.Patches
         public static bool IsTargetSelectionActive => _isTargetSelectionActive;
         public static bool IsCommandMenuActive => _isCommandMenuActive;
 
-        /// <summary>
-        /// True when any magic menu sub-state is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.MAGIC_MENU);
+        public static bool IsActive => _helper.IsActive;
 
         public static void OnSpellListFocused()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MAGIC_MENU);
+            _helper.SetActiveExclusive();
             _isSpellListFocused = true;
             lastSpellId = -1;
         }
@@ -88,7 +96,7 @@ namespace FFII_ScreenReader.Patches
 
         public static void OnTargetSelectionActive()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MAGIC_MENU);
+            _helper.SetActiveExclusive();
             _isTargetSelectionActive = true;
             lastTargetAnnouncement = "";
         }
@@ -102,9 +110,9 @@ namespace FFII_ScreenReader.Patches
 
         public static void OnCommandMenuActive()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.MAGIC_MENU);
+            _helper.SetActiveExclusive();
             _isCommandMenuActive = true;
-            _isSpellListFocused = false;  // Command menu excludes spell list
+            _isSpellListFocused = false;
             lastCommandAnnouncement = "";
         }
 
@@ -115,14 +123,11 @@ namespace FFII_ScreenReader.Patches
             UpdateRegistryState();
         }
 
-        /// <summary>
-        /// Clears registry state if no sub-states are active.
-        /// </summary>
         private static void UpdateRegistryState()
         {
             if (!_isSpellListFocused && !_isTargetSelectionActive && !_isCommandMenuActive)
             {
-                MenuStateRegistry.Reset(MenuStateRegistry.MAGIC_MENU);
+                _helper.IsActive = false;
             }
         }
 
@@ -140,16 +145,11 @@ namespace FFII_ScreenReader.Patches
             set => _currentCharacter = value;
         }
 
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Suppresses when magic menu is active - specialized patches handle all states.
-        /// </summary>
         public static bool ShouldSuppress()
         {
             if (!IsActive)
                 return false;
 
-            // Validate the window controller exists
             var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
@@ -161,19 +161,12 @@ namespace FFII_ScreenReader.Patches
             if (state == STATE_NONE)
             {
                 ResetState();
-                return false;  // Menu closed - don't suppress
+                return false;
             }
 
-            // Suppress for ALL active states including COMMAND
-            // CommandController_UpdateFocus_Postfix handles Use/Forget announcements
-            // SetCursor_Postfix handles spell list announcements
-            // We must suppress MenuTextDiscovery to prevent duplicate/wrong readings
             return true;
         }
 
-        /// <summary>
-        /// Reads the current state from AbilityWindowController's state machine.
-        /// </summary>
         public static int GetCurrentState(AbilityWindowController controller)
         {
             try
@@ -184,15 +177,15 @@ namespace FFII_ScreenReader.Patches
 
                 unsafe
                 {
-                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_STATE_MACHINE);
+                    IntPtr stateMachinePtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_STATE_MACHINE);
                     if (stateMachinePtr == IntPtr.Zero)
                         return -1;
 
-                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + OFFSET_STATE_MACHINE_CURRENT);
+                    IntPtr currentStatePtr = *(IntPtr*)((byte*)stateMachinePtr.ToPointer() + IL2CppOffsets.StateMachine.OFFSET_CURRENT);
                     if (currentStatePtr == IntPtr.Zero)
                         return -1;
 
-                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + OFFSET_STATE_TAG);
+                    int stateValue = *(int*)((byte*)currentStatePtr.ToPointer() + IL2CppOffsets.StateMachine.OFFSET_TAG);
                     return stateValue;
                 }
             }
@@ -218,17 +211,7 @@ namespace FFII_ScreenReader.Patches
             return true;
         }
 
-        public static void ResetState()
-        {
-            _isSpellListFocused = false;
-            _isTargetSelectionActive = false;
-            _isCommandMenuActive = false;
-            lastSpellId = -1;
-            lastTargetAnnouncement = "";
-            lastCommandAnnouncement = "";
-            _currentCharacter = null;
-            MenuStateRegistry.Reset(MenuStateRegistry.MAGIC_MENU);
-        }
+        public static void ResetState() => _helper.IsActive = false;
 
         public static string GetSpellName(OwnedAbility ability)
         {
@@ -335,14 +318,6 @@ namespace FFII_ScreenReader.Patches
     public static class MagicMenuPatches
     {
         private static bool isPatched = false;
-
-        // Memory offsets for KeyInput.AbilityContentListController (from dump.cs line 278764)
-        private const int OFFSET_CONTENT_LIST = 0x50;
-        private const int OFFSET_TARGET_CHARACTER = 0x78;
-
-        // Memory offsets for KeyInput.AbilityUseContentListController (from dump.cs line 279151)
-        private const int OFFSET_USE_CONTENT_LIST = 0x40;
-        private const int OFFSET_USE_SELECT_CURSOR = 0x48;
 
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
@@ -683,7 +658,7 @@ namespace FFII_ScreenReader.Patches
                     {
                         unsafe
                         {
-                            IntPtr charPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_TARGET_CHARACTER);
+                            IntPtr charPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_TARGET_CHARACTER);
                             if (charPtr != IntPtr.Zero)
                             {
                                 MagicMenuState.CurrentCharacter = new OwnedCharacterData(charPtr);
@@ -774,7 +749,7 @@ namespace FFII_ScreenReader.Patches
 
                 unsafe
                 {
-                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_USE_CONTENT_LIST);
+                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_USE_CONTENT_LIST);
                     if (contentListPtr == IntPtr.Zero)
                         return;
 
@@ -864,7 +839,7 @@ namespace FFII_ScreenReader.Patches
                 IntPtr contentListPtr;
                 unsafe
                 {
-                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_CONTENT_LIST);
+                    contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_CONTENT_LIST);
                 }
 
                 if (contentListPtr == IntPtr.Zero)
@@ -904,9 +879,6 @@ namespace FFII_ScreenReader.Patches
                 FFII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
             }
         }
-
-        // Memory offset for CommonGauge.gaugeImage (private field)
-        private const int OFFSET_GAUGE_IMAGE = 0x18;
 
         private static void AnnounceSpell(OwnedAbility ability, BattleAbilityInfomationContentController contentController = null)
         {
@@ -959,7 +931,7 @@ namespace FFII_ScreenReader.Patches
                                 IntPtr imagePtr;
                                 unsafe
                                 {
-                                    imagePtr = *(IntPtr*)((byte*)gaugePtr + OFFSET_GAUGE_IMAGE);
+                                    imagePtr = *(IntPtr*)((byte*)gaugePtr + IL2CppOffsets.Magic.OFFSET_GAUGE_IMAGE);
                                 }
                                 if (imagePtr != IntPtr.Zero)
                                 {

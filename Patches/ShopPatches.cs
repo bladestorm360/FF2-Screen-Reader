@@ -29,33 +29,26 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class ShopMenuTracker
     {
-        /// <summary>
-        /// True when shop menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.SHOP_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.SHOP_MENU, AnnouncementContexts.SHOP_ITEM, AnnouncementContexts.SHOP_QUANTITY);
 
-        /// <summary>
-        /// Alias for IsActive for backward compatibility.
-        /// </summary>
-        public static bool IsShopMenuActive => IsActive;
-
-        /// <summary>
-        /// Sets the shop menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        static ShopMenuTracker()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.SHOP_MENU);
+            _helper.RegisterResetHandler(() =>
+            {
+                LastItemName = null;
+                LastItemDescription = null;
+                LastItemPrice = null;
+                LastItemStats = null;
+            });
         }
 
-        /// <summary>
-        /// Alias for ClearState for consistency with other menu states.
-        /// </summary>
+        public static bool IsActive => _helper.IsActive;
+
+        public static bool IsShopMenuActive => IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
+
         public static void ResetState() => ClearState();
-
-        // State constants from dump.cs (ShopController.State)
-        private const int STATE_NONE = 0;           // Menu closed
-        private const int STATE_SELECT_COMMAND = 1; // Command bar (Buy/Sell)
-
 
         /// <summary>
         /// Check if GenericCursor should be suppressed.
@@ -66,7 +59,6 @@ namespace FFII_ScreenReader.Patches
             if (!IsActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             var windowController = GameObjectCache.GetOrRefresh<KeyInputShopController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
@@ -75,17 +67,14 @@ namespace FFII_ScreenReader.Patches
             }
 
             int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_SHOP_CONTROLLER);
-            if (state == STATE_SELECT_COMMAND || state == STATE_NONE)
+            if (state == IL2CppOffsets.Shop.STATE_SELECT_COMMAND || state == IL2CppOffsets.Shop.STATE_NONE)
             {
                 ClearState();
-                return false;  // Don't suppress - let generic cursor handle command bar
+                return false;
             }
-            return true;  // In submenu - suppress generic cursor
+            return true;
         }
 
-        /// <summary>
-        /// Alias for ShouldSuppress for backward compatibility.
-        /// </summary>
         public static bool ValidateState() => ShouldSuppress();
 
         public static string LastItemName { get; set; }
@@ -93,15 +82,7 @@ namespace FFII_ScreenReader.Patches
         public static string LastItemPrice { get; set; }
         public static string LastItemStats { get; set; }
 
-        public static void ClearState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.SHOP_MENU);
-            LastItemName = null;
-            LastItemDescription = null;
-            LastItemPrice = null;
-            LastItemStats = null;
-            AnnouncementDeduplicator.Reset(CONTEXT_SHOP_ITEM, CONTEXT_SHOP_QUANTITY);
-        }
+        public static void ClearState() => _helper.IsActive = false;
     }
 
     /// <summary>
@@ -303,7 +284,7 @@ namespace FFII_ScreenReader.Patches
                 }
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_SHOP_ITEM, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.SHOP_ITEM, announcement))
                     return;
 
                 FFII_ScreenReaderMod.SpeakText(announcement);
@@ -448,8 +429,6 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        private const int OFFSET_SELECTED_COUNT = 0x3C;
-
         public static void UpdateCotroller_Postfix(ShopTradeWindowController __instance, bool isCount)
         {
             try
@@ -460,7 +439,7 @@ namespace FFII_ScreenReader.Patches
                 int selectedCount = GetSelectedCount(__instance);
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_SHOP_QUANTITY, selectedCount))
+                if (!ShouldAnnounce(AnnouncementContexts.SHOP_QUANTITY, selectedCount))
                     return;
 
                 string totalPrice = GetTotalPriceText(__instance);
@@ -485,7 +464,7 @@ namespace FFII_ScreenReader.Patches
                     IntPtr ptr = controller.Pointer;
                     if (ptr != IntPtr.Zero)
                     {
-                        return *(int*)((byte*)ptr.ToPointer() + OFFSET_SELECTED_COUNT);
+                        return *(int*)((byte*)ptr.ToPointer() + IL2CppOffsets.Shop.OFFSET_SELECTED_COUNT);
                     }
                 }
             }

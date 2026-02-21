@@ -19,13 +19,6 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattlePausePatches
     {
-        // Memory offsets for CommonPopup (KeyInput) - from dump.cs
-        private const int OFFSET_SELECT_CURSOR = 0x68;    // Cursor selectCursor
-        private const int OFFSET_COMMAND_LIST = 0x70;     // List<CommonCommand> commandList
-
-        // Memory offset for CommonCommand - from dump.cs
-        private const int OFFSET_COMMAND_TEXT = 0x18;     // Text text
-
         // Track last announced button to avoid duplicates
         private static int lastAnnouncedButtonIndex = -1;
 
@@ -43,7 +36,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Pause] Error applying patches: {ex.Message}");
+                MelonLogger.Error($"[Battle Pause] Error applying patches: {ex.Message}");
             }
         }
 
@@ -65,12 +58,12 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[Battle Pause] CommonPopup.UpdateFocus method not found");
+                    MelonLogger.Error("[Battle Pause] CommonPopup.UpdateFocus method not found");
                 }
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Battle Pause] Error patching CommonPopup.UpdateFocus: {ex.Message}");
+                MelonLogger.Error($"[Battle Pause] Error patching CommonPopup.UpdateFocus: {ex.Message}");
             }
         }
 
@@ -106,7 +99,7 @@ namespace FFII_ScreenReader.Patches
                 if (popupPtr == IntPtr.Zero) return;
 
                 // Read selectCursor at offset 0x68
-                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + OFFSET_SELECT_CURSOR);
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.BattlePause.OFFSET_SELECT_CURSOR);
                 if (cursorPtr == IntPtr.Zero) return;
 
                 GameCursor cursor;
@@ -129,7 +122,7 @@ namespace FFII_ScreenReader.Patches
                 lastAnnouncedButtonIndex = cursorIndex;
 
                 // Read commandList at offset 0x70
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + OFFSET_COMMAND_LIST);
+                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.BattlePause.OFFSET_COMMAND_LIST);
                 if (listPtr == IntPtr.Zero) return;
 
                 // IL2CPP List: _size at 0x18, _items at 0x10
@@ -144,7 +137,7 @@ namespace FFII_ScreenReader.Patches
                 if (commandPtr == IntPtr.Zero) return;
 
                 // Read text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + OFFSET_COMMAND_TEXT);
+                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.BattlePause.OFFSET_COMMAND_TEXT);
                 if (textPtr == IntPtr.Zero) return;
 
                 var textComponent = new UnityEngine.UI.Text(textPtr);
@@ -156,10 +149,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Battle Pause] Error in UpdateFocus postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

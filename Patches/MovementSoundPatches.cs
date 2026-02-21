@@ -35,7 +35,7 @@ namespace FFII_ScreenReader.Patches
         private static bool wallCheckPending = false;
 
         // Audio feedback cooldowns
-        private const float TILE_SIZE = 16f;
+        private const float TILE_SIZE = FF2Constants.TILE_SIZE;
         private static float lastFootstepTime = 0f;
         private const float FOOTSTEP_COOLDOWN = 0.15f;
 
@@ -66,7 +66,6 @@ namespace FFII_ScreenReader.Patches
                 // Log once to confirm patch is working
                 if (!hasLoggedPatchActive)
                 {
-                    MelonLogger.Msg("[WallBump] Patch is active - OnTouchPadCallback intercepted");
                     hasLoggedPatchActive = true;
                 }
 
@@ -171,7 +170,7 @@ namespace FFII_ScreenReader.Patches
                         // Tile changed - play footstep if enabled
                         lastTilePosition = currentTile;
 
-                        if (FFII_ScreenReaderMod.Instance != null && FFII_ScreenReaderMod.Instance.IsFootstepsEnabled())
+                        if (PreferencesManager.FootstepsEnabled)
                         {
                             float currentTime = Time.time;
                             if (currentTime - lastFootstepTime >= FOOTSTEP_COOLDOWN)

@@ -25,27 +25,16 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class EquipMenuState
     {
-        /// <summary>
-        /// True when equipment menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.EQUIP_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.EQUIP_MENU, AnnouncementContexts.EQUIP_MENU);
 
-        // State constants from dump.cs (KeyInput.EquipmentWindowController.State)
-        private const int STATE_NONE = 0;     // Menu closed
-        private const int STATE_COMMAND = 1;  // Command bar (Equip/Remove/etc.)
-        private const int STATE_INFO = 2;     // Slot selection
-        private const int STATE_SELECT = 3;   // Item selection
-
-
-        /// <summary>
-        /// Called when equipment menu activates (slot or item list focused).
-        /// Clears other menu states to prevent conflicts.
-        /// </summary>
-        public static void SetActive()
+        static EquipMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.EQUIP_MENU);
-            AnnouncementDeduplicator.Reset(CONTEXT_EQUIP_MENU);
+            _helper.RegisterResetHandler();
         }
+
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
 
         /// <summary>
         /// Check if GenericCursor announcements should be suppressed.
@@ -56,7 +45,6 @@ namespace FFII_ScreenReader.Patches
             if (!IsActive)
                 return false;
 
-            // Validate we're actually in a submenu, not command bar
             var windowController = GameObjectCache.GetOrRefresh<KeyInputEquipmentWindowController>();
             if (windowController == null || !windowController.gameObject.activeInHierarchy)
             {
@@ -65,26 +53,16 @@ namespace FFII_ScreenReader.Patches
             }
 
             int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_EQUIP_WINDOW);
-            if (state == STATE_COMMAND || state == STATE_NONE)
+            if (state == IL2CppOffsets.Equipment.STATE_COMMAND || state == IL2CppOffsets.Equipment.STATE_NONE)
             {
                 ClearState();
-                return false;  // Don't suppress - let generic cursor handle command bar
+                return false;
             }
-            return true;  // In submenu - suppress generic cursor
+            return true;
         }
 
-        /// <summary>
-        /// Clear state when menu closes or switching to another menu.
-        /// </summary>
-        public static void ClearState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.EQUIP_MENU);
-            AnnouncementDeduplicator.Reset(CONTEXT_EQUIP_MENU);
-        }
+        public static void ClearState() => _helper.IsActive = false;
 
-        /// <summary>
-        /// Get localized slot name from EquipSlotType.
-        /// </summary>
         public static string GetSlotName(EquipSlotType slot)
         {
             try
@@ -103,10 +81,8 @@ namespace FFII_ScreenReader.Patches
             }
             catch
             {
-                // Fall through to defaults
             }
 
-            // Fallback to English slot names
             return slot switch
             {
                 EquipSlotType.Slot1 => "Right Hand",
@@ -119,13 +95,7 @@ namespace FFII_ScreenReader.Patches
             };
         }
 
-        /// <summary>
-        /// Reset state (for testing or scene changes). Alias for ClearState.
-        /// </summary>
-        public static void Reset()
-        {
-            ClearState();
-        }
+        public static void Reset() => ClearState();
     }
 
     /// <summary>
@@ -319,7 +289,7 @@ namespace FFII_ScreenReader.Patches
                 announcement = TextUtils.StripIconMarkup(announcement);
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_EQUIP_MENU, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.EQUIP_MENU, announcement))
                     return;
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -403,7 +373,7 @@ namespace FFII_ScreenReader.Patches
                 catch { }
 
                 // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(CONTEXT_EQUIP_MENU, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.EQUIP_MENU, announcement))
                     return;
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

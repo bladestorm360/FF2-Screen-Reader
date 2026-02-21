@@ -17,34 +17,23 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class ConfigMenuState
     {
-        /// <summary>
-        /// True when config menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.CONFIG_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.CONFIG_MENU);
 
         private static string lastAnnouncedText = "";
         private static string lastAnnouncedSettingName = "";
 
-        /// <summary>
-        /// Sets the config menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        static ConfigMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.CONFIG_MENU);
+            _helper.RegisterResetHandler(() => { lastAnnouncedText = ""; lastAnnouncedSettingName = ""; });
         }
 
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// State is cleared by transition patch when menu closes.
-        /// </summary>
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
+
         public static bool ShouldSuppress() => IsActive;
 
-        public static void ResetState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.CONFIG_MENU);
-            lastAnnouncedText = "";
-            lastAnnouncedSettingName = "";
-        }
+        public static void ResetState() => _helper.IsActive = false;
 
         /// <summary>
         /// Checks if announcement should proceed (deduplication).
@@ -56,14 +45,12 @@ namespace FFII_ScreenReader.Patches
             if (announcement == lastAnnouncedText)
                 return false;
 
-            // Check if this is the same setting but different value
             string[] parts = announcement.Split(new[] { ": " }, 2, StringSplitOptions.None);
             if (parts.Length >= 1)
             {
                 string settingName = parts[0];
                 if (settingName == lastAnnouncedSettingName && parts.Length > 1)
                 {
-                    // Same setting, value changed - announce just the value
                     isValueChangeOnly = true;
                 }
                 lastAnnouncedSettingName = settingName;
@@ -136,10 +123,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Config Menu] Error reading config value: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -235,7 +219,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Config Menu] Error patching SetFocus: {ex.Message}");
+                MelonLogger.Error($"[Config Menu] Error patching SetFocus: {ex.Message}");
             }
         }
 
@@ -252,7 +236,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Config Menu] Error patching SwitchArrowSelectType: {ex.Message}");
+                MelonLogger.Error($"[Config Menu] Error patching SwitchArrowSelectType: {ex.Message}");
             }
         }
 
@@ -269,7 +253,7 @@ namespace FFII_ScreenReader.Patches
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"[Config Menu] Error patching SwitchSliderType: {ex.Message}");
+                MelonLogger.Error($"[Config Menu] Error patching SwitchSliderType: {ex.Message}");
             }
         }
 
@@ -332,10 +316,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Config Menu] Error in SetFocus patch: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -376,10 +357,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Config Menu] Error in SwitchArrowSelectType patch: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -418,10 +396,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(percentage, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Config Menu] Error in SwitchSliderType patch: {ex.Message}");
-            }
+            catch { }
         }
     }
 }

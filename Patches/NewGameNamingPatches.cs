@@ -54,7 +54,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("InitNameSelect method not found via AccessTools");
+                    MelonLogger.Error("InitNameSelect method not found via AccessTools");
                 }
 
                 // Patch InitSelect - called when entering character selection
@@ -67,7 +67,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("InitSelect method not found via AccessTools");
+                    MelonLogger.Error("InitSelect method not found via AccessTools");
                 }
 
                 // Patch InitStartPopup - called when "Start game with these settings?" popup opens
@@ -81,7 +81,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("InitStartPopup method not found via AccessTools");
+                    MelonLogger.Error("InitStartPopup method not found via AccessTools");
                 }
 
                 // EVENT-DRIVEN HOOK: CharacterContentListController.SetTargetSelectContent(int)
@@ -97,7 +97,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("SetTargetSelectContent method not found on KeyInput.CharacterContentListController");
+                    MelonLogger.Error("SetTargetSelectContent method not found on KeyInput.CharacterContentListController");
                 }
 
                 // EVENT-DRIVEN HOOK: NameContentListController.SetFocus(int)
@@ -113,7 +113,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("SetFocus method not found on KeyInput.NameContentListController");
+                    MelonLogger.Error("SetFocus method not found on KeyInput.NameContentListController");
                 }
 
                 // EVENT-DRIVEN HOOK: CharacterContentListController.UpdateView(List<NewGameSelectData>)
@@ -128,7 +128,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("UpdateView method not found on KeyInput.CharacterContentListController");
+                    MelonLogger.Error("UpdateView method not found on KeyInput.CharacterContentListController");
                 }
             }
             catch (Exception ex)
@@ -171,10 +171,7 @@ namespace FFII_ScreenReader.Patches
                 string announcement = "Character selection";
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in InitSelect_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -210,10 +207,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in InitStartPopup_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -250,10 +244,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SetTargetSelectContent_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
 
@@ -321,9 +312,8 @@ namespace FFII_ScreenReader.Patches
 
                 return $"Character {displayIndex}: unnamed";
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error getting character slot info: {ex.Message}");
                 return $"Character {displayIndex}: unnamed";
             }
         }
@@ -367,10 +357,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in InitNameSelect_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -400,10 +387,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(currentName);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in SetFocus_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -436,10 +420,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(currentName);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in UpdateView_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -524,10 +505,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error getting character name: {ex.Message}");
-            }
+            catch { }
             return null;
         }
 
@@ -549,10 +527,7 @@ namespace FFII_ScreenReader.Patches
                     return GetAutoNameByIndex(controller, index);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error getting suggested name: {ex.Message}");
-            }
+            catch { }
             return null;
         }
 
@@ -573,10 +548,7 @@ namespace FFII_ScreenReader.Patches
                     return result as string;
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error calling GetAutoName: {ex.Message}");
-            }
+            catch { }
             return null;
         }
     }

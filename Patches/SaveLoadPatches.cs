@@ -25,14 +25,17 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class SaveLoadMenuState
     {
-        /// <summary>
-        /// True when save/load menu is active.
-        /// Delegates to MenuStateRegistry for centralized state tracking.
-        /// </summary>
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.SAVE_LOAD_MENU);
+
+        static SaveLoadMenuState()
+        {
+            _helper.RegisterResetHandler(() => { IsInConfirmation = false; });
+        }
+
         public static bool IsActive
         {
-            get => MenuStateRegistry.IsActive(MenuStateRegistry.SAVE_LOAD_MENU);
-            set => MenuStateRegistry.SetActive(MenuStateRegistry.SAVE_LOAD_MENU, value);
+            get => _helper.IsActive;
+            set => _helper.IsActive = value;
         }
         public static bool IsInConfirmation { get; set; } = false;
 
@@ -41,11 +44,7 @@ namespace FFII_ScreenReader.Patches
             return IsActive && IsInConfirmation;
         }
 
-        public static void ResetState()
-        {
-            IsActive = false;
-            IsInConfirmation = false;
-        }
+        public static void ResetState() => _helper.IsActive = false;
     }
 
     /// <summary>
@@ -65,19 +64,6 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class SaveLoadPatches
     {
-        // SavePopup field offsets (from dump.cs line 453803)
-        private const int SAVE_POPUP_MESSAGE_TEXT_OFFSET = 0x40;  // Text messageText
-        private const int SAVE_POPUP_SELECT_CURSOR_OFFSET = 0x58; // Cursor selectCursor
-        private const int SAVE_POPUP_COMMAND_LIST_OFFSET = 0x60;  // List<CommonCommand> commandList
-
-        // CommonCommand field offset (from dump.cs line 429974)
-        private const int COMMON_COMMAND_TEXT_OFFSET = 0x18;      // Text text
-
-        // Controller-specific savePopup field offsets (verified from FF2 dump.cs)
-        private const int TITLE_LOAD_SAVE_POPUP_OFFSET = 0x58;   // LoadGameWindowController.savePopup
-        private const int MAIN_MENU_SAVE_POPUP_OFFSET = 0x28;    // Both LoadWindowController and SaveWindowController
-        private const int INTERRUPTION_SAVE_POPUP_OFFSET = 0x38; // InterruptionWindowController.savePopup (QuickSave)
-
         // Track last announced button to avoid duplicates
         private static int lastAnnouncedButtonIndex = -1;
 
@@ -136,13 +122,10 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[SaveLoad] TitleLoadController.SetPopupActive not found");
+                    MelonLogger.Error("[SaveLoad] TitleLoadController.SetPopupActive not found");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Failed to patch TitleLoadController: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -163,13 +146,10 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[SaveLoad] MainMenuLoadController.SetPopupActive not found");
+                    MelonLogger.Error("[SaveLoad] MainMenuLoadController.SetPopupActive not found");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Failed to patch MainMenuLoadController: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -190,13 +170,10 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[SaveLoad] MainMenuSaveController.SetPopupActive not found");
+                    MelonLogger.Error("[SaveLoad] MainMenuSaveController.SetPopupActive not found");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Failed to patch MainMenuSaveController: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -217,13 +194,10 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[SaveLoad] InterruptionController.SetEnablePopup not found");
+                    MelonLogger.Error("[SaveLoad] InterruptionController.SetEnablePopup not found");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Failed to patch InterruptionController: {ex.Message}");
-            }
+            catch { }
         }
 
         // ============ Postfix Methods ============
@@ -258,7 +232,7 @@ namespace FFII_ScreenReader.Patches
                 if (popupPtr == IntPtr.Zero) return;
 
                 // Read selectCursor at offset 0x58
-                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + SAVE_POPUP_SELECT_CURSOR_OFFSET);
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_SELECT_CURSOR_OFFSET);
                 if (cursorPtr == IntPtr.Zero) return;
 
                 GameCursor cursor;
@@ -281,7 +255,7 @@ namespace FFII_ScreenReader.Patches
                 lastAnnouncedButtonIndex = cursorIndex;
 
                 // Read commandList at offset 0x60
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + SAVE_POPUP_COMMAND_LIST_OFFSET);
+                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
                 if (listPtr == IntPtr.Zero) return;
 
                 // IL2CPP List: _size at 0x18, _items at 0x10
@@ -296,7 +270,7 @@ namespace FFII_ScreenReader.Patches
                 if (commandPtr == IntPtr.Zero) return;
 
                 // Read text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + COMMON_COMMAND_TEXT_OFFSET);
+                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.SaveLoad.COMMON_COMMAND_TEXT_OFFSET);
                 if (textPtr == IntPtr.Zero) return;
 
                 var textComponent = new UnityEngine.UI.Text(textPtr);
@@ -308,10 +282,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error in UpdateFocus postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         public static void TitleLoadSetPopupActive_Postfix(object __instance, bool isEnable)
@@ -323,7 +294,7 @@ namespace FFII_ScreenReader.Patches
                     var controller = __instance as TitleLoadController;
                     if (controller != null)
                     {
-                        ReadSavePopup(controller.Pointer, TITLE_LOAD_SAVE_POPUP_OFFSET, "TitleLoad");
+                        ReadSavePopup(controller.Pointer, IL2CppOffsets.SaveLoad.TITLE_LOAD_SAVE_POPUP_OFFSET, "TitleLoad");
                     }
                 }
                 else
@@ -331,10 +302,7 @@ namespace FFII_ScreenReader.Patches
                     ClearPopupState();
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error in TitleLoadSetPopupActive_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         public static void MainMenuLoadSetPopupActive_Postfix(object __instance, bool isEnable)
@@ -346,7 +314,7 @@ namespace FFII_ScreenReader.Patches
                     var controller = __instance as MainMenuLoadController;
                     if (controller != null)
                     {
-                        ReadSavePopup(controller.Pointer, MAIN_MENU_SAVE_POPUP_OFFSET, "MainMenuLoad");
+                        ReadSavePopup(controller.Pointer, IL2CppOffsets.SaveLoad.MAIN_MENU_SAVE_POPUP_OFFSET, "MainMenuLoad");
                     }
                 }
                 else
@@ -354,10 +322,7 @@ namespace FFII_ScreenReader.Patches
                     ClearPopupState();
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error in MainMenuLoadSetPopupActive_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         public static void MainMenuSaveSetPopupActive_Postfix(object __instance, bool isEnable)
@@ -369,7 +334,7 @@ namespace FFII_ScreenReader.Patches
                     var controller = __instance as MainMenuSaveController;
                     if (controller != null)
                     {
-                        ReadSavePopup(controller.Pointer, MAIN_MENU_SAVE_POPUP_OFFSET, "MainMenuSave");
+                        ReadSavePopup(controller.Pointer, IL2CppOffsets.SaveLoad.MAIN_MENU_SAVE_POPUP_OFFSET, "MainMenuSave");
                     }
                 }
                 else
@@ -377,10 +342,7 @@ namespace FFII_ScreenReader.Patches
                     ClearPopupState();
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error in MainMenuSaveSetPopupActive_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         public static void InterruptionSetEnablePopup_Postfix(object __instance, bool isEnable)
@@ -392,7 +354,7 @@ namespace FFII_ScreenReader.Patches
                     var controller = __instance as InterruptionController;
                     if (controller != null)
                     {
-                        ReadSavePopup(controller.Pointer, INTERRUPTION_SAVE_POPUP_OFFSET, "QuickSave");
+                        ReadSavePopup(controller.Pointer, IL2CppOffsets.SaveLoad.INTERRUPTION_SAVE_POPUP_OFFSET, "QuickSave");
                     }
                 }
                 else
@@ -400,10 +362,7 @@ namespace FFII_ScreenReader.Patches
                     ClearPopupState();
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error in InterruptionSetEnablePopup_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -413,10 +372,7 @@ namespace FFII_ScreenReader.Patches
         private static void ReadSavePopup(IntPtr controllerPtr, int savePopupOffset, string context)
         {
             if (controllerPtr == IntPtr.Zero)
-            {
-                MelonLogger.Warning($"[SaveLoad] {context}: Controller pointer is null");
                 return;
-            }
 
             try
             {
@@ -425,25 +381,19 @@ namespace FFII_ScreenReader.Patches
                     // Read savePopup pointer from controller
                     IntPtr popupPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + savePopupOffset);
                     if (popupPtr == IntPtr.Zero)
-                    {
-                        MelonLogger.Warning($"[SaveLoad] {context}: SavePopup pointer is null");
                         return;
-                    }
 
                     // Set state for button navigation immediately
                     SaveLoadMenuState.IsActive = true;
                     SaveLoadMenuState.IsInConfirmation = true;
-                    PopupState.SetActive($"{context}Popup", popupPtr, SAVE_POPUP_COMMAND_LIST_OFFSET);
+                    PopupState.SetActive($"{context}Popup", popupPtr, IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
                     lastAnnouncedButtonIndex = -1;  // Reset button tracking for new popup
 
                     // Start coroutine to read text after delay (allows UI to populate)
                     CoroutineManager.StartManaged(ReadPopupTextDelayed(popupPtr, context));
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error reading {context} popup: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -460,12 +410,9 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read messageText at offset 0x40
-                    IntPtr messageTextPtr = *(IntPtr*)((byte*)popupPtr.ToPointer() + SAVE_POPUP_MESSAGE_TEXT_OFFSET);
+                    IntPtr messageTextPtr = *(IntPtr*)((byte*)popupPtr.ToPointer() + IL2CppOffsets.SaveLoad.SAVE_POPUP_MESSAGE_TEXT_OFFSET);
                     if (messageTextPtr == IntPtr.Zero)
-                    {
-                        MelonLogger.Warning($"[SaveLoad] {context}: messageText pointer is null");
                         yield break;
-                    }
 
                     var textComponent = new UnityEngine.UI.Text(messageTextPtr);
                     string message = textComponent.text;
@@ -476,16 +423,9 @@ namespace FFII_ScreenReader.Patches
                         message = StripRichTextTags(message);
                         FFII_ScreenReaderMod.SpeakText(message);
                     }
-                    else
-                    {
-                        MelonLogger.Warning($"[SaveLoad] {context}: Message is empty");
-                    }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error reading {context} popup text: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -539,7 +479,7 @@ namespace FFII_ScreenReader.Patches
                 lastAnnouncedButtonIndex = cursorIndex;
 
                 // Read commandList at offset 0x60
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + SAVE_POPUP_COMMAND_LIST_OFFSET);
+                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
                 if (listPtr == IntPtr.Zero) return;
 
                 // IL2CPP List: _size at 0x18, _items at 0x10
@@ -554,7 +494,7 @@ namespace FFII_ScreenReader.Patches
                 if (commandPtr == IntPtr.Zero) return;
 
                 // Read text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + COMMON_COMMAND_TEXT_OFFSET);
+                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.SaveLoad.COMMON_COMMAND_TEXT_OFFSET);
                 if (textPtr == IntPtr.Zero) return;
 
                 var textComponent = new UnityEngine.UI.Text(textPtr);
@@ -566,10 +506,7 @@ namespace FFII_ScreenReader.Patches
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[SaveLoad] Error reading current button: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

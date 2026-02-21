@@ -80,7 +80,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning($"[Battle Magic] SelectContent method not found ({variant})");
+                    MelonLogger.Error($"[Battle Magic] SelectContent method not found ({variant})");
                 }
             }
             catch (Exception ex)
@@ -96,34 +96,23 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleMagicMenuState
     {
-        /// <summary>
-        /// True when battle magic menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.BATTLE_MAGIC);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_MAGIC, AnnouncementContexts.BATTLE_MAGIC);
 
-        /// <summary>
-        /// Sets the battle magic menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        static BattleMagicMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.BATTLE_MAGIC);
+            _helper.RegisterResetHandler();
         }
 
-        // State constants for BattleCommandSelectController
-        private const int STATE_NORMAL = 1;
-        private const int STATE_EXTRA = 2;
+        public static bool IsActive => _helper.IsActive;
 
-        /// <summary>
-        /// Check if MenuTextDiscovery should be suppressed.
-        /// Returns true if we're handling magic announcements.
-        /// </summary>
+        public static void SetActive() => _helper.SetActiveExclusive();
+
         public static bool ShouldSuppress()
         {
             if (!IsActive) return false;
 
             try
             {
-                // Check if either KeyInput or Touch magic controller is still active
                 var keyInputController = GameObjectCache.GetOrRefresh<BattleQuantityAbilityInfomationController_KeyInput>();
                 var touchController = GameObjectCache.GetOrRefresh<BattleQuantityAbilityInfomationController_Touch>();
 
@@ -136,15 +125,12 @@ namespace FFII_ScreenReader.Patches
                     return false;
                 }
 
-                // Also check if command select controller is back to normal state
-                // If so, we've returned to command menu - clear magic state
                 var cmdController = GameObjectCache.GetOrRefresh<BattleCommandSelectController>();
                 if (cmdController != null && cmdController.gameObject.activeInHierarchy)
                 {
                     int state = StateReaderHelper.ReadStateTag(cmdController.Pointer, StateReaderHelper.OFFSET_BATTLE_COMMAND_CONTROLLER);
-                    if (state == STATE_NORMAL || state == STATE_EXTRA)
+                    if (state == IL2CppOffsets.BattleCommand.STATE_NORMAL || state == IL2CppOffsets.BattleCommand.STATE_EXTRA)
                     {
-                        // Command menu is active, we're no longer in magic selection
                         Reset();
                         return false;
                     }
@@ -159,11 +145,7 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        public static void Reset()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.BATTLE_MAGIC);
-            AnnouncementDeduplicator.Reset(CONTEXT_BATTLE_MAGIC);
-        }
+        public static void Reset() => _helper.IsActive = false;
     }
 
     /// <summary>
@@ -173,23 +155,6 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleMagicSelectContent_Patch
     {
-        // Offsets for BattleAbilityInfomationControllerBase (parent class)
-        // From dump.cs line 284575-284593:
-        // protected BattlePlayerData selectedBattlePlayerData; // 0x28
-        // protected List<OwnedAbility> dataList; // 0x70
-        // protected List<BattleAbilityInfomationContentController> contentList; // 0x78
-        private const int OFFSET_SELECTED_PLAYER = 0x28;
-        private const int OFFSET_DATA_LIST = 0x70;
-        private const int OFFSET_CONTENT_LIST = 0x78;
-
-        // Offset for BattleAbilityInfomationContentController.commonGauge (KeyInput variant)
-        // From dump.cs line 430372: private CommonGauge commonGauge; // 0x38
-        private const int OFFSET_CONTENT_GAUGE = 0x38;
-
-        // Offset for CommonGauge.gaugeImage
-        // From dump.cs line 385715: private Image gaugeImage; // 0x18
-        private const int OFFSET_GAUGE_IMAGE = 0x18;
-
         public static void Postfix(object __instance, GameCursor targetCursor)
         {
             try
@@ -205,7 +170,7 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(announcement))
                     return;
 
-                if (!ShouldAnnounce(CONTEXT_BATTLE_MAGIC, announcement))
+                if (!ShouldAnnounce(AnnouncementContexts.BATTLE_MAGIC, announcement))
                     return;
 
                 // Set active state and clear other menus
@@ -240,7 +205,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read dataList at offset 0x70
-                    IntPtr dataListPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_DATA_LIST);
+                    IntPtr dataListPtr = *(IntPtr*)((byte*)ptr.ToPointer() + IL2CppOffsets.BattleMagic.OFFSET_DATA_LIST);
                     if (dataListPtr == IntPtr.Zero)
                         return null;
 
@@ -257,7 +222,7 @@ namespace FFII_ScreenReader.Patches
                     OwnedCharacterData characterData = null;
                     try
                     {
-                        IntPtr playerPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_SELECTED_PLAYER);
+                        IntPtr playerPtr = *(IntPtr*)((byte*)ptr.ToPointer() + IL2CppOffsets.BattleMagic.OFFSET_SELECTED_PLAYER);
                         if (playerPtr != IntPtr.Zero)
                         {
                             var battlePlayerData = new BattlePlayerData(playerPtr);
@@ -270,7 +235,7 @@ namespace FFII_ScreenReader.Patches
                     float gaugeProgress = -1f;
                     try
                     {
-                        IntPtr contentListPtr = *(IntPtr*)((byte*)ptr.ToPointer() + OFFSET_CONTENT_LIST);
+                        IntPtr contentListPtr = *(IntPtr*)((byte*)ptr.ToPointer() + IL2CppOffsets.BattleMagic.OFFSET_CONTENT_LIST);
                         if (contentListPtr != IntPtr.Zero)
                         {
                             var contentList = new Il2CppSystem.Collections.Generic.List<BattleAbilityInfomationContentController>(contentListPtr);
@@ -307,12 +272,12 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Get commonGauge at offset 0x38
-                    IntPtr gaugePtr = *(IntPtr*)((byte*)contentPtr.ToPointer() + OFFSET_CONTENT_GAUGE);
+                    IntPtr gaugePtr = *(IntPtr*)((byte*)contentPtr.ToPointer() + IL2CppOffsets.BattleMagic.OFFSET_CONTENT_GAUGE);
                     if (gaugePtr == IntPtr.Zero)
                         return -1f;
 
                     // Get gaugeImage at offset 0x18
-                    IntPtr imagePtr = *(IntPtr*)((byte*)gaugePtr.ToPointer() + OFFSET_GAUGE_IMAGE);
+                    IntPtr imagePtr = *(IntPtr*)((byte*)gaugePtr.ToPointer() + IL2CppOffsets.BattleMagic.OFFSET_GAUGE_IMAGE);
                     if (imagePtr == IntPtr.Zero)
                         return -1f;
 

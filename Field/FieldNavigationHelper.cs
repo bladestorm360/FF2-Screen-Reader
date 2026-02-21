@@ -177,10 +177,7 @@ namespace FFII_ScreenReader.Field
                     hasLoggedTransportation = true;
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error getting field entities: {ex.Message}");
-            }
+            catch { }
 
             return results;
         }
@@ -313,9 +310,8 @@ namespace FFII_ScreenReader.Field
                 var pathPoints = MapRouteSearcher.Search(mapHandle, startCell, destCell, playerCollisionState);
                 return pathPoints == null || pathPoints.Count == 0;
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"[WallTones] IsAdjacentTileBlocked error: {ex.Message}");
                 return false;
             }
         }
@@ -496,7 +492,6 @@ namespace FFII_ScreenReader.Field
             catch (Exception ex)
             {
                 pathInfo.ErrorMessage = $"Pathfinding error: {ex.Message}";
-                MelonLogger.Warning($"[Pathfinding] EXCEPTION: {ex.Message}");
                 return pathInfo;
             }
         }

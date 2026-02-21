@@ -30,34 +30,24 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class KeywordMenuState
     {
-        /// <summary>
-        /// True when keyword menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.KEYWORD_MENU);
-
         // Context keys for index-based deduplication
         private const string CONTEXT_COMMAND_INDEX = "Keyword.CommandIndex";
         private const string CONTEXT_WORD_INDEX = "Keyword.WordIndex";
 
-        /// <summary>
-        /// Sets the keyword menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.KEYWORD_MENU, AnnouncementContexts.KEYWORD_COMMAND, AnnouncementContexts.KEYWORD_WORD, CONTEXT_COMMAND_INDEX, CONTEXT_WORD_INDEX);
+
+        static KeywordMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.KEYWORD_MENU);
+            _helper.RegisterResetHandler();
         }
 
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// State is cleared by transition patch when menu closes.
-        /// </summary>
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
+
         public static bool ShouldSuppress() => IsActive;
 
-        public static void ClearState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.KEYWORD_MENU);
-            AnnouncementDeduplicator.Reset(CONTEXT_KEYWORD_COMMAND, CONTEXT_KEYWORD_WORD, CONTEXT_COMMAND_INDEX, CONTEXT_WORD_INDEX);
-        }
+        public static void ClearState() => _helper.IsActive = false;
 
         public static bool CommandIndexChanged(int index)
         {
@@ -88,33 +78,23 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class WordsMenuState
     {
-        /// <summary>
-        /// True when words menu is active. Delegates to MenuStateRegistry.
-        /// </summary>
-        public static bool IsActive => MenuStateRegistry.IsActive(MenuStateRegistry.WORDS_MENU);
-
         // Context key for index-based deduplication
         private const string CONTEXT_WORD_INDEX = "WordsMenu.WordIndex";
 
-        /// <summary>
-        /// Sets the words menu as active, clearing other menu states.
-        /// </summary>
-        public static void SetActive()
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.WORDS_MENU, AnnouncementContexts.WORDS_MENU, CONTEXT_WORD_INDEX);
+
+        static WordsMenuState()
         {
-            MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.WORDS_MENU);
+            _helper.RegisterResetHandler();
         }
 
-        /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// State is cleared by transition patch when menu closes.
-        /// </summary>
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
+
         public static bool ShouldSuppress() => IsActive;
 
-        public static void ClearState()
-        {
-            MenuStateRegistry.Reset(MenuStateRegistry.WORDS_MENU);
-            AnnouncementDeduplicator.Reset(CONTEXT_WORDS_MENU, CONTEXT_WORD_INDEX);
-        }
+        public static void ClearState() => _helper.IsActive = false;
 
         public static bool WordIndexChanged(int index)
         {
@@ -149,7 +129,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[Keyword] Could not find SelectCommand method");
+                    MelonLogger.Error("[Keyword] Could not find SelectCommand method");
                 }
 
                 // Patch SecretWordController.SelectContentByWord for keyword list navigation (Ask/Learn)
@@ -164,7 +144,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[Keyword] Could not find SelectContentByWord method");
+                    MelonLogger.Error("[Keyword] Could not find SelectContentByWord method");
                 }
 
                 // Patch SecretWordController.SelectContentByItem for Key Items list navigation
@@ -179,7 +159,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[Keyword] Could not find SelectContentByItem method");
+                    MelonLogger.Error("[Keyword] Could not find SelectContentByItem method");
                 }
 
                 // Patch WordsContentListController.SetDescriptionText for Words menu navigation (KeyInput)
@@ -196,7 +176,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[Keyword] Could not find WordsContentListController.SetDescriptionText method");
+                    MelonLogger.Error("[Keyword] Could not find WordsContentListController.SetDescriptionText method");
                 }
 
                 // Also try Touch version with SetSelectContent
@@ -232,7 +212,7 @@ namespace FFII_ScreenReader.Patches
 
                 string commandName = KeywordMenuState.GetCommandName(index);
 
-                if (!ShouldAnnounce(CONTEXT_KEYWORD_COMMAND, commandName))
+                if (!ShouldAnnounce(AnnouncementContexts.KEYWORD_COMMAND, commandName))
                     return;
 
                 // Set active state AFTER validation
@@ -241,10 +221,7 @@ namespace FFII_ScreenReader.Patches
                 // Use interrupt: false to avoid cutting off NPC intro dialogue
                 FFII_ScreenReaderMod.SpeakText(commandName, interrupt: false);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] SelectCommand error: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -264,16 +241,13 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!ShouldAnnounce(CONTEXT_KEYWORD_WORD, keywordAnnouncement))
+                if (!ShouldAnnounce(AnnouncementContexts.KEYWORD_WORD, keywordAnnouncement))
                     return;
 
                 KeywordMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] SelectContentByWord error: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -293,16 +267,13 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(itemAnnouncement))
                     return;
 
-                if (!ShouldAnnounce(CONTEXT_KEYWORD_WORD, itemAnnouncement))
+                if (!ShouldAnnounce(AnnouncementContexts.KEYWORD_WORD, itemAnnouncement))
                     return;
 
                 KeywordMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(itemAnnouncement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] SelectContentByItem error: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -330,16 +301,13 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!ShouldAnnounce(CONTEXT_WORDS_MENU, keywordAnnouncement))
+                if (!ShouldAnnounce(AnnouncementContexts.WORDS_MENU, keywordAnnouncement))
                     return;
 
                 WordsMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Words] SetDescriptionText error: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -362,41 +330,14 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!ShouldAnnounce(CONTEXT_WORDS_MENU, keywordAnnouncement))
+                if (!ShouldAnnounce(AnnouncementContexts.WORDS_MENU, keywordAnnouncement))
                     return;
 
                 WordsMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Words Touch] SetSelectContent error: {ex.Message}");
-            }
+            catch { }
         }
-
-        // SecretWordControllerBase offsets (from dump.cs)
-        private const int OFFSET_SELECT_CONTENT_CURSOR = 0x30;
-        private const int OFFSET_WORD_DATA_LIST = 0x60;     // IEnumerable<SelectFieldContentData>
-        private const int OFFSET_ITEM_DATA_LIST = 0x68;     // IEnumerable<ItemListContentData>
-
-        // SelectFieldContentData offsets
-        private const int OFFSET_SFCD_NAME_MESSAGE_ID = 0x18;
-        private const int OFFSET_SFCD_DESCRIPTION_MESSAGE_ID = 0x20;
-
-        // ItemListContentData offsets
-        private const int OFFSET_ILCD_NAME = 0x20;
-        private const int OFFSET_ILCD_DESCRIPTION = 0x28;
-
-        // Cursor.Index offset
-        private const int OFFSET_CURSOR_INDEX = 0x20;
-
-        // KeyInput.WordsContentListController offsets
-        private const int OFFSET_WORDS_CONTENT_LIST = 0x28;
-        private const int OFFSET_WORDS_SELECT_CURSOR = 0x30;
-        private const int OFFSET_WORDS_KEYWORD_DICTIONARY = 0x38;
-
-        // CommonCommandContentController (KeyInput) offsets
-        private const int OFFSET_CCCC_NAME = 0x20;
 
         private static int GetContentCursorIndex(KeyInputSecretWordController controller)
         {
@@ -409,12 +350,12 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read selectContentCursor at offset 0x30
-                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_SELECT_CONTENT_CURSOR);
+                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_SELECT_CONTENT_CURSOR);
                     if (cursorPtr == IntPtr.Zero)
                         return -1;
 
                     // Read Index at offset 0x20 (typical backing field location)
-                    int index = *(int*)((byte*)cursorPtr.ToPointer() + OFFSET_CURSOR_INDEX);
+                    int index = *(int*)((byte*)cursorPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_CURSOR_INDEX);
                     return index;
                 }
             }
@@ -440,7 +381,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read wordDataList pointer at offset 0x60
-                    IntPtr wordDataListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_WORD_DATA_LIST);
+                    IntPtr wordDataListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_WORD_DATA_LIST);
                     if (wordDataListPtr == IntPtr.Zero)
                         return null;
 
@@ -466,10 +407,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] GetKeywordAtIndex error: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -511,10 +449,7 @@ namespace FFII_ScreenReader.Patches
                     return name;
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] FormatKeywordAnnouncement error: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -535,7 +470,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read itemDataList pointer at offset 0x68
-                    IntPtr itemDataListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_ITEM_DATA_LIST);
+                    IntPtr itemDataListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_ITEM_DATA_LIST);
                     if (itemDataListPtr == IntPtr.Zero)
                         return null;
 
@@ -560,10 +495,7 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] GetItemAtIndex error: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -591,10 +523,7 @@ namespace FFII_ScreenReader.Patches
                     return name;
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Keyword] FormatItemAnnouncement error: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -613,7 +542,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read selectCursor at offset 0x30
-                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_WORDS_SELECT_CURSOR);
+                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_WORDS_SELECT_CURSOR);
                     if (cursorPtr == IntPtr.Zero)
                         return -1;
 
@@ -622,10 +551,7 @@ namespace FFII_ScreenReader.Patches
                     return cursor.Index;
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Words] GetWordsContentCursorIndex error: {ex.Message}");
-            }
+            catch { }
 
             return -1;
         }
@@ -646,7 +572,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // First get the keyword ID from contentList[index]
-                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_WORDS_CONTENT_LIST);
+                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_WORDS_CONTENT_LIST);
                     if (contentListPtr == IntPtr.Zero)
                         return null;
 
@@ -661,7 +587,7 @@ namespace FFII_ScreenReader.Patches
                     int keywordId = contentItem.Id;
 
                     // Now look up the Content from keyWordContentDictionary
-                    IntPtr dictPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_WORDS_KEYWORD_DICTIONARY);
+                    IntPtr dictPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_WORDS_KEYWORD_DICTIONARY);
                     if (dictPtr == IntPtr.Zero)
                         return null;
 
@@ -714,18 +640,10 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Words] GetWordsKeywordFromDictionary error: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
-
-        // Touch.WordsContentListController offsets
-        private const int OFFSET_TOUCH_WORDS_VIEW = 0x18;
-        private const int OFFSET_TOUCH_WORDS_CONTENT_LIST = 0x20;
-        private const int OFFSET_TOUCH_WORDS_SELECT_CURSOR = 0x28;
 
         /// <summary>
         /// Gets keyword name and description from Touch WordsContentListController.
@@ -741,7 +659,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read contentList at offset 0x20
-                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_TOUCH_WORDS_CONTENT_LIST);
+                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_TOUCH_WORDS_CONTENT_LIST);
                     if (contentListPtr == IntPtr.Zero)
                         return null;
 
@@ -775,10 +693,7 @@ namespace FFII_ScreenReader.Patches
                     return name;
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Words Touch] GetWordsTouchKeywordAtIndex error: {ex.Message}");
-            }
+            catch { }
 
             return null;
         }
@@ -797,7 +712,7 @@ namespace FFII_ScreenReader.Patches
                 unsafe
                 {
                     // Read view at offset 0x18
-                    IntPtr viewPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + OFFSET_TOUCH_WORDS_VIEW);
+                    IntPtr viewPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_TOUCH_WORDS_VIEW);
                     if (viewPtr == IntPtr.Zero)
                         return null;
 

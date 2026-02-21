@@ -62,11 +62,10 @@ namespace FFII_ScreenReader.Patches
                 Type fadeManagerType = FindFadeManagerType();
                 if (fadeManagerType == null)
                 {
-                    MelonLogger.Warning("[MapTransition] FadeManager type not found");
+                    MelonLogger.Error("[MapTransition] FadeManager type not found");
                     return;
                 }
 
-                MelonLogger.Msg($"[MapTransition] Found FadeManager: {fadeManagerType.FullName}");
 
                 // Cache Instance property (inherited from SingletonMonoBehaviour<T>)
                 instanceProperty = AccessTools.Property(fadeManagerType, "Instance");
@@ -78,22 +77,20 @@ namespace FFII_ScreenReader.Patches
                 }
 
                 bool hasInstance = instanceProperty != null;
-                MelonLogger.Msg($"[MapTransition] Instance property: {(hasInstance ? "found" : "NOT FOUND")}");
 
                 if (!hasInstance)
                 {
-                    MelonLogger.Warning("[MapTransition] Cannot poll FadeManager without Instance property");
+                    MelonLogger.Error("[MapTransition] Cannot poll FadeManager without Instance property");
                     return;
                 }
 
                 // Cache IsFadeFinish method
                 isFadeFinishMethod = AccessTools.Method(fadeManagerType, "IsFadeFinish");
                 bool hasFadeFinish = isFadeFinishMethod != null;
-                MelonLogger.Msg($"[MapTransition] IsFadeFinish method: {(hasFadeFinish ? "found" : "NOT FOUND")}");
 
                 if (!hasFadeFinish)
                 {
-                    MelonLogger.Warning("[MapTransition] IsFadeFinish not found - fade detection disabled");
+                    MelonLogger.Error("[MapTransition] IsFadeFinish not found - fade detection disabled");
                     return;
                 }
 
@@ -104,17 +101,12 @@ namespace FFII_ScreenReader.Patches
                 {
                     object instance = instanceProperty.GetValue(null);
                     bool initialState = instance != null && (bool)isFadeFinishMethod.Invoke(instance, null);
-                    MelonLogger.Msg($"[MapTransition] Cached reflection initialized - IsFadeFinish={initialState}");
                 }
                 catch
                 {
-                    MelonLogger.Msg("[MapTransition] Cached reflection initialized - IsFadeFinish=(no instance yet)");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[MapTransition] Error initializing cached reflection: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -138,7 +130,6 @@ namespace FFII_ScreenReader.Patches
                         var type = asm.GetType(name);
                         if (type != null)
                         {
-                            MelonLogger.Msg($"[MapTransition] Found FadeManager in {asm.GetName().Name} as {name}");
                             return type;
                         }
                     }
@@ -155,7 +146,6 @@ namespace FFII_ScreenReader.Patches
                     {
                         if (type.Name == "FadeManager" && !type.IsNested)
                         {
-                            MelonLogger.Msg($"[MapTransition] Found FadeManager via broad search: {type.FullName} in {asm.GetName().Name}");
                             return type;
                         }
                     }

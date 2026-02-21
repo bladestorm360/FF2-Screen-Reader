@@ -16,12 +16,6 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class GameStatePatches
     {
-        // Field states that indicate player is on the field map
-        private const int STATE_CHANGE_MAP = 1;
-        private const int STATE_FIELD_READY = 2;
-        private const int STATE_PLAYER = 3;
-        private const int STATE_BATTLE = 13;
-
         private static int lastAnnouncedMapId = -1;
 
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
@@ -42,7 +36,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("[GameState] Could not find SubSceneManagerMainGame.ChangeState method");
+                    MelonLogger.Error("[GameState] Could not find SubSceneManagerMainGame.ChangeState method");
                 }
             }
             catch (Exception ex)
@@ -62,7 +56,7 @@ namespace FFII_ScreenReader.Patches
                 int stateValue = (int)state;
 
                 // When transitioning to field states, check for map changes and clear battle state
-                if (stateValue == STATE_FIELD_READY || stateValue == STATE_PLAYER || stateValue == STATE_CHANGE_MAP)
+                if (stateValue == IL2CppOffsets.GameState.STATE_FIELD_READY || stateValue == IL2CppOffsets.GameState.STATE_PLAYER || stateValue == IL2CppOffsets.GameState.STATE_CHANGE_MAP)
                 {
                     // Clear battle state if we were in battle
                     if (FFII_ScreenReaderMod.IsInBattle)

@@ -29,10 +29,7 @@ namespace FFII_ScreenReader.Patches
                 TryPatchSetDashFlag(harmony);
                 isPatched = true;
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[DashFlag] Error applying patches: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -52,7 +49,6 @@ namespace FFII_ScreenReader.Patches
                         var parameters = method.GetParameters();
                         if (parameters.Length == 1 && parameters[0].ParameterType == typeof(bool))
                         {
-                            MelonLogger.Msg("[DashFlag] Found SetDashFlag(bool)");
                             targetMethod = method;
                             break;
                         }
@@ -65,17 +61,13 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
 
                     harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                    MelonLogger.Msg("[DashFlag] Patched SetDashFlag successfully");
                 }
                 else
                 {
-                    MelonLogger.Warning("[DashFlag] Could not find SetDashFlag method");
+                    MelonLogger.Error("[DashFlag] Could not find SetDashFlag method");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[DashFlag] Error patching SetDashFlag: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

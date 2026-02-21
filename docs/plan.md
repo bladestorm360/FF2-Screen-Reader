@@ -19,7 +19,8 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 | Battle Messages | ✓ | Damage, healing, status, action names |
 | Battle Results | ✓ | Gil, weapon/magic level-ups, stat gains, items |
 | Field Navigation | ✓ | Entity scan, pathfinding, wall bump, vehicles, wall tones, footsteps, audio beacons |
-| Entity Translation | ✓ | Japanese→English name translation, untranslated name dumping (`` ` `` key) |
+| Waypoint System | ✓ | Add/rename/delete waypoints, category filtering, clear all with 2-step confirmation |
+| Entity Translation | ✓ | Japanese→English name translation, circled number prefixes (①②③...), untranslated name dumping (`0` key) |
 | Title Menu | ✓ | New Game, Continue, Options |
 | Popup Dialogs | ✓ | All types: confirmations, game over, title screen |
 | Save/Load | ✓ | Slot info, confirmations, quicksave |
@@ -39,13 +40,34 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 - **Spell proficiency**: 1-16 per spell
 - **Keyword system**: Learn/use keywords in NPC dialogue
 
+## Architectural Refactoring (2026-02-08)
+
+Ported FF3's proven architectural patterns to FF2. Main entry point reduced from 1,921 to 1,224 lines (36% reduction). All changes behavior-preserving.
+
+| Phase | New File | Lines | Status |
+|-------|----------|-------|--------|
+| 1. PreferencesManager | `Core/PreferencesManager.cs` | 138 | Done |
+| 2. AudioLoopManager | `Core/AudioLoopManager.cs` | 210 | Done |
+| 3. GameInfoAnnouncer | `Core/GameInfoAnnouncer.cs` | 100 | Done |
+| 4. WaypointController | `Core/WaypointController.cs` | 256 | Done |
+| 5. CursorSuppressionCheck | `Core/CursorSuppressionCheck.cs` | 94 | Done |
+| 6. IL2CppOffsets | `Utils/IL2CppOffsets.cs` | 248 | Done |
+| 7. HarmonyPatchHelper | `Utils/HarmonyPatchHelper.cs` | 185 | Done |
+| 8. MenuStateHelper | `Utils/MenuStateHelper.cs` | 83 | Done |
+
+## Code Audit (2026-02-07)
+
+Release prep cleanup completed:
+- **Logging**: Removed all `MelonLogger.Msg()` (29 calls) and `MelonLogger.Warning()` (105 catch blocks + 56 upgraded to Error). Only `MelonLogger.Error()` remains (126 calls for critical failures + broken patches).
+- **Dead code**: Deleted `Utils/SpeechHelper.cs` (zero callers), removed EntityScanner debug fields/infrastructure, simplified PathfindingFilter debug block.
+- **File consolidation**: Merged `PlayerPositionHelper.cs`, `CharacterUtility.cs`, `CollectionHelper.cs` into `Utils/Helpers.cs`. Extracted `DirectionHelper` from duplicated code in NavigableEntity/WaypointEntity into `Helpers.cs`. Made `ToLayerFilter` implement `IEntityFilter`.
+
 ## Documentation
 
 | Document | Purpose |
 |----------|---------|
 | [debug.md](debug.md) | Implementation details, memory offsets, bug fixes |
 | [port.md](port.md) | Features to port from FF3 |
-| [performanceIssues.md](performanceIssues.md) | Code cleanup: dead code, redundancy, debug logging |
 | [CLAUDE.md](../CLAUDE.md) | Build instructions, coding conventions |
 
 ## Build

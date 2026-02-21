@@ -57,9 +57,8 @@ namespace FFII_ScreenReader.Patches
                 }
                 currentLineIndex = 0;
             }
-            catch (Exception ex)
+            catch
             {
-                MelonLogger.Warning($"Error storing LineFade messages: {ex.Message}");
                 storedMessages = null;
                 currentLineIndex = 0;
             }
@@ -127,7 +126,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("FadeMessageManager type not found");
+                    MelonLogger.Error("FadeMessageManager type not found");
                 }
 
                 // Patch LineFadeMessageManager.Play and AsyncPlay - receives List<string> messages
@@ -154,7 +153,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("LineFadeMessageManager type not found");
+                    MelonLogger.Error("LineFadeMessageManager type not found");
                 }
 
                 // Patch ScrollMessageManager.Play - receives scroll message string
@@ -171,7 +170,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    MelonLogger.Warning("ScrollMessageManager type not found");
+                    MelonLogger.Error("ScrollMessageManager type not found");
                 }
 
                 // Patch LineFadeMessageWindowController for per-line announcements
@@ -188,7 +187,7 @@ namespace FFII_ScreenReader.Patches
                     }
                     else
                     {
-                        MelonLogger.Warning("LineFadeMessageWindowController.SetData not found");
+                        MelonLogger.Error("LineFadeMessageWindowController.SetData not found");
                     }
 
                     // Patch PlayInit to announce each line
@@ -201,12 +200,12 @@ namespace FFII_ScreenReader.Patches
                     }
                     else
                     {
-                        MelonLogger.Warning("LineFadeMessageWindowController.PlayInit not found");
+                        MelonLogger.Error("LineFadeMessageWindowController.PlayInit not found");
                     }
                 }
                 else
                 {
-                    MelonLogger.Warning("LineFadeMessageWindowController type not found");
+                    MelonLogger.Error("LineFadeMessageWindowController type not found");
                 }
             }
             catch (Exception ex)
@@ -272,10 +271,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(cleanMessage);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in FadeManagerPlay_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -331,10 +327,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(cleanMessage);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in LineFadeManagerPlay_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -365,10 +358,7 @@ namespace FFII_ScreenReader.Patches
 
                 FFII_ScreenReaderMod.SpeakText(cleanMessage);
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in ScrollManagerPlay_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -385,10 +375,7 @@ namespace FFII_ScreenReader.Patches
                 // This re-establishes context after auto-scrolling text events
                 DialogueTracker.ClearLastAnnouncedSpeaker();
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in LineFadeController_SetData_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>
@@ -401,10 +388,7 @@ namespace FFII_ScreenReader.Patches
             {
                 LineFadeMessageTracker.AnnounceNextLine();
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error in LineFadeController_PlayInit_Postfix: {ex.Message}");
-            }
+            catch { }
         }
 
         /// <summary>

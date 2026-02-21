@@ -9,6 +9,7 @@ using Il2CppLast.Defaine.Master;
 using Il2CppLast.Systems;
 using Il2CppLast.Battle;
 using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Utils;
 
 // Type aliases for status details UI controllers
 using KeyInputStatusDetailsController = Il2CppSerial.FF2.UI.KeyInput.StatusDetailsController;
@@ -76,10 +77,7 @@ namespace FFII_ScreenReader.Menus
                     parts.Add($"MP: {currentMp} / {maxMp}");
                 }
             }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error reading status details: {ex.Message}");
-            }
+            catch { }
 
             return parts.Count > 0 ? string.Join(". ", parts) : "No data";
         }
@@ -374,23 +372,6 @@ namespace FFII_ScreenReader.Menus
             cachePopulated = true;
         }
 
-        // Memory offset for SkillLevelContentController.view (private field)
-        private const int OFFSET_SKILL_VIEW = 0x18;
-        // Memory offset for CommonGauge.gaugeImage (private field)
-        private const int OFFSET_GAUGE_IMAGE = 0x18;
-        // Memory offset for StatusDetailsController (KeyInput).skillLevelContentList
-        private const int OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT = 0x80;
-        // Memory offset for StatusDetailsControllerBase.contentList (parameter controllers)
-        private const int OFFSET_CONTENT_LIST = 0x48;
-        // Memory offset for ParameterContentController.type
-        private const int OFFSET_PARAMETER_TYPE = 0x18;
-        // Memory offset for ParameterContentController.view
-        private const int OFFSET_PARAMETER_VIEW = 0x20;
-        // Memory offset for ParameterContentView.multipliedValueText (count value like "8" in "8x")
-        private const int OFFSET_MULTIPLIED_VALUE_TEXT = 0x28;
-        // ParameterType.AccuracyRate enum value (the count is displayed in the same controller's view)
-        private const int PARAMETER_TYPE_ACCURACY_RATE = 16;
-
         /// <summary>
         /// Cache all weapon skill data from UI controllers using LIST INDEX approach.
         /// The skillLevelContentList in StatusDetailsController is ordered to match visual display.
@@ -421,7 +402,7 @@ namespace FFII_ScreenReader.Menus
                 IntPtr listPtr;
                 unsafe
                 {
-                    listPtr = *(IntPtr*)((byte*)controllerPtr + OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT);
+                    listPtr = *(IntPtr*)((byte*)controllerPtr + IL2CppOffsets.StatusDetails.OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT);
                 }
 
                 if (listPtr == IntPtr.Zero)
@@ -459,7 +440,7 @@ namespace FFII_ScreenReader.Menus
                         IntPtr viewPtr;
                         unsafe
                         {
-                            viewPtr = *(IntPtr*)((byte*)skillControllerPtr + OFFSET_SKILL_VIEW);
+                            viewPtr = *(IntPtr*)((byte*)skillControllerPtr + IL2CppOffsets.StatusDetails.OFFSET_SKILL_VIEW);
                         }
                         if (viewPtr == IntPtr.Zero)
                         {
@@ -496,7 +477,7 @@ namespace FFII_ScreenReader.Menus
                                 IntPtr imagePtr;
                                 unsafe
                                 {
-                                    imagePtr = *(IntPtr*)((byte*)gaugePtr + OFFSET_GAUGE_IMAGE);
+                                    imagePtr = *(IntPtr*)((byte*)gaugePtr + IL2CppOffsets.StatusDetails.OFFSET_GAUGE_IMAGE);
                                 }
                                 if (imagePtr != IntPtr.Zero)
                                 {
@@ -554,7 +535,7 @@ namespace FFII_ScreenReader.Menus
                 IntPtr contentListPtr;
                 unsafe
                 {
-                    contentListPtr = *(IntPtr*)((byte*)controllerPtr + OFFSET_CONTENT_LIST);
+                    contentListPtr = *(IntPtr*)((byte*)controllerPtr + IL2CppOffsets.StatusDetails.OFFSET_CONTENT_LIST);
                 }
 
                 if (contentListPtr == IntPtr.Zero)
@@ -580,16 +561,16 @@ namespace FFII_ScreenReader.Menus
                         int paramType;
                         unsafe
                         {
-                            paramType = *(int*)((byte*)paramControllerPtr + OFFSET_PARAMETER_TYPE);
+                            paramType = *(int*)((byte*)paramControllerPtr + IL2CppOffsets.StatusDetails.OFFSET_PARAMETER_TYPE);
                         }
 
-                        if (paramType == PARAMETER_TYPE_ACCURACY_RATE)
+                        if (paramType == IL2CppOffsets.StatusDetails.PARAMETER_TYPE_ACCURACY_RATE)
                         {
                             // Read view pointer at offset 0x20
                             IntPtr viewPtr;
                             unsafe
                             {
-                                viewPtr = *(IntPtr*)((byte*)paramControllerPtr + OFFSET_PARAMETER_VIEW);
+                                viewPtr = *(IntPtr*)((byte*)paramControllerPtr + IL2CppOffsets.StatusDetails.OFFSET_PARAMETER_VIEW);
                             }
 
                             if (viewPtr == IntPtr.Zero) continue;
@@ -598,7 +579,7 @@ namespace FFII_ScreenReader.Menus
                             IntPtr textPtr;
                             unsafe
                             {
-                                textPtr = *(IntPtr*)((byte*)viewPtr + OFFSET_MULTIPLIED_VALUE_TEXT);
+                                textPtr = *(IntPtr*)((byte*)viewPtr + IL2CppOffsets.StatusDetails.OFFSET_MULTIPLIED_VALUE_TEXT);
                             }
 
                             if (textPtr != IntPtr.Zero)
@@ -849,7 +830,6 @@ namespace FFII_ScreenReader.Menus
 
             if (index < 0 || index >= statList.Count)
             {
-                MelonLogger.Warning($"Invalid stat index: {index}");
                 return;
             }
 
@@ -884,7 +864,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading name: {ex.Message}");
                 return "N/A";
             }
         }
@@ -906,7 +885,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading HP: {ex.Message}");
                 return "N/A";
             }
         }
@@ -922,7 +900,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading MP: {ex.Message}");
                 return "N/A";
             }
         }
@@ -940,7 +917,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Strength: {ex.Message}");
                 return "N/A";
             }
         }
@@ -954,7 +930,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Agility: {ex.Message}");
                 return "N/A";
             }
         }
@@ -968,7 +943,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Stamina: {ex.Message}");
                 return "N/A";
             }
         }
@@ -983,7 +957,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Intellect: {ex.Message}");
                 return "N/A";
             }
         }
@@ -997,7 +970,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Spirit: {ex.Message}");
                 return "N/A";
             }
         }
@@ -1011,7 +983,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Magic: {ex.Message}");
                 return "N/A";
             }
         }
@@ -1031,7 +1002,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Attack: {ex.Message}");
                 return "N/A";
             }
         }
@@ -1060,7 +1030,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Accuracy: {ex.Message}");
                 return "Accuracy: N/A";
             }
         }
@@ -1074,7 +1043,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Defense: {ex.Message}");
                 return "N/A";
             }
         }
@@ -1092,7 +1060,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Evasion: {ex.Message}");
                 return "Evasion: N/A";
             }
         }
@@ -1111,7 +1078,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Magic Defense: {ex.Message}");
                 return "Magic Defense: N/A";
             }
         }
@@ -1129,7 +1095,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading Magic Interference: {ex.Message}");
                 return "N/A";
             }
         }
@@ -1168,7 +1133,6 @@ namespace FFII_ScreenReader.Menus
             }
             catch (Exception ex)
             {
-                MelonLogger.Warning($"Error reading {skillName} skill: {ex.Message}");
                 return $"{skillName}: N/A";
             }
         }
