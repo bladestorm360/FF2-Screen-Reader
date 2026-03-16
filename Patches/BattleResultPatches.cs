@@ -5,6 +5,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for FF2
 using BattleResultData = Il2CppLast.Data.BattleResultData;
@@ -257,14 +258,14 @@ namespace FFII_ScreenReader.Patches
                 int gil = data.GetGil;
                 if (gil > 0)
                 {
-                    parts.Add($"{gil:N0} gil");
+                    parts.Add(string.Format(T("Gained {0} gil"), gil.ToString("N0")));
                 }
             }
             catch { }
 
             if (parts.Count > 0)
             {
-                string announcement = "Gained " + string.Join(", ", parts);
+                string announcement = string.Join(", ", parts);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
 
@@ -472,11 +473,11 @@ namespace FFII_ScreenReader.Patches
                     int count = itemContent.Count;
                     if (count > 1)
                     {
-                        announcement = $"Found {itemName} x{count}";
+                        announcement = string.Format(T("Found {0} x{1}"), itemName, count);
                     }
                     else
                     {
-                        announcement = $"Found {itemName}";
+                        announcement = string.Format(T("Found {0}"), itemName);
                     }
 
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
@@ -747,7 +748,7 @@ namespace FFII_ScreenReader.Patches
                 int gil = data.GetGil;
                 if (gil > 0)
                 {
-                    string announcement = $"Gained {gil:N0} gil";
+                    string announcement = string.Format(T("Gained {0} gil"), gil.ToString("N0"));
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }

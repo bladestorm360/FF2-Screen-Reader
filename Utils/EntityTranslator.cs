@@ -1,156 +1,42 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
+using System.Text;
 using System.Text.RegularExpressions;
 using MelonLoader;
 using UnityEngine;
+using Il2CppLast.Management;
 using FFII_ScreenReader.Field;
 
 namespace FFII_ScreenReader.Utils
 {
     /// <summary>
-    /// Translates Japanese entity names to English using an embedded dictionary.
-    /// Handles prefixes (e.g., "SC01:", "6:") and suffixes (trailing ASCII numbers).
+    /// Translates Japanese entity names to the current game language using an embedded
+    /// translation.json resource. Falls back to English when a language-specific
+    /// translation is missing; returns the original name when no entry exists at all.
+    /// Handles prefixes (e.g., "SC01:", "Sc E 0025:", "6:") and suffixes (trailing ASCII digits).
     /// Circled numbers (①②③) are preserved as part of the key.
     /// </summary>
     public static class EntityTranslator
     {
-        // Embedded translations dictionary - no external file dependency
-        // Complete set from FFII_translations.json
-        private static Dictionary<string, string> translations = new Dictionary<string, string>
-        {
-            // Main characters
-            {"ヒルダ", "Hilda"},
-            {"ミンウ", "Minwu"},
-            {"ポール", "Paul"},
-            {"ゴードン", "Gordon"},
-            {"トブール", "Tobul"},
-            {"シド", "Cid"},
-            {"ヨーゼフ", "Josef"},
-            {"ネリー", "Nelly"},
-            {"サージェント", "Sergeant"},
-            {"ボーゲン", "Borghen"},
-            {"ダークナイト", "Dark Knight"},
-            {"ゴートス", "Gottos"},
-            {"レイラ", "Leila"},
-            {"リチャード", "Richard"},
-            {"レオンハルト", "Leonhart"},
-            {"皇帝", "Emperor"},
-            {"皇帝（復活後）", "Emperor (Resurrected)"},
+        // Nested translations: JapaneseKey -> { langCode -> localizedValue }
+        private static Dictionary<string, Dictionary<string, string>> translations;
+        private static bool isInitialized = false;
 
-            // Tutorial elders
-            {"武器老人", "Weapons Elder"},
-            {"ステータス老人", "Status Elder"},
-            {"熟練度老人", "Proficiency Elder"},
-            {"防具老人", "Armor Elder"},
-            {"にげる老人", "Escape Elder"},
-            {"魔法老人", "Magic Elder"},
-            {"宝箱老人", "Treasure Elder"},
-            {"モンスター老人", "Monster Elder"},
-            {"ことば老人", "Keywords Elder"},
-            {"たいれつ老人", "Formation Elder"},
+        private static string cachedLanguageCode = "en";
+        private static bool hasLoggedLanguage = false;
 
-            // Shop keepers - weapon shops
-            {"武器屋（赤い男性）", "Weapon Shop Clerk"},
-            {"武器屋（赤いおやじ）", "Weapon Shop Clerk"},
-            {"武器屋(赤いおやじ)", "Weapon Shop Clerk"},
-
-            // Shop keepers - armor shops
-            {"防具屋（緑のオヤジ）", "Armor Shop Clerk"},
-            {"防具屋(緑のおやじ)", "Armor Shop Clerk"},
-            {"武具屋（緑のオヤジ）", "Armor Shop Clerk"},
-            {"武具屋(緑のおやじ)", "Armor Shop Clerk"},
-
-            // Shop keepers - item shops
-            {"道具屋（青いおやじ）", "Item Shop Clerk"},
-            {"道具屋(青いおやじ)", "Item Shop Clerk"},
-
-            // Shop keepers - inns
-            {"宿屋（ピンクドレスの女性）", "Innkeeper"},
-            {"宿屋(ピンクドレスの女性)", "Innkeeper"},
-
-            // Shop keepers - magic and Fynn
-            {"魔法屋", "Magic Shop"},
-            {"フィンの町の店主", "Fynn Shop Clerk"},
-            {"フィンの町の店主　色替え1", "Fynn Shop Clerk (Variant 1)"},
-            {"フィンの町の店主色替え2", "Fynn Shop Clerk (Variant 2)"},
-
-            // Generic NPCs - men
-            {"男性（青服）", "Man (Blue Clothes)"},
-            {"男性（青服①）", "Man (Blue Clothes)"},
-            {"男性（青服②）", "Man (Blue Clothes)"},
-
-            // Generic NPCs - women and children
-            {"女性（青服）", "Woman (Blue Clothes)"},
-            {"子供（金髪）", "Child (Blond)"},
-
-            // Generic NPCs - elders and villagers
-            {"老人", "Elder"},
-            {"村人", "Villager"},
-            {"村人（装備関係ショップ）", "Villager (Equipment Shop)"},
-            {"村人アイテム関係ショップ）", "Villager (Item Shop)"},
-
-            // Generic NPCs - mages
-            {"黒魔導士(青)", "Black Mage (Blue)"},
-            {"黒魔導士（青）", "Black Mage (Blue)"},
-            {"黒魔導士（赤）", "Black Mage (Red)"},
-            {"黒魔導士（緑）", "Black Mage (Green)"},
-            {"黒魔術師（青）", "Black Mage (Blue)"},
-
-            // Generic NPCs - adventurers
-            {"ポニーテール女", "Adventurer (Ponytail)"},
-            {"冒険者(ポニーテール女）", "Adventurer (Ponytail)"},
-            {"冒険者（ポニーテール女）", "Adventurer (Ponytail)"},
-
-            // Generic NPCs - soldiers and military
-            {"パラメキア兵", "Palamecian Soldier"},
-            {"帝国兵", "Imperial Soldier"},
-            {"兵士（白い帽子、青マント）", "Soldier (White Hat, Blue Cape)"},
-            {"兵士(白い帽子、青マント)", "Soldier (White Hat, Blue Cape)"},
-
-            // Generic NPCs - seafarers
-            {"海賊", "Pirate"},
-            {"船乗り", "Sailor"},
-            {"飛空艇乗り", "Airship Crew"},
-
-            // Generic NPCs - other
-            {"奴隷", "Slave"},
-            {"仮面　色変え1", "Masked Figure"},
-
-            // Vehicles (overworld spawn points)
-            {"飛竜", "Wyvern"},
-            {"飛竜(sc_e_0080用)", "Wyvern"},
-            {"飛空艇", "Airship"},
-            {"大戦艦", "Dreadnought"},
-
-            // Enemies/Monsters
-            {"ジャイアントビーバー", "Giant Beaver"},
-            {"レッドソウル", "Red Soul"},
-            {"キマイラ", "Chimera"},
-            {"ベヒーモス", "Behemoth"},
-            {"ビックホーン", "Big Horn"},
-            {"ドッペルゲンガー", "Doppelganger"},
-            {"ファイアギガース", "Fire Gigas"},
-            {"アイスギガース", "Ice Gigas"},
-            {"サンダギガース", "Thunder Gigas"},
-
-            // Special NPCs - swallowed
-            {"飲み込まれた男", "Swallowed Man"},
-            {"飲み込まれた女", "Swallowed Woman"},
-            {"飲み込まれた海賊", "Swallowed Pirate"},
-            {"飲み込まれた老人", "Swallowed Elder"},
-
-            // Objects and prefixed entries
-            {"隠し通路の蓋", "Hidden Passage Lid"},
-            {"Sc E 0025:隠し通路の蓋", "Hidden Passage Lid"},
-            {"Sc E 0054:ベヒーモス", "Behemoth"},
-            {"Sc E 0082:皇帝１", "Emperor"},
-        };
-
-        private static string translationsPath; // Still needed for dump functionality
+        private static string translationsPath; // Needed for dump functionality
 
         // Track untranslated names by map for dumping
         private static Dictionary<string, HashSet<string>> untranslatedNamesByMap = new Dictionary<string, HashSet<string>>();
+
+        private static readonly Dictionary<int, string> LanguageCodeMap = new()
+        {
+            {1,"ja"},{2,"en"},{3,"fr"},{4,"it"},{5,"de"},{6,"es"},
+            {7,"ko"},{8,"zht"},{9,"zhc"},{10,"ru"},{11,"th"},{12,"pt"}
+        };
 
         // Matches numeric prefix (e.g., "6:") or SC prefix (e.g., "SC01:", "Sc E 0025:") at start of entity names
         private static readonly Regex EntityPrefixRegex = new Regex(
@@ -163,35 +49,122 @@ namespace FFII_ScreenReader.Utils
             RegexOptions.Compiled);
 
         /// <summary>
-        /// Translates a Japanese entity name to English.
+        /// Detects the current game language via MessageManager and returns a language code.
+        /// </summary>
+        public static string DetectLanguage()
+        {
+            try
+            {
+                var mgr = MessageManager.Instance;
+                if (mgr != null)
+                {
+                    int langId = (int)mgr.currentLanguage;
+                    if (LanguageCodeMap.TryGetValue(langId, out string code))
+                    {
+                        cachedLanguageCode = code;
+                        if (!hasLoggedLanguage)
+                        {
+                            MelonLogger.Msg($"[EntityTranslator] Detected language: {cachedLanguageCode}");
+                            hasLoggedLanguage = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!hasLoggedLanguage)
+                    MelonLogger.Msg($"[EntityTranslator] DetectLanguage exception: {ex.Message}");
+            }
+            return cachedLanguageCode;
+        }
+
+        /// <summary>
+        /// Loads translation.json from the embedded resource.
+        /// </summary>
+        public static void Initialize()
+        {
+            if (isInitialized) return;
+
+            translations = new Dictionary<string, Dictionary<string, string>>();
+
+            try
+            {
+                using var stream = Assembly.GetExecutingAssembly()
+                    .GetManifestResourceStream("translation.json");
+
+                if (stream != null)
+                {
+                    using var reader = new StreamReader(stream, Encoding.UTF8);
+                    string json = reader.ReadToEnd();
+
+                    translations = ParseNestedJson(json);
+                    MelonLogger.Msg($"[EntityTranslator] Loaded {translations.Count} entity translation entries");
+                }
+                else
+                {
+                    MelonLogger.Warning("[EntityTranslator] Embedded translation.json not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[EntityTranslator] Error loading translations: {ex.Message}");
+            }
+
+            isInitialized = true;
+        }
+
+        /// <summary>
+        /// Translates a Japanese entity name to the current game language.
         /// Returns original name if no translation found.
         /// Handles prefixes and trailing ASCII number suffixes.
+        /// Skips translation entirely when the game language is Japanese.
         /// </summary>
         public static string Translate(string japaneseName)
         {
             if (string.IsNullOrEmpty(japaneseName))
                 return japaneseName;
 
+            if (!isInitialized)
+                Initialize();
+
+            // Skip translation when game is set to Japanese
+            string lang = DetectLanguage();
+            if (lang == "ja")
+                return japaneseName;
+
             // 1. Exact match first (handles entries with circled numbers like ①②③)
-            if (translations.TryGetValue(japaneseName, out string englishName))
-                return englishName;
+            string localized = LookupLocalized(japaneseName, lang);
+            if (localized != null)
+                return localized;
 
             // 2. Strip numeric/SC prefix and try lookup
             StripPrefix(japaneseName, out string prefix, out string afterPrefix);
-            if (prefix != null && translations.TryGetValue(afterPrefix, out string prefixTranslation))
-                return prefix + " " + prefixTranslation;
+            if (prefix != null)
+            {
+                string prefixTranslation = LookupLocalized(afterPrefix, lang);
+                if (prefixTranslation != null)
+                    return prefix + " " + prefixTranslation;
+            }
 
             // 3. Strip trailing ASCII digits and try lookup (e.g., "ヒルダ2" -> "Hilda 2")
             StripTrailingDigits(japaneseName, out string baseName, out string suffix);
-            if (suffix != null && translations.TryGetValue(baseName, out string suffixTranslation))
-                return suffixTranslation + " " + suffix;
+            if (suffix != null)
+            {
+                string suffixTranslation = LookupLocalized(baseName, lang);
+                if (suffixTranslation != null)
+                    return suffixTranslation + " " + suffix;
+            }
 
             // 4. Try both prefix AND suffix stripping
             if (prefix != null)
             {
                 StripTrailingDigits(afterPrefix, out string baseAfterPrefix, out string suffixAfterPrefix);
-                if (suffixAfterPrefix != null && translations.TryGetValue(baseAfterPrefix, out string bothTranslation))
-                    return prefix + " " + bothTranslation + " " + suffixAfterPrefix;
+                if (suffixAfterPrefix != null)
+                {
+                    string bothTranslation = LookupLocalized(baseAfterPrefix, lang);
+                    if (bothTranslation != null)
+                        return prefix + " " + bothTranslation + " " + suffixAfterPrefix;
+                }
             }
 
             // 5. Track untranslated name by current map (use base name to deduplicate)
@@ -209,6 +182,28 @@ namespace FFII_ScreenReader.Utils
 
             // Return original if no translation
             return japaneseName;
+        }
+
+        /// <summary>
+        /// Looks up a Japanese key and returns the localized string for the given language.
+        /// Falls back to English if the target language entry is missing.
+        /// Returns null if no entry exists at all.
+        /// </summary>
+        private static string LookupLocalized(string japaneseKey, string lang)
+        {
+            if (translations == null || !translations.TryGetValue(japaneseKey, out var langDict))
+                return null;
+
+            // Try target language first
+            if (langDict.TryGetValue(lang, out string localized) && !string.IsNullOrEmpty(localized))
+                return localized;
+
+            // Fall back to English
+            if (lang != "en" && langDict.TryGetValue("en", out string english) && !string.IsNullOrEmpty(english))
+                return english;
+
+            // Return null to indicate no usable translation
+            return null;
         }
 
         /// <summary>
@@ -300,7 +295,7 @@ namespace FFII_ScreenReader.Utils
                 if (File.Exists(dumpPath))
                 {
                     string existingJson = File.ReadAllText(dumpPath);
-                    existingData = ParseNestedJsonDictionary(existingJson);
+                    existingData = ParseNestedJsonDump(existingJson);
                 }
 
                 // Check if map already exists in file
@@ -352,10 +347,138 @@ namespace FFII_ScreenReader.Utils
             }
         }
 
+        // ─────────────────────────────────────────────
+        //  JSON parsing for nested { key: { lang: value } } format
+        //  (copied from ModTextTranslator pattern)
+        // ─────────────────────────────────────────────
+
+        internal static Dictionary<string, Dictionary<string, string>> ParseNestedJson(string json)
+        {
+            var result = new Dictionary<string, Dictionary<string, string>>();
+            if (string.IsNullOrEmpty(json)) return result;
+
+            json = json.Trim();
+            if (!json.StartsWith("{") || !json.EndsWith("}"))
+                return result;
+
+            string inner = json.Substring(1, json.Length - 2);
+
+            int pos = 0;
+            while (pos < inner.Length)
+            {
+                int keyStart = inner.IndexOf('"', pos);
+                if (keyStart < 0) break;
+                int keyEnd = FindClosingQuote(inner, keyStart + 1);
+                if (keyEnd < 0) break;
+
+                string entryKey = UnescapeJsonString(inner.Substring(keyStart + 1, keyEnd - keyStart - 1));
+
+                int braceStart = inner.IndexOf('{', keyEnd);
+                if (braceStart < 0) break;
+
+                int braceEnd = FindMatchingBrace(inner, braceStart);
+                if (braceEnd < 0) break;
+
+                string innerJson = inner.Substring(braceStart + 1, braceEnd - braceStart - 1);
+                result[entryKey] = ParseStringDictionary(innerJson);
+
+                pos = braceEnd + 1;
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, string> ParseStringDictionary(string json)
+        {
+            var dict = new Dictionary<string, string>();
+            int pos = 0;
+            while (pos < json.Length)
+            {
+                int keyStart = json.IndexOf('"', pos);
+                if (keyStart < 0) break;
+                int keyEnd = FindClosingQuote(json, keyStart + 1);
+                if (keyEnd < 0) break;
+
+                string key = UnescapeJsonString(json.Substring(keyStart + 1, keyEnd - keyStart - 1));
+
+                int colonIdx = json.IndexOf(':', keyEnd);
+                if (colonIdx < 0) break;
+
+                int valStart = json.IndexOf('"', colonIdx);
+                if (valStart < 0) break;
+                int valEnd = FindClosingQuote(json, valStart + 1);
+                if (valEnd < 0) break;
+
+                string value = UnescapeJsonString(json.Substring(valStart + 1, valEnd - valStart - 1));
+                dict[key] = value;
+
+                pos = valEnd + 1;
+            }
+            return dict;
+        }
+
+        private static int FindClosingQuote(string s, int startAfterOpenQuote)
+        {
+            for (int i = startAfterOpenQuote; i < s.Length; i++)
+            {
+                if (s[i] == '\\') { i++; continue; }
+                if (s[i] == '"') return i;
+            }
+            return -1;
+        }
+
+        private static int FindMatchingBrace(string s, int openBracePos)
+        {
+            int depth = 1;
+            bool inString = false;
+            for (int i = openBracePos + 1; i < s.Length; i++)
+            {
+                char c = s[i];
+                if (c == '\\' && inString) { i++; continue; }
+                if (c == '"') { inString = !inString; continue; }
+                if (inString) continue;
+                if (c == '{') depth++;
+                else if (c == '}') { depth--; if (depth == 0) return i; }
+            }
+            return -1;
+        }
+
+        private static string UnescapeJsonString(string s)
+        {
+            if (s.IndexOf('\\') < 0) return s;
+            var sb = new StringBuilder(s.Length);
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] == '\\' && i + 1 < s.Length)
+                {
+                    char next = s[i + 1];
+                    switch (next)
+                    {
+                        case '"': sb.Append('"'); i++; break;
+                        case '\\': sb.Append('\\'); i++; break;
+                        case 'n': sb.Append('\n'); i++; break;
+                        case 'r': sb.Append('\r'); i++; break;
+                        case 't': sb.Append('\t'); i++; break;
+                        case '/': sb.Append('/'); i++; break;
+                        default: sb.Append(s[i]); break;
+                    }
+                }
+                else
+                {
+                    sb.Append(s[i]);
+                }
+            }
+            return sb.ToString();
+        }
+
+        // ─────────────────────────────────────────────
+        //  Dump-specific JSON parsing (flat nested for EntityNames.json)
+        // ─────────────────────────────────────────────
+
         /// <summary>
-        /// Parses nested JSON: { "MapName": { "Japanese": "", ... }, ... }
+        /// Parses nested JSON for dump files: { "MapName": { "Japanese": "", ... }, ... }
         /// </summary>
-        private static Dictionary<string, Dictionary<string, string>> ParseNestedJsonDictionary(string json)
+        private static Dictionary<string, Dictionary<string, string>> ParseNestedJsonDump(string json)
         {
             var result = new Dictionary<string, Dictionary<string, string>>();
 
@@ -366,189 +489,34 @@ namespace FFII_ScreenReader.Utils
             if (!json.StartsWith("{") || !json.EndsWith("}"))
                 return result;
 
-            // Remove outer braces
-            json = json.Substring(1, json.Length - 2).Trim();
-            if (string.IsNullOrEmpty(json))
+            string inner = json.Substring(1, json.Length - 2).Trim();
+            if (string.IsNullOrEmpty(inner))
                 return result;
 
             int pos = 0;
-            while (pos < json.Length)
+            while (pos < inner.Length)
             {
-                // Find map name key
-                int keyStart = json.IndexOf('"', pos);
+                int keyStart = inner.IndexOf('"', pos);
                 if (keyStart < 0) break;
 
-                int keyEnd = FindClosingQuote(json, keyStart + 1);
+                int keyEnd = FindClosingQuote(inner, keyStart + 1);
                 if (keyEnd < 0) break;
 
-                string mapKey = json.Substring(keyStart + 1, keyEnd - keyStart - 1);
-                mapKey = mapKey.Replace("\\\"", "\"").Replace("\\\\", "\\");
+                string mapKey = UnescapeJsonString(inner.Substring(keyStart + 1, keyEnd - keyStart - 1));
 
-                // Find the opening brace for this map's value
-                int braceStart = json.IndexOf('{', keyEnd);
+                int braceStart = inner.IndexOf('{', keyEnd);
                 if (braceStart < 0) break;
 
-                // Find matching closing brace
-                int braceEnd = FindMatchingBrace(json, braceStart);
+                int braceEnd = FindMatchingBrace(inner, braceStart);
                 if (braceEnd < 0) break;
 
-                // Parse inner dictionary
-                string innerJson = json.Substring(braceStart, braceEnd - braceStart + 1);
-                result[mapKey] = ParseJsonDictionary(innerJson);
+                string mapJson = inner.Substring(braceStart + 1, braceEnd - braceStart - 1);
+                result[mapKey] = ParseStringDictionary(mapJson);
 
                 pos = braceEnd + 1;
             }
 
             return result;
-        }
-
-        /// <summary>
-        /// Simple JSON dictionary parser for inner dictionaries.
-        /// </summary>
-        private static Dictionary<string, string> ParseJsonDictionary(string json)
-        {
-            var result = new Dictionary<string, string>();
-
-            if (string.IsNullOrWhiteSpace(json))
-                return result;
-
-            // Remove outer braces and whitespace
-            json = json.Trim();
-            if (json.StartsWith("{")) json = json.Substring(1);
-            if (json.EndsWith("}")) json = json.Substring(0, json.Length - 1);
-            json = json.Trim();
-
-            if (string.IsNullOrEmpty(json))
-                return result;
-
-            // Parse key-value pairs
-            int pos = 0;
-            while (pos < json.Length)
-            {
-                // Find opening quote for key
-                int keyStart = json.IndexOf('"', pos);
-                if (keyStart < 0) break;
-
-                // Find closing quote for key
-                int keyEnd = json.IndexOf('"', keyStart + 1);
-                if (keyEnd < 0) break;
-
-                string key = json.Substring(keyStart + 1, keyEnd - keyStart - 1);
-
-                // Find colon
-                int colonPos = json.IndexOf(':', keyEnd);
-                if (colonPos < 0) break;
-
-                // Find opening quote for value
-                int valueStart = json.IndexOf('"', colonPos);
-                if (valueStart < 0) break;
-
-                // Find closing quote for value (handle escaped quotes)
-                int valueEnd = valueStart + 1;
-                while (valueEnd < json.Length)
-                {
-                    valueEnd = json.IndexOf('"', valueEnd);
-                    if (valueEnd < 0) break;
-
-                    // Check if escaped
-                    int backslashes = 0;
-                    int checkPos = valueEnd - 1;
-                    while (checkPos >= valueStart && json[checkPos] == '\\')
-                    {
-                        backslashes++;
-                        checkPos--;
-                    }
-
-                    if (backslashes % 2 == 0)
-                        break; // Not escaped
-
-                    valueEnd++;
-                }
-
-                if (valueEnd < 0) break;
-
-                string value = json.Substring(valueStart + 1, valueEnd - valueStart - 1);
-
-                // Unescape basic sequences
-                value = value.Replace("\\\"", "\"").Replace("\\\\", "\\");
-
-                result[key] = value;
-
-                // Move to next pair
-                pos = valueEnd + 1;
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Finds the closing quote for a JSON string, handling escaped quotes.
-        /// </summary>
-        private static int FindClosingQuote(string json, int startPos)
-        {
-            int pos = startPos;
-            while (pos < json.Length)
-            {
-                pos = json.IndexOf('"', pos);
-                if (pos < 0) return -1;
-
-                // Count preceding backslashes
-                int backslashes = 0;
-                int checkPos = pos - 1;
-                while (checkPos >= startPos - 1 && json[checkPos] == '\\')
-                {
-                    backslashes++;
-                    checkPos--;
-                }
-
-                if (backslashes % 2 == 0)
-                    return pos; // Not escaped
-
-                pos++;
-            }
-            return -1;
-        }
-
-        /// <summary>
-        /// Finds the matching closing brace for an opening brace.
-        /// </summary>
-        private static int FindMatchingBrace(string json, int openPos)
-        {
-            int depth = 0;
-            bool inString = false;
-
-            for (int i = openPos; i < json.Length; i++)
-            {
-                char c = json[i];
-
-                if (inString)
-                {
-                    if (c == '\\')
-                    {
-                        i++; // Skip escaped character
-                        continue;
-                    }
-                    if (c == '"')
-                        inString = false;
-                    continue;
-                }
-
-                if (c == '"')
-                {
-                    inString = true;
-                }
-                else if (c == '{')
-                {
-                    depth++;
-                }
-                else if (c == '}')
-                {
-                    depth--;
-                    if (depth == 0)
-                        return i;
-                }
-            }
-            return -1;
         }
 
         /// <summary>
@@ -585,6 +553,6 @@ namespace FFII_ScreenReader.Utils
         /// <summary>
         /// Gets the count of loaded translations.
         /// </summary>
-        public static int TranslationCount => translations.Count;
+        public static int TranslationCount => translations?.Count ?? 0;
     }
 }

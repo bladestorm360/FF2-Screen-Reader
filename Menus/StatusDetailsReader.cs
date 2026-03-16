@@ -10,6 +10,7 @@ using Il2CppLast.Systems;
 using Il2CppLast.Battle;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for status details UI controllers
 using KeyInputStatusDetailsController = Il2CppSerial.FF2.UI.KeyInput.StatusDetailsController;
@@ -52,7 +53,7 @@ namespace FFII_ScreenReader.Menus
         {
             if (currentCharacterData == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             var parts = new List<string>();
@@ -79,7 +80,7 @@ namespace FFII_ScreenReader.Menus
             }
             catch { }
 
-            return parts.Count > 0 ? string.Join(". ", parts) : "No data";
+            return parts.Count > 0 ? string.Join(". ", parts) : T("No data");
         }
 
         /// <summary>
@@ -89,7 +90,7 @@ namespace FFII_ScreenReader.Menus
         {
             if (currentCharacterData == null || currentCharacterData.Parameter == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             try
@@ -125,7 +126,7 @@ namespace FFII_ScreenReader.Menus
         {
             if (currentCharacterData == null || currentCharacterData.Parameter == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             try
@@ -158,7 +159,7 @@ namespace FFII_ScreenReader.Menus
         {
             if (currentCharacterData == null || currentCharacterData.Parameter == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             try
@@ -188,7 +189,7 @@ namespace FFII_ScreenReader.Menus
         {
             if (currentCharacterData == null || currentCharacterData.Parameter == null)
             {
-                return "No character data available";
+                return T("No character data available");
             }
 
             try
@@ -812,7 +813,7 @@ namespace FFII_ScreenReader.Menus
             var tracker = StatusNavigationTracker.Instance;
             if (!tracker.ValidateState())
             {
-                FFII_ScreenReaderMod.SpeakText("Navigation not available");
+                FFII_ScreenReaderMod.SpeakText(T("Navigation not available"));
                 return;
             }
 
@@ -835,7 +836,7 @@ namespace FFII_ScreenReader.Menus
 
             if (tracker.CurrentCharacterData == null)
             {
-                FFII_ScreenReaderMod.SpeakText("No character data");
+                FFII_ScreenReaderMod.SpeakText(T("No character data"));
                 return;
             }
 
@@ -848,7 +849,7 @@ namespace FFII_ScreenReader.Menus
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error reading stat at index {index}: {ex.Message}");
-                FFII_ScreenReaderMod.SpeakText("Error reading stat");
+                FFII_ScreenReaderMod.SpeakText(T("Error reading stat"));
             }
         }
 

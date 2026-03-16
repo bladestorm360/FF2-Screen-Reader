@@ -7,6 +7,7 @@ using FFII_ScreenReader.Menus;
 using FFII_ScreenReader.Patches;
 using FFII_ScreenReader.Utils;
 using Object = UnityEngine.Object;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP config controllers
 using ConfigActualDetailsControllerBase_KeyInput = Il2CppLast.UI.KeyInput.ConfigActualDetailsControllerBase;
@@ -44,7 +45,7 @@ namespace FFII_ScreenReader.Core
 
         private static void NotAvailableInBattle()
         {
-            FFII_ScreenReaderMod.SpeakText("Not available in battle", interrupt: true);
+            FFII_ScreenReaderMod.SpeakText(T("Not available in battle"), interrupt: true);
         }
 
         private void InitializeBindings()
@@ -98,7 +99,8 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.M, KeyModifier.Shift, KeyContext.Global, mod.ToggleMapExitFilter, "Toggle map exit filter");
             registry.Register(KeyCode.M, KeyModifier.None, KeyContext.Global, GameInfoAnnouncer.AnnounceCurrentMap, "Announce current map");
             registry.Register(KeyCode.V, KeyContext.Global, AnnounceVehicleState, "Announce vehicle state");
-            registry.Register(KeyCode.I, KeyContext.Global, HandleItemDetailsKey, "Item details / config tooltip");
+            registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, KeyHelpReader.AnnounceKeyHelp, "Announce visible controls");
+            registry.Register(KeyCode.I, KeyModifier.None, KeyContext.Global, HandleItemDetailsKey, "Item details / config tooltip");
 
             // --- Battle-only: character status ---
             registry.Register(KeyCode.H, KeyContext.Battle, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
@@ -147,7 +149,7 @@ namespace FFII_ScreenReader.Core
                 if (!FFII_ScreenReaderMod.IsInBattle)
                     ModMenu.Open();
                 else
-                    FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(T("Unavailable in battle"), interrupt: true);
                 return;
             }
 
@@ -224,11 +226,11 @@ namespace FFII_ScreenReader.Core
                     PreferencesManager.SetEnemyHPDisplay(next);
 
                     string[] options = { "Numbers", "Percentage", "Hidden" };
-                    FFII_ScreenReaderMod.SpeakText($"Enemy HP: {options[next]}", interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Enemy HP: {0}"), T(options[next])), interrupt: true);
                 }
                 else
                 {
-                    FFII_ScreenReaderMod.SpeakText("Unavailable in battle", interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(T("Unavailable in battle"), interrupt: true);
                 }
             }
         }
@@ -379,7 +381,7 @@ namespace FFII_ScreenReader.Core
             }
             catch
             {
-                FFII_ScreenReaderMod.SpeakText("Failed to dump entity names", true);
+                FFII_ScreenReaderMod.SpeakText(T("Failed to dump entity names"), true);
             }
         }
 
@@ -418,7 +420,7 @@ namespace FFII_ScreenReader.Core
             try
             {
                 bool isDashing = MoveStateHelper.GetDashFlag();
-                string state = isDashing ? "Run" : "Walk";
+                string state = isDashing ? T("Run") : T("Walk");
                 FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
             }
             catch { }
@@ -436,7 +438,7 @@ namespace FFII_ScreenReader.Core
                 if (userData?.CheatSettingsData != null)
                 {
                     bool enabled = userData.CheatSettingsData.IsEnableEncount;
-                    string state = enabled ? "Encounters on" : "Encounters off";
+                    string state = enabled ? T("Encounters on") : T("Encounters off");
                     FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
                 }
             }

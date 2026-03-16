@@ -6,6 +6,7 @@ using Il2CppLast.Entity.Field;
 using Il2CppLast.Map;
 using FFII_ScreenReader.Utils;
 using FFII_ScreenReader.Core;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -129,14 +130,14 @@ namespace FFII_ScreenReader.Patches
                     string vehicleName = GetTransportationName(transportationId);
                     if (!string.IsNullOrEmpty(vehicleName))
                     {
-                        announcement = $"On {vehicleName}";
+                        announcement = string.Format(T("On {0}"), vehicleName);
                         MoveStateHelper.SetVehicleState(transportationId);
                     }
                 }
                 else if (wasOnVehicle && isNowOnFoot)
                 {
                     // Disembarking - specifically to TRANSPORT_PLAYER (on foot)
-                    announcement = "On foot";
+                    announcement = T("On foot");
                     MoveStateHelper.SetOnFoot();
                 }
 
@@ -353,7 +354,7 @@ namespace FFII_ScreenReader.Patches
                     MoveStateHelper.SetOnFoot();
                     lastAnnouncedTransportId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
                     lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
-                    FFII_ScreenReaderMod.SpeakText("On foot", interrupt: false);
+                    FFII_ScreenReaderMod.SpeakText(T("On foot"), interrupt: false);
                     return;
                 }
 
@@ -367,7 +368,7 @@ namespace FFII_ScreenReader.Patches
                     MoveStateHelper.SetVehicleState(typeId);
                     lastAnnouncedTransportId = typeId;
                     lastTransportationId = typeId;
-                    string announcement = $"On {vehicleName}";
+                    string announcement = string.Format(T("On {0}"), vehicleName);
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -397,7 +398,7 @@ namespace FFII_ScreenReader.Patches
                 // Only announce "On foot" if we were on a known vehicle
                 if (!string.IsNullOrEmpty(vehicleName))
                 {
-                    FFII_ScreenReaderMod.SpeakText("On foot", interrupt: false);
+                    FFII_ScreenReaderMod.SpeakText(T("On foot"), interrupt: false);
                 }
             }
             catch (Exception ex)

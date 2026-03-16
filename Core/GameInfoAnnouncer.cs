@@ -1,5 +1,6 @@
 using System;
 using MelonLoader;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
 
 namespace FFII_ScreenReader.Core
@@ -18,7 +19,7 @@ namespace FFII_ScreenReader.Core
                 if (userDataManager != null)
                 {
                     int gil = userDataManager.OwendGil;
-                    FFII_ScreenReaderMod.SpeakText($"{gil} Gil");
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("{0} Gil"), gil));
                     return;
                 }
             }
@@ -26,7 +27,7 @@ namespace FFII_ScreenReader.Core
             {
                 MelonLogger.Error($"Error getting gil: {ex.Message}");
             }
-            FFII_ScreenReaderMod.SpeakText("Gil not available");
+            FFII_ScreenReaderMod.SpeakText(T("Gil not available"));
         }
 
         public static void AnnounceCurrentMap()
@@ -39,7 +40,7 @@ namespace FFII_ScreenReader.Core
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error getting map name: {ex.Message}");
-                FFII_ScreenReaderMod.SpeakText("Map name not available");
+                FFII_ScreenReaderMod.SpeakText(T("Map name not available"));
             }
         }
 
@@ -50,14 +51,14 @@ namespace FFII_ScreenReader.Core
                 var userDataManager = UserDataManager.Instance();
                 if (userDataManager == null)
                 {
-                    FFII_ScreenReaderMod.SpeakText("Character data not available");
+                    FFII_ScreenReaderMod.SpeakText(T("Character data not available"));
                     return;
                 }
 
                 var partyList = userDataManager.GetOwnedCharactersClone(false);
                 if (partyList == null || partyList.Count == 0)
                 {
-                    FFII_ScreenReaderMod.SpeakText("No party members");
+                    FFII_ScreenReaderMod.SpeakText(T("No party members"));
                     return;
                 }
 
@@ -88,12 +89,12 @@ namespace FFII_ScreenReader.Core
                 if (!string.IsNullOrEmpty(status))
                     FFII_ScreenReaderMod.SpeakText(status);
                 else
-                    FFII_ScreenReaderMod.SpeakText("No character status available");
+                    FFII_ScreenReaderMod.SpeakText(T("No character status available"));
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error getting character status: {ex.Message}");
-                FFII_ScreenReaderMod.SpeakText("Character status not available");
+                FFII_ScreenReaderMod.SpeakText(T("Character status not available"));
             }
         }
     }

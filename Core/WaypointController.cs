@@ -3,6 +3,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Field;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using FieldPlayerController = Il2CppLast.Map.FieldPlayerController;
 
 namespace FFII_ScreenReader.Core
@@ -34,7 +35,7 @@ namespace FFII_ScreenReader.Core
 
             if (waypointNavigator.Count == 0)
             {
-                FFII_ScreenReaderMod.SpeakText("No waypoints on this map");
+                FFII_ScreenReaderMod.SpeakText(T("No waypoints on this map"));
                 return;
             }
 
@@ -52,7 +53,7 @@ namespace FFII_ScreenReader.Core
 
             if (waypointNavigator.Count == 0)
             {
-                FFII_ScreenReaderMod.SpeakText("No waypoints on this map");
+                FFII_ScreenReaderMod.SpeakText(T("No waypoints on this map"));
                 return;
             }
 
@@ -88,7 +89,7 @@ namespace FFII_ScreenReader.Core
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
-                FFII_ScreenReaderMod.SpeakText("No waypoint selected");
+                FFII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
 
@@ -97,7 +98,7 @@ namespace FFII_ScreenReader.Core
                 var playerController = GameObjectCache.GetOrRefresh<FieldPlayerController>();
                 if (playerController?.fieldPlayer == null || playerController.mapHandle == null)
                 {
-                    FFII_ScreenReaderMod.SpeakText("Unable to pathfind");
+                    FFII_ScreenReaderMod.SpeakText(T("Unable to pathfind"));
                     return;
                 }
 
@@ -117,13 +118,13 @@ namespace FFII_ScreenReader.Core
                 }
                 else
                 {
-                    FFII_ScreenReaderMod.SpeakText($"No path to {waypoint.Name}");
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("No path to {0}"), waypoint.Name));
                 }
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[Waypoint] Pathfind error: {ex.Message}");
-                FFII_ScreenReaderMod.SpeakText("Pathfinding failed");
+                FFII_ScreenReaderMod.SpeakText(T("Pathfinding failed"));
             }
         }
 
@@ -134,14 +135,14 @@ namespace FFII_ScreenReader.Core
 
             string mapId = mod.GetCurrentMapIdString();
 
-            TextInputWindow.Open("Enter waypoint name", "", (name) =>
+            TextInputWindow.Open(T("Enter waypoint name"), "", (name) =>
             {
                 try
                 {
                     var playerController = GameObjectCache.Get<FieldPlayerController>();
                     if (playerController?.fieldPlayer == null)
                     {
-                        FFII_ScreenReaderMod.SpeakText("Unable to get player position");
+                        FFII_ScreenReaderMod.SpeakText(T("Unable to get player position"));
                         return;
                     }
 
@@ -149,12 +150,12 @@ namespace FFII_ScreenReader.Core
                     waypointManager.AddWaypoint(name, position, mapId);
                     waypointNavigator.RefreshList(mapId);
 
-                    FFII_ScreenReaderMod.SpeakText($"Waypoint added: {name}");
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint added: {0}"), name));
                 }
                 catch (Exception ex)
                 {
                     MelonLogger.Error($"[Waypoint] Add error: {ex.Message}");
-                    FFII_ScreenReaderMod.SpeakText("Failed to add waypoint");
+                    FFII_ScreenReaderMod.SpeakText(T("Failed to add waypoint"));
                 }
             });
         }
@@ -167,11 +168,11 @@ namespace FFII_ScreenReader.Core
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
-                FFII_ScreenReaderMod.SpeakText("No waypoint selected");
+                FFII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
 
-            TextInputWindow.Open("Enter new waypoint name", waypoint.Name, (newName) =>
+            TextInputWindow.Open(T("Enter new waypoint name"), waypoint.Name, (newName) =>
             {
                 string mapId = mod.GetCurrentMapIdString();
                 bool success = waypointManager.RenameWaypoint(waypoint.WaypointId, newName);
@@ -179,11 +180,11 @@ namespace FFII_ScreenReader.Core
                 if (success)
                 {
                     waypointNavigator.RefreshList(mapId);
-                    FFII_ScreenReaderMod.SpeakText($"Waypoint renamed to: {newName}");
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint renamed to: {0}"), newName));
                 }
                 else
                 {
-                    FFII_ScreenReaderMod.SpeakText("Failed to rename waypoint");
+                    FFII_ScreenReaderMod.SpeakText(T("Failed to rename waypoint"));
                 }
             });
         }
@@ -196,14 +197,14 @@ namespace FFII_ScreenReader.Core
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
-                FFII_ScreenReaderMod.SpeakText("No waypoint selected");
+                FFII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
                 return;
             }
 
             string waypointName = waypoint.Name;
             string waypointId = waypoint.WaypointId;
 
-            ConfirmationDialog.Open($"Delete waypoint {waypointName}?", () =>
+            ConfirmationDialog.Open(string.Format(T("Delete waypoint {0}?"), waypointName), () =>
             {
                 string mapId = mod.GetCurrentMapIdString();
                 bool success = waypointManager.RemoveWaypoint(waypointId);
@@ -212,11 +213,11 @@ namespace FFII_ScreenReader.Core
                 {
                     waypointNavigator.RefreshList(mapId);
                     waypointNavigator.ClearSelection();
-                    FFII_ScreenReaderMod.SpeakText($"Waypoint deleted: {waypointName}");
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint deleted: {0}"), waypointName));
                 }
                 else
                 {
-                    FFII_ScreenReaderMod.SpeakText("Failed to delete waypoint");
+                    FFII_ScreenReaderMod.SpeakText(T("Failed to delete waypoint"));
                 }
             });
         }
@@ -231,24 +232,24 @@ namespace FFII_ScreenReader.Core
 
             if (count == 0)
             {
-                FFII_ScreenReaderMod.SpeakText("No waypoints to clear on this map");
+                FFII_ScreenReaderMod.SpeakText(T("No waypoints to clear on this map"));
                 return;
             }
 
-            string plural = count == 1 ? "waypoint" : "waypoints";
+            string plural = count == 1 ? T("waypoint") : T("waypoints");
 
             // First confirmation (silent Yes - proceeds directly to second prompt without "Yes" announcement)
-            ConfirmationDialog.Open($"Clear all {count} {plural} from this map?", () =>
+            ConfirmationDialog.Open(string.Format(T("Clear all {0} {1} from this map?"), count, plural), () =>
             {
                 // Second confirmation (normal with speech)
-                ConfirmationDialog.Open("Are you sure?", () =>
+                ConfirmationDialog.Open(T("Are you sure?"), () =>
                 {
                     int cleared = waypointManager.ClearMapWaypoints(mapId);
                     waypointNavigator.RefreshList(mapId);
                     waypointNavigator.ClearSelection();
 
-                    string clearedPlural = cleared == 1 ? "waypoint" : "waypoints";
-                    FFII_ScreenReaderMod.SpeakText($"Cleared {cleared} {clearedPlural}");
+                    string clearedPlural = cleared == 1 ? T("waypoint") : T("waypoints");
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Cleared {0} {1}"), cleared, clearedPlural));
                 });
             }, silentYes: true);
         }

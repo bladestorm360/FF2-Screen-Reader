@@ -9,6 +9,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using GameCursor = Il2CppLast.UI.Cursor;
 using FieldMap = Il2Cpp.FieldMap;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
@@ -85,6 +86,9 @@ namespace FFII_ScreenReader.Core
         {
             Instance = this;
             LoggerInstance.Msg("FFII Screen Reader Mod loaded!");
+
+            // Initialize mod text translator for localization
+            ModTextTranslator.Initialize();
 
             // Subscribe to scene load events
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += (UnityEngine.Events.UnityAction<UnityEngine.SceneManagement.Scene, UnityEngine.SceneManagement.LoadSceneMode>)OnSceneLoaded;
@@ -461,7 +465,7 @@ namespace FFII_ScreenReader.Core
             var fieldMap = GameObjectCache.Get<FieldMap>();
             if (fieldMap == null || !fieldMap.gameObject.activeInHierarchy)
             {
-                SpeakText("Not on map");
+                SpeakText(T("Not on map"));
                 return false;
             }
 
@@ -469,7 +473,7 @@ namespace FFII_ScreenReader.Core
             var playerController = GameObjectCache.Get<FieldPlayerController>();
             if (playerController?.fieldPlayer == null)
             {
-                SpeakText("Not on map");
+                SpeakText(T("Not on map"));
                 return false;
             }
 
@@ -486,7 +490,7 @@ namespace FFII_ScreenReader.Core
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
-                    SpeakText("No entities found");
+                    SpeakText(T("No entities found"));
                     return;
                 }
 
@@ -516,7 +520,7 @@ namespace FFII_ScreenReader.Core
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"Error announcing entity: {ex.Message}");
-                SpeakText("Error getting entity info");
+                SpeakText(T("Error getting entity info"));
             }
         }
 
@@ -574,7 +578,7 @@ namespace FFII_ScreenReader.Core
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
-                    SpeakText("No entities found");
+                    SpeakText(T("No entities found"));
                     return;
                 }
 
@@ -584,7 +588,7 @@ namespace FFII_ScreenReader.Core
                     string description = entity.FormatDescription(playerPos.Value);
                     int index = entityScanner.CurrentIndex + 1;
                     int total = entityScanner.Entities.Count;
-                    SpeakText($"{description}, {index} of {total}");
+                    SpeakText($"{description}, {string.Format(T("{0} of {1}"), index, total)}");
                 }
                 else
                 {
@@ -594,7 +598,7 @@ namespace FFII_ScreenReader.Core
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"Error cycling next: {ex.Message}");
-                SpeakText("Error cycling entities");
+                SpeakText(T("Error cycling entities"));
             }
         }
 
@@ -615,7 +619,7 @@ namespace FFII_ScreenReader.Core
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
-                    SpeakText("No entities found");
+                    SpeakText(T("No entities found"));
                     return;
                 }
 
@@ -625,7 +629,7 @@ namespace FFII_ScreenReader.Core
                     string description = entity.FormatDescription(playerPos.Value);
                     int index = entityScanner.CurrentIndex + 1;
                     int total = entityScanner.Entities.Count;
-                    SpeakText($"{description}, {index} of {total}");
+                    SpeakText($"{description}, {string.Format(T("{0} of {1}"), index, total)}");
                 }
                 else
                 {
@@ -635,7 +639,7 @@ namespace FFII_ScreenReader.Core
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"Error cycling previous: {ex.Message}");
-                SpeakText("Error cycling entities");
+                SpeakText(T("Error cycling entities"));
             }
         }
 
@@ -646,7 +650,7 @@ namespace FFII_ScreenReader.Core
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
-                    SpeakText("No entity selected");
+                    SpeakText(T("No entity selected"));
                     return;
                 }
 
@@ -663,7 +667,7 @@ namespace FFII_ScreenReader.Core
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"Error announcing entity: {ex.Message}");
-                SpeakText("No entity selected");
+                SpeakText(T("No entity selected"));
             }
         }
 
@@ -750,7 +754,7 @@ namespace FFII_ScreenReader.Core
 
             if (currentCategory == EntityCategory.All)
             {
-                SpeakText("Already in All category");
+                SpeakText(T("Already in All category"));
                 return;
             }
 
@@ -765,8 +769,8 @@ namespace FFII_ScreenReader.Core
             entityScanner.FilterByPathfinding = filterByPathfinding;
             PreferencesManager.SaveToggle("PathfindingFilter", filterByPathfinding);
 
-            string status = filterByPathfinding ? "on" : "off";
-            SpeakText($"Pathfinding filter {status}");
+            string status = filterByPathfinding ? T("on") : T("off");
+            SpeakText(string.Format(T("Pathfinding filter {0}"), status));
         }
 
         internal void ToggleMapExitFilter()
@@ -774,8 +778,8 @@ namespace FFII_ScreenReader.Core
             filterMapExits = !filterMapExits;
             PreferencesManager.SaveToggle("MapExitFilter", filterMapExits);
 
-            string status = filterMapExits ? "on" : "off";
-            SpeakText($"Map exit filter {status}");
+            string status = filterMapExits ? T("on") : T("off");
+            SpeakText(string.Format(T("Map exit filter {0}"), status));
         }
 
         internal void ToggleToLayerFilter()
@@ -787,8 +791,8 @@ namespace FFII_ScreenReader.Core
 
             PreferencesManager.SaveToggle("ToLayerFilter", filterToLayer);
 
-            string status = filterToLayer ? "on" : "off";
-            SpeakText($"Layer transition filter {status}");
+            string status = filterToLayer ? T("on") : T("off");
+            SpeakText(string.Format(T("Layer transition filter {0}"), status));
         }
 
         internal void ToggleWallTones()
@@ -802,8 +806,8 @@ namespace FFII_ScreenReader.Core
 
             PreferencesManager.SaveToggle("WallTones", enableWallTones);
 
-            string status = enableWallTones ? "on" : "off";
-            SpeakText($"Wall tones {status}");
+            string status = enableWallTones ? T("on") : T("off");
+            SpeakText(string.Format(T("Wall tones {0}"), status));
         }
 
         internal void ToggleFootsteps()
@@ -811,8 +815,8 @@ namespace FFII_ScreenReader.Core
             enableFootsteps = !enableFootsteps;
             PreferencesManager.SaveToggle("Footsteps", enableFootsteps);
 
-            string status = enableFootsteps ? "on" : "off";
-            SpeakText($"Footsteps {status}");
+            string status = enableFootsteps ? T("on") : T("off");
+            SpeakText(string.Format(T("Footsteps {0}"), status));
         }
 
         internal void ToggleAudioBeacons()
@@ -826,8 +830,8 @@ namespace FFII_ScreenReader.Core
 
             PreferencesManager.SaveToggle("AudioBeacons", enableAudioBeacons);
 
-            string status = enableAudioBeacons ? "on" : "off";
-            SpeakText($"Audio beacons {status}");
+            string status = enableAudioBeacons ? T("on") : T("off");
+            SpeakText(string.Format(T("Audio beacons {0}"), status));
         }
 
         // Accessors for audio feedback state (used by MovementSoundPatches)
@@ -836,20 +840,20 @@ namespace FFII_ScreenReader.Core
         private void AnnounceCategoryChange()
         {
             string categoryName = GetCategoryName(currentCategory);
-            SpeakText($"Category: {categoryName}");
+            SpeakText(string.Format(T("Category: {0}"), categoryName));
         }
 
         public static string GetCategoryName(EntityCategory category)
         {
             switch (category)
             {
-                case EntityCategory.All: return "All";
-                case EntityCategory.Chests: return "Treasure Chests";
-                case EntityCategory.NPCs: return "NPCs";
-                case EntityCategory.MapExits: return "Map Exits";
-                case EntityCategory.Events: return "Events";
-                case EntityCategory.Vehicles: return "Vehicles";
-                default: return "Unknown";
+                case EntityCategory.All: return T("All");
+                case EntityCategory.Chests: return T("Treasure Chests");
+                case EntityCategory.NPCs: return T("NPCs");
+                case EntityCategory.MapExits: return T("Map Exits");
+                case EntityCategory.Events: return T("Events");
+                case EntityCategory.Vehicles: return T("Vehicles");
+                default: return T("Unknown");
             }
         }
 
@@ -865,7 +869,7 @@ namespace FFII_ScreenReader.Core
                 if (player == null)
                 {
                     LoggerInstance.Msg("[Teleport] No field player found");
-                    SpeakText("Not on field map");
+                    SpeakText(T("Not on field map"));
                     return;
                 }
 
@@ -874,7 +878,7 @@ namespace FFII_ScreenReader.Core
                 if (entity == null)
                 {
                     LoggerInstance.Msg("[Teleport] No entity selected");
-                    SpeakText("No entity selected");
+                    SpeakText(T("No entity selected"));
                     return;
                 }
 
@@ -894,12 +898,12 @@ namespace FFII_ScreenReader.Core
                 // Announce with direction relative to entity and entity name
                 string direction = GetDirectionFromOffset(offset);
                 string entityName = entity.Name;
-                SpeakText($"Teleported to {direction} of {entityName}");
+                SpeakText(string.Format(T("Teleported {0} of {1}"), direction, entityName));
             }
             catch (Exception ex)
             {
                 LoggerInstance.Warning($"Error teleporting: {ex.Message}");
-                SpeakText("Teleport failed");
+                SpeakText(T("Teleport failed"));
             }
         }
 
@@ -907,11 +911,11 @@ namespace FFII_ScreenReader.Core
         {
             if (Math.Abs(offset.x) > Math.Abs(offset.y))
             {
-                return offset.x > 0 ? "east" : "west";
+                return offset.x > 0 ? T("east") : T("west");
             }
             else
             {
-                return offset.y > 0 ? "north" : "south";
+                return offset.y > 0 ? T("north") : T("south");
             }
         }
 

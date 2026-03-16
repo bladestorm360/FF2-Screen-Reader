@@ -7,6 +7,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using Il2CppLast.Management;
 using Il2CppLast.Systems;
 using ExpTableType = Il2CppLast.Defaine.Master.ExpTableType;
@@ -876,7 +877,7 @@ namespace FFII_ScreenReader.Patches
         {
             if (MagicMenuState.ShouldAnnounceSpell(-1))
             {
-                FFII_ScreenReaderMod.SpeakText("Empty", interrupt: true);
+                FFII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
             }
         }
 

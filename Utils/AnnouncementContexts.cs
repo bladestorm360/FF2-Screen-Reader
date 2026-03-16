@@ -25,5 +25,15 @@ namespace FFII_ScreenReader.Utils
         public const string KEYWORD_COMMAND = "Keyword.Command";
         public const string KEYWORD_WORD = "Keyword.Word";
         public const string WORDS_MENU = "WordsMenu.Selection";
+
+        // Extras menu contexts
+        public const string GALLERY_LIST_ENTRY = "Gallery.ListEntry";
+        public const string MUSIC_LIST_ENTRY = "MusicPlayer.ListEntry";
+        public const string BESTIARY_LIST_ENTRY = "Bestiary.ListEntry";
+        public const string BESTIARY_DETAIL_STAT = "Bestiary.DetailStat";
+        public const string BESTIARY_FORMATION = "Bestiary.Formation";
+        public const string BESTIARY_MAP = "Bestiary.Map";
+        public const string BESTIARY_STATE = "Bestiary.State";
+        public const string TITLE_MENU_COMMAND = "TitleMenu.Command";
     }
 }

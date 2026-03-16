@@ -5,6 +5,7 @@ using MelonLoader;
 using Il2CppLast.Map;
 using FFII_ScreenReader.Utils;
 using FFII_ScreenReader.Core;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -90,7 +91,7 @@ namespace FFII_ScreenReader.Patches
                 // Only announce when entering landable zone (false -> true)
                 if (landable && !lastLandableState)
                 {
-                    FFII_ScreenReaderMod.SpeakText("Can land", interrupt: false);
+                    FFII_ScreenReaderMod.SpeakText(T("Can land"), interrupt: false);
                 }
 
                 lastLandableState = landable;

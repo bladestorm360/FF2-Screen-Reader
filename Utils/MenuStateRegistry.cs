@@ -32,6 +32,14 @@ namespace FFII_ScreenReader.Utils
         public const string SHOP_MENU = "ShopMenu";
         public const string STATUS_MENU = "StatusMenu";
 
+        // Extras menu states
+        public const string GALLERY = "Gallery";
+        public const string MUSIC_PLAYER = "MusicPlayer";
+        public const string BESTIARY_LIST = "BestiaryList";
+        public const string BESTIARY_DETAIL = "BestiaryDetail";
+        public const string BESTIARY_FORMATION = "BestiaryFormation";
+        public const string BESTIARY_MAP = "BestiaryMap";
+
         // Central state storage
         private static readonly Dictionary<string, bool> _states = new Dictionary<string, bool>();
 
