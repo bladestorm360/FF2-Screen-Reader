@@ -525,6 +525,17 @@ Added `tolayer` to visual effects filter in `ConvertToNavigableEntity()`. These 
 - Collision zones (コリジョン) - may trigger battles
 - Ferry/定期船 - valid transport point
 
+### Map Exit Filter dedup (2026-06-14, FF1 parity)
+The "Map Exit Filter" toggle (`Shift+M` / mod menu) now actually groups exits.
+`EntityScanner.ApplyFilter()` calls `DeduplicateMapExits()` when
+`PreferencesManager.MapExitFilterEnabled` — after the distance sort, before the ToLayer filter —
+keeping only the **closest** exit per `MapExitEntity.DestinationMapId` (`> 0`). Unresolved exits
+(`DestinationMapId <= 0`) are kept individually so distinct unnamed exits aren't merged. This
+collapses a town's dozen-plus world-map border exits (all resolve to world map id `1` via
+`PropertyGotoMap.MapId`) into one. `ToggleMapExitFilter()` calls `entityScanner.ReapplyFilter()`
+so the change applies immediately without re-entering the map. Previously the toggle only flipped
+a bool and saved the pref — `ApplyFilter` never referenced it, so it did nothing.
+
 ### Debug Logging Fix (2026-02-05)
 **Problem**: 20 unfiltered events on overworld, only Wyvern NPC visible.
 **Root cause (from debug logs)**:
@@ -574,7 +585,7 @@ SoundPlayer.cs (Utils/) - waveOut P/Invoke, 4 channels, procedural tone generati
 
 ### Audio Features
 - **Wall bumps**: Procedural thud (27Hz, 60ms) on collision detection via coroutine
-- **Wall tones**: Looping directional tones (N=330Hz, S=110Hz, E=220Hz, W=200Hz) with constant-power stereo panning
+- **Wall tones**: Looping directional tones (N=294Hz, S=165Hz, E=220Hz, W=196Hz) with constant-power stereo panning
 - **Footsteps**: Click sound (500Hz noise burst, 25ms) on tile change
 - **Audio beacons**: Panning ping (400Hz north / 280Hz south) toward selected entity every 2s
 
@@ -597,6 +608,23 @@ SoundPlayer.cs (Utils/) - waveOut P/Invoke, 4 channels, procedural tone generati
 - Suppresses at map exits via `EntityScanner.GetMapExitPositions()` + `IsDirectionNearMapExit()`
 - Suppresses during screen fades via `MapTransitionPatches.IsScreenFading`
 - Suppresses 1s after map transitions via `wallToneSuppressedUntil`
+- **Gating (2026-06-14, FF1 parity)** — `WallToneLoop`/`BeaconLoop` gate their `while` on the
+  mod's **local** flag (`mod.IsWallTonesEnabled()` / `IsAudioBeaconsEnabled()`), and
+  `StartWallToneLoop`/`StartBeaconLoop` early-out on the same. Previously they read the **saved
+  preference** (`PreferencesManager.WallTonesEnabled`), but `ToggleWallTones` calls Start
+  *before* `SaveToggle`, and `CoroutineManager.StartManaged` → `MelonCoroutines.Start` runs the
+  coroutine synchronously to its first `yield` — so the loop read the stale `false` and exited
+  immediately, leaving wall tones (and beacons) permanently silent after every toggle-on.
+- **Seamless mixed loop (2026-06-14)** — `PlayWallTonesLooped` builds the loop via
+  `ToneGenerator.GenerateMixedLoopTone(specs, SUSTAIN_DURATION_MS)`: one buffer, all frequencies
+  snapped to a whole number of cycles over the shared length so the *sum* is exactly periodic, with
+  a single uniform `1/sqrt(n)` headroom. waveOut loops the whole buffer (`WHDR_BEGINLOOP/ENDLOOP`,
+  `dwLoops=0xFFFFFFFF`), so the previous approach — `GenerateStereoTone(sustain:true)` per direction
+  (each cycle-aligned to a *different* length) then `MixWavFiles` (sized to the longest, `1/sqrt`
+  headroom only where tones overlap) — clicked once per loop when 2+ walls were adjacent: the
+  shorter tone had a silent tail gap and the longer tone's tail jumped ~3 dB. Single-tone playback
+  goes through the same path now (still seamless). `MixWavFiles` remains for the one-shot
+  (`PlayWallTones`) path, whose attack/decay envelope already fades to zero at both ends.
 
 ### Map ID for FF2
 Uses `UserDataManager.Instance().CurrentMapId` (not FF1's `FieldMapProvisionInformation.Instance.CurrentMapId`)
@@ -830,9 +858,22 @@ whole shop; `ShouldSuppress` only clears on `STATE_NONE`).
   first, so moving NPCs stay pinned instead of snapping to a same-named neighbor.
 
 Already present in FF2 (not re-ported): controller hotplug (GamepadManager/SDL3), popup
-cursor-index dedup, unified beacon/waypoint A*. Skipped: FF1 game-toggle announcer
-(per-frame poll, conflicts with the no-polling rule) and the event-driven config refactor
-(FF2 already dedups config announcements).
+cursor-index dedup, unified beacon/waypoint A*.
+
+### Walk/run state tracker (`GameToggleAnnouncer`, 2026-06-14, FF1 parity)
+`Core/Handlers/GameToggleAnnouncer.Poll()` (called once per frame from
+`InputManager.CheckInput()`, reset on map transition in `MovementSpeechPatches.ResetState()`)
+reads `UserDataManager.Instance().Config.IsAutoDash` **read-only** and announces `Run`/`Walk`
+only on change, gated to `ControllerRouter.IsFieldActive`. This catches every source of the
+toggle — F1, L3, the in-game config menu, the cheat menu — not just F1. The light per-frame read
+is an allowed exception to the no-polling rule (same as footsteps).
+
+Replaced the previous machinery, which **inverted** the state: `MoveStateHelper.GetDashFlag()`
+returned `IsAutoDash XOR cachedDashFlag`, where `cachedDashFlag` came from a `SetDashFlag`
+postfix (`DashFlagPatches`) that only fired on the in-game F1 toggle — so it went stale and wrong
+whenever auto-dash changed from the config menu. Deleted: `DashFlagPatches.cs` + its registration,
+`MoveStateHelper.{cachedDashFlag,SetCachedDashFlag,GetDashFlag}`, and the F1 `AnnounceWalkRunState`
+coroutine in `InputManager`. The mod never wrote movement speed — only the announcement was wrong.
 
 ## AutoDetail mode (FF1 port)
 

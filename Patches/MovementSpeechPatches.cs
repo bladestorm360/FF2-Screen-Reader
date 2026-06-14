@@ -435,6 +435,9 @@ namespace FFII_ScreenReader.Patches
             lastAnnouncedTransportId = -1;
             lastMoveState = -1;
             MoveStateHelper.ResetState();
+
+            // Re-seed the walk/run poller so a map/scene transition isn't mistaken for a toggle.
+            FFII_ScreenReader.Core.Handlers.GameToggleAnnouncer.Reset();
         }
 
         /// <summary>

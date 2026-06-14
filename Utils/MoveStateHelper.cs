@@ -29,9 +29,6 @@ namespace FFII_ScreenReader.Utils
         private static int cachedTransportationType = 0;
         private static int lastAnnouncedState = -1;
 
-        // Cached dashFlag state (set by SetDashFlag patch)
-        private static bool cachedDashFlag = false;
-
         /// <summary>
         /// Set vehicle state when boarding (called from GetOn/ChangeTransportation patches).
         /// Maps TransportationType to MoveState.
@@ -239,45 +236,12 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Set cached dashFlag state (called from SetDashFlag patch).
-        /// </summary>
-        public static void SetCachedDashFlag(bool value)
-        {
-            cachedDashFlag = value;
-        }
-
-        /// <summary>
-        /// Returns the effective running state by combining AutoDash config with F1 toggle.
-        /// AutoDash XOR dashFlag gives the actual running state:
-        /// - AutoDash ON + dashFlag false = Running
-        /// - AutoDash ON + dashFlag true = Walking (toggled)
-        /// - AutoDash OFF + dashFlag false = Walking
-        /// - AutoDash OFF + dashFlag true = Running (toggled)
-        /// Returns true if running, false if walking.
-        /// </summary>
-        public static bool GetDashFlag()
-        {
-            try
-            {
-                var userData = Il2CppLast.Management.UserDataManager.Instance();
-                bool autoDash = (userData?.Config?.IsAutoDash ?? 0) != 0;
-                return autoDash != cachedDashFlag;
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"Error reading dash state: {ex.Message}");
-                return false;
-            }
-        }
-
-        /// <summary>
         /// Reset state (call on map transitions)
         /// </summary>
         public static void ResetState()
         {
             cachedMoveState = MOVE_STATE_WALK;
             cachedTransportationType = 0;
-            cachedDashFlag = false;
             lastAnnouncedState = -1;
         }
 

@@ -305,6 +305,13 @@ namespace FFII_ScreenReader.Field
                     e => e.Position);
             }
 
+            // Collapse multiple exits to the same destination into the nearest one.
+            // List is already distance-sorted, so the first of each destination is closest.
+            if (PreferencesManager.MapExitFilterEnabled)
+            {
+                filteredEntities = DeduplicateMapExits(filteredEntities);
+            }
+
             // Apply ToLayer filter if enabled
             if (toLayerFilter.IsEnabled)
             {
@@ -317,6 +324,40 @@ namespace FFII_ScreenReader.Field
             {
                 currentIndex = 0;
             }
+        }
+
+        /// <summary>
+        /// Groups map exits by destination map ID, keeping only the closest of each.
+        /// List must already be sorted by distance (closest first).
+        /// Exits with unresolved destinations (ID &lt;= 0) are kept individually so
+        /// genuinely-different unnamed exits aren't merged.
+        /// </summary>
+        private List<NavigableEntity> DeduplicateMapExits(List<NavigableEntity> source)
+        {
+            var result = new List<NavigableEntity>();
+            var seenDestinations = new HashSet<int>();
+
+            foreach (var entity in source)
+            {
+                if (entity is MapExitEntity mapExit && mapExit.DestinationMapId > 0)
+                {
+                    if (!seenDestinations.Add(mapExit.DestinationMapId))
+                        continue;
+                }
+                result.Add(entity);
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Re-applies filters without rescanning. Used when filter toggles change
+        /// so the change takes effect immediately on the current map.
+        /// </summary>
+        public void ReapplyFilter()
+        {
+            ApplyFilter();
+            if (currentIndex >= filteredEntities.Count)
+                currentIndex = 0;
         }
 
         /// <summary>

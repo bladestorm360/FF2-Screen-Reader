@@ -28,6 +28,18 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 | Battle Pause | ✓ | Spacebar menu commands |
 | Keyword System | Partial | NPC dialogue works; Words menu reads name only |
 
+## Recent Fixes (2026-06-14)
+
+- **Map Exit Filter now groups exits** — `EntityScanner.DeduplicateMapExits()` collapses
+  same-destination exits (e.g. a town's dozen world-map border exits) to the nearest; the
+  toggle was previously a no-op. Applies immediately via `ReapplyFilter()`.
+- **Wall tones (and beacons) no longer silent** — fixed a start-before-save race; the audio
+  loops now gate on the mod's local enable flag (FF1 parity) instead of the not-yet-saved
+  preference.
+- **Walk/run state no longer inverted** — replaced the XOR `GetDashFlag` machinery with a
+  read-only `GameToggleAnnouncer` poll of `Config.IsAutoDash`; now correct from F1 *and* the
+  config menu.
+
 ## Known Issues
 
 1. **Words menu description** - Main menu keyword list shows name only (NPC Ask/Learn works)

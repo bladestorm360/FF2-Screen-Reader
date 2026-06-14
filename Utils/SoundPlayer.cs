@@ -206,30 +206,27 @@ namespace FFII_ScreenReader.Utils
             float bv = SoundConstants.WallToneVolumeMultipliers.BASE_VOLUME;
             float scaledVol = volume / 50.0f;
             int dur = SoundConstants.WallToneTiming.SUSTAIN_DURATION_MS;
-            var tonesToMix = new List<byte[]>();
 
+            // Build (freq, volume, pan) specs and generate ONE seamless loop buffer. Generating a
+            // single periodic mix (rather than mixing independently length-aligned tones) keeps the
+            // loop click-free when multiple walls are adjacent. Volume is baked in here.
+            var toneSpecs = new List<(int frequency, float volume, float pan)>(directions.Count);
             foreach (var dir in directions)
             {
                 float dirVol = bv * GetDirectionVolumeMultiplier(dir) * scaledVol;
-                float pan = GetDirectionPan(dir);
-                int freq = GetDirectionFrequency(dir);
-                tonesToMix.Add(ToneGenerator.GenerateStereoTone(freq, dur, dirVol, pan, sustain: true));
+                toneSpecs.Add((GetDirectionFrequency(dir), dirVol, GetDirectionPan(dir)));
             }
 
-            if (tonesToMix.Count == 0)
-            {
-                StopWallTone();
-                return;
-            }
-
-            byte[] loopBuffer = tonesToMix.Count == 1
-                ? tonesToMix[0]
-                : ToneGenerator.MixWavFiles(tonesToMix);
+            byte[] loopBuffer = ToneGenerator.GenerateMixedLoopTone(toneSpecs, dur);
 
             if (loopBuffer != null)
             {
                 // Volume already baked in during generation - use 50 (no scaling)
                 AudioChannel.Play(loopBuffer, SoundChannel.WallTone, loop: true, volumePercent: 50);
+            }
+            else
+            {
+                StopWallTone();
             }
         }
 

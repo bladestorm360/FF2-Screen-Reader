@@ -153,6 +153,10 @@ namespace FFII_ScreenReader.Core
             // the existing input loop, not a new per-frame Harmony patch.
             MovementSoundPatches.PollFootsteps();
 
+            // Light per-frame poll for walk/run (auto-dash) — announces on change so F1, L3,
+            // the config menu and cheat menu all surface through the screen reader. Read-only.
+            Handlers.GameToggleAnnouncer.Poll();
+
             if (GamepadManager.AnyKeyboardKeyDown())
                 ControllerRouter.NotifyKeyboardInput();
 
@@ -287,12 +291,7 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
-            // F1 toggles walk/run speed - announce after game processes it
-            if (GamepadManager.IsKeyCodePressed(KeyCode.F1))
-            {
-                CoroutineManager.StartManaged(AnnounceWalkRunState());
-                return;
-            }
+            // F1 walk/run is announced by GameToggleAnnouncer.Poll() (handles F1 + config menu).
 
             // F3 toggles encounters - announce after game processes it
             if (GamepadManager.IsKeyCodePressed(KeyCode.F3))
@@ -520,25 +519,6 @@ namespace FFII_ScreenReader.Core
             {
                 return false;
             }
-        }
-
-        /// <summary>
-        /// Coroutine that announces walk/run state after game processes F1 key.
-        /// </summary>
-        private static IEnumerator AnnounceWalkRunState()
-        {
-            // Wait 3 frames for game to fully process F1 and update dashFlag
-            yield return null;
-            yield return null;
-            yield return null;
-
-            try
-            {
-                bool isDashing = MoveStateHelper.GetDashFlag();
-                string state = isDashing ? T("Run") : T("Walk");
-                FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
-            }
-            catch { }
         }
 
         /// <summary>

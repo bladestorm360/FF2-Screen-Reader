@@ -225,8 +225,7 @@ namespace FFII_ScreenReader.Core
             // Map transition fade detection (suppress wall tones during screen fades)
             MapTransitionPatches.ApplyPatches(harmony);
 
-            // Patch walk/run toggle (F1 key) for accurate state tracking
-            DashFlagPatches.ApplyPatches(harmony);
+            // Walk/run is tracked read-only by GameToggleAnnouncer.Poll() — no patch needed.
 
             // Patch InputSystemManager for SDL controller passthrough and mod input suppression
             InputPassthroughPatches.ApplyPatches(harmony);
@@ -750,6 +749,9 @@ namespace FFII_ScreenReader.Core
             filterMapExits = !filterMapExits;
             PreferencesManager.SaveToggle("MapExitFilter", filterMapExits);
 
+            // Rebuild the navigation list so the change takes effect without re-entering the map.
+            entityScanner?.ReapplyFilter();
+
             string status = filterMapExits ? T("on") : T("off");
             SpeakText(string.Format(T("Map exit filter {0}"), status));
         }
@@ -826,6 +828,10 @@ namespace FFII_ScreenReader.Core
 
         // Accessors for audio feedback state (used by MovementSoundPatches)
         internal bool IsFootstepsEnabled() => enableFootsteps;
+        // Audio loops gate on these local flags (set before Start is called) rather than the
+        // saved preference, avoiding a start-before-save race that left the loops silent.
+        internal bool IsWallTonesEnabled() => enableWallTones;
+        internal bool IsAudioBeaconsEnabled() => enableAudioBeacons;
 
         /// <summary>
         /// Formats an entity exactly the way []-cycling announces it: description + "X of Y"

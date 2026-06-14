@@ -178,6 +178,68 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
+        /// Generates a single 16-bit stereo buffer that mixes several sine tones and loops
+        /// seamlessly. Each frequency is snapped to a whole number of cycles over the shared
+        /// buffer length, so the SUM returns to its starting phase at the end of the buffer —
+        /// no per-loop click. A single uniform 1/sqrt(n) headroom is applied across the whole
+        /// buffer, so there is no amplitude step (unlike summing independently length-aligned
+        /// tones via MixWavFiles, which leaves a gap + gain step for the shorter tone).
+        /// Used for the looping wall-tone playback (driver loops the whole buffer back-to-back).
+        /// </summary>
+        public static byte[] GenerateMixedLoopTone(IList<(int frequency, float volume, float pan)> tones, int durationMs)
+        {
+            if (tones == null || tones.Count == 0) return null;
+
+            // One shared loop length for every component, independent of which are active.
+            int length = (SoundConstants.SAMPLE_RATE * durationMs) / 1000;
+            if (length < 1) length = 1;
+
+            int n = tones.Count;
+            double headroom = n > 1 ? 1.0 / Math.Sqrt(n) : 1.0;
+
+            // Snap each frequency to an integer cycle count over the buffer so the whole mix is
+            // exactly periodic; precompute panned per-tone gains (constant-power, headroom-scaled).
+            var cycles = new int[n];
+            var leftVol = new double[n];
+            var rightVol = new double[n];
+            for (int t = 0; t < n; t++)
+            {
+                int c = (int)Math.Round((double)tones[t].frequency * length / SoundConstants.SAMPLE_RATE);
+                cycles[t] = c < 1 ? 1 : c;
+                double panAngle = tones[t].pan * Math.PI / 2;
+                leftVol[t] = tones[t].volume * Math.Cos(panAngle) * headroom;
+                rightVol[t] = tones[t].volume * Math.Sin(panAngle) * headroom;
+            }
+
+            int dataSize = length * 4; // stereo 16-bit
+
+            using (var ms = new MemoryStream())
+            using (var writer = new BinaryWriter(ms))
+            {
+                WriteWavHeader(writer, 2, dataSize);
+
+                for (int i = 0; i < length; i++)
+                {
+                    double left = 0.0;
+                    double right = 0.0;
+                    for (int t = 0; t < n; t++)
+                    {
+                        // Integer-cycle phase: exactly periodic over `length`, no float drift.
+                        double sine = Math.Sin(2 * Math.PI * cycles[t] * i / length);
+                        left += sine * leftVol[t];
+                        right += sine * rightVol[t];
+                    }
+
+                    left = Math.Max(-1.0, Math.Min(1.0, left));
+                    right = Math.Max(-1.0, Math.Min(1.0, right));
+                    writer.Write((short)(left * 32767));
+                    writer.Write((short)(right * 32767));
+                }
+                return ms.ToArray();
+            }
+        }
+
+        /// <summary>
         /// Mixes multiple 16-bit stereo WAV files into one.
         /// Uses sqrt(n) headroom scaling to prevent clipping.
         /// </summary>

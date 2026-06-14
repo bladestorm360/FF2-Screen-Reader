@@ -68,6 +68,7 @@ namespace FFII_ScreenReader.Core
 
         public void StartWallToneLoop()
         {
+            if (!mod.IsWallTonesEnabled()) return;
             if (wallToneCoroutine != null) return;
             wallToneCoroutine = WallToneLoop();
             CoroutineManager.StartManaged(wallToneCoroutine);
@@ -86,6 +87,7 @@ namespace FFII_ScreenReader.Core
 
         public void StartBeaconLoop()
         {
+            if (!mod.IsAudioBeaconsEnabled()) return;
             if (beaconCoroutine != null) return;
             beaconCoroutine = BeaconLoop();
             CoroutineManager.StartManaged(beaconCoroutine);
@@ -134,7 +136,7 @@ namespace FFII_ScreenReader.Core
         {
             float nextCheckTime = Time.time + 0.3f;  // Delay first check by 300ms for scene stability
 
-            while (PreferencesManager.WallTonesEnabled)
+            while (mod.IsWallTonesEnabled())
             {
                 if (Time.time < nextCheckTime)
                 {
@@ -236,7 +238,7 @@ namespace FFII_ScreenReader.Core
         {
             nextBeaconTime = Time.time + 0.3f;  // Delay first beacon by 300ms for scene stability
 
-            while (PreferencesManager.AudioBeaconsEnabled)
+            while (mod.IsAudioBeaconsEnabled())
             {
                 if (Time.time < nextBeaconTime)
                 {
