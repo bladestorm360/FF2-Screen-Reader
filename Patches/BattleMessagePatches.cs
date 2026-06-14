@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
@@ -8,7 +9,6 @@ using Il2CppLast.Battle.Function;
 using Il2CppLast.Systems;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using BattlePlayerData = Il2Cpp.BattlePlayerData;
 using BattleUtility = Il2CppLast.Battle.BattleUtility;
 using BattleController = Il2CppLast.Battle.BattleController;
@@ -24,9 +24,11 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class GlobalBattleMessageTracker
     {
+        // Local guard: the same battle message can be posted via more than one code path.
+        private static string _lastMessage = null;
+
         /// <summary>
-        /// Try to announce a message, returning false if it was recently announced.
-        /// Uses centralized AnnouncementDeduplicator for deduplication.
+        /// Try to announce a message, returning false if it duplicates the last one.
         /// </summary>
         public static bool TryAnnounce(string message, string source)
         {
@@ -37,11 +39,11 @@ namespace FFII_ScreenReader.Patches
 
             string cleanMessage = message.Trim();
 
-            // Use centralized deduplication
-            if (!ShouldAnnounce(AnnouncementContexts.BATTLE_MESSAGE, cleanMessage))
+            if (cleanMessage == _lastMessage)
             {
                 return false;
             }
+            _lastMessage = cleanMessage;
 
             // Battle actions don't interrupt - they queue
             FFII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: false);
@@ -53,7 +55,8 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void Reset()
         {
-            AnnouncementDeduplicator.Reset(AnnouncementContexts.BATTLE_ACTION, AnnouncementContexts.BATTLE_MESSAGE, AnnouncementContexts.BATTLE_CONDITION);
+            _lastMessage = null;
+            BattleMessagePatches.ResetConditionDedup();
         }
     }
 
@@ -341,10 +344,14 @@ namespace FFII_ScreenReader.Patches
                     announcement = $"{actorName} attacks";
                 }
 
-                // Use object-based deduplication so different enemies with same name
-                // attacking in sequence are both announced (each has unique BattleActData)
-                if (AnnouncementDeduplicator.ShouldAnnounce(AnnouncementContexts.BATTLE_ACTION, battleActData))
+                // Local guard by the native BattleActData pointer: skip a repeat fire for the
+                // same action, but different enemies with the same name (distinct act data)
+                // each announce.
+                IntPtr actPtr = IntPtr.Zero;
+                try { actPtr = battleActData.Pointer; } catch { }
+                if (actPtr != _lastActDataPtr)
                 {
+                    _lastActDataPtr = actPtr;
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -524,10 +531,18 @@ namespace FFII_ScreenReader.Patches
                 string message;
                 string dedupeKey;
 
-                if (hitType == HitType.Miss || value == 0)
+                if (hitType == HitType.Miss)
                 {
                     message = $"{targetName}: Miss";
                     dedupeKey = $"{targetName}:miss";
+                }
+                else if (value == 0)
+                {
+                    // Buff/debuff spells (Protect, Haste, Slow, etc.) emit CreateDamageView
+                    // with value=0 and a non-Miss hitType. The actual condition application is
+                    // announced by ConditionAdd_Postfix — suppress here so we don't speak a
+                    // spurious "Miss" for every target the buff lands on.
+                    return;
                 }
                 else if (hitType == HitType.MPRecovery)
                 {
@@ -621,6 +636,18 @@ namespace FFII_ScreenReader.Patches
 
         #region ConditionAdd - Status Effect Announcements
 
+        // Per-unit dedup: same-named enemies (e.g., two Goblins both poisoned) must each
+        // announce, so we key by the unit's native pointer instead of the announcement text.
+        private static readonly Dictionary<IntPtr, string> _lastConditionByUnit = new Dictionary<IntPtr, string>();
+        // Local guard for CreateActFunction (keyed by the native BattleActData pointer).
+        private static IntPtr _lastActDataPtr = IntPtr.Zero;
+
+        public static void ResetConditionDedup()
+        {
+            _lastConditionByUnit.Clear();
+            _lastActDataPtr = IntPtr.Zero;
+        }
+
         public static void ConditionAdd_Postfix(BattleUnitData battleUnitData, int id)
         {
             try
@@ -702,8 +729,15 @@ namespace FFII_ScreenReader.Patches
 
                 string announcement = $"{targetName}: {conditionName}";
 
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.BATTLE_CONDITION, announcement)) return;
+                // Per-unit dedup so same-named enemies each announce their own status.
+                IntPtr unitPtr = IntPtr.Zero;
+                try { unitPtr = battleUnitData.Pointer; } catch { }
+                if (unitPtr != IntPtr.Zero)
+                {
+                    if (_lastConditionByUnit.TryGetValue(unitPtr, out var last) && last == announcement)
+                        return;
+                    _lastConditionByUnit[unitPtr] = announcement;
+                }
 
                 // Status doesn't interrupt
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);

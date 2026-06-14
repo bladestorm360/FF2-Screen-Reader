@@ -28,6 +28,8 @@ namespace FFII_ScreenReader.Core
         private abstract class MenuItem
         {
             public string Name { get; protected set; }
+            // Lambda so toggle descriptions can change with the current state.
+            public Func<string> DescriptionGetter { get; protected set; } = () => "";
             public abstract string GetValueString();
             public abstract void Adjust(int delta);
             public abstract void Toggle();
@@ -38,11 +40,12 @@ namespace FFII_ScreenReader.Core
             private readonly Func<bool> getter;
             private readonly Action toggle;
 
-            public ToggleItem(string name, Func<bool> getter, Action toggle)
+            public ToggleItem(string name, Func<bool> getter, Action toggle, Func<string> description = null)
             {
                 Name = name;
                 this.getter = getter;
                 this.toggle = toggle;
+                if (description != null) DescriptionGetter = description;
             }
 
             public override string GetValueString() => getter() ? T("On") : T("Off");
@@ -55,11 +58,12 @@ namespace FFII_ScreenReader.Core
             private readonly Func<int> getter;
             private readonly Action<int> setter;
 
-            public VolumeItem(string name, Func<int> getter, Action<int> setter)
+            public VolumeItem(string name, Func<int> getter, Action<int> setter, Func<string> description = null)
             {
                 Name = name;
                 this.getter = getter;
                 this.setter = setter;
+                if (description != null) DescriptionGetter = description;
             }
 
             public override string GetValueString() => $"{getter()}%";
@@ -85,12 +89,13 @@ namespace FFII_ScreenReader.Core
             private readonly Func<int> getter;
             private readonly Action<int> setter;
 
-            public EnumItem(string name, string[] options, Func<int> getter, Action<int> setter)
+            public EnumItem(string name, string[] options, Func<int> getter, Action<int> setter, Func<string> description = null)
             {
                 Name = name;
                 this.options = options;
                 this.getter = getter;
                 this.setter = setter;
+                if (description != null) DescriptionGetter = description;
             }
 
             public override string GetValueString()
@@ -129,10 +134,11 @@ namespace FFII_ScreenReader.Core
         {
             private readonly Action action;
 
-            public ActionItem(string name, Action action)
+            public ActionItem(string name, Action action, Func<string> description = null)
             {
                 Name = name;
                 this.action = action;
+                if (description != null) DescriptionGetter = description;
             }
 
             public override string GetValueString() => "";
@@ -154,50 +160,95 @@ namespace FFII_ScreenReader.Core
                 new SectionHeader(T("Audio Feedback")),
                 new ToggleItem(T("Wall Tones"),
                     () => PreferencesManager.WallTonesEnabled,
-                    () => FFII_ScreenReaderMod.Instance?.ToggleWallTones()),
+                    () => FFII_ScreenReaderMod.Instance?.ToggleWallTones(),
+                    () => PreferencesManager.WallTonesEnabled
+                        ? T("On. Directional tones play as you approach walls.")
+                        : T("Off. No directional wall feedback.")),
                 new ToggleItem(T("Footsteps"),
                     () => PreferencesManager.FootstepsEnabled,
-                    () => FFII_ScreenReaderMod.Instance?.ToggleFootsteps()),
+                    () => FFII_ScreenReaderMod.Instance?.ToggleFootsteps(),
+                    () => PreferencesManager.FootstepsEnabled
+                        ? T("On. A click plays for each tile of player movement.")
+                        : T("Off. No per-tile movement sound.")),
                 new ToggleItem(T("Audio Beacons"),
                     () => PreferencesManager.AudioBeaconsEnabled,
-                    () => FFII_ScreenReaderMod.Instance?.ToggleAudioBeacons()),
+                    () => FFII_ScreenReaderMod.Instance?.ToggleAudioBeacons(),
+                    () => PreferencesManager.AudioBeaconsEnabled
+                        ? T("On. Audio beacon is the primary navigation aid; turn-by-turn pathfinding is disabled.")
+                        : T("Off. Turn-by-turn pathfinding is used for navigation.")),
 
                 // Volume Controls section
                 new SectionHeader(T("Volume Controls")),
                 new VolumeItem(T("Wall Bump Volume"),
                     () => PreferencesManager.WallBumpVolume,
-                    PreferencesManager.SetWallBumpVolume),
+                    PreferencesManager.SetWallBumpVolume,
+                    () => T("Volume of wall bump sound effects, zero to one hundred percent.")),
                 new VolumeItem(T("Footstep Volume"),
                     () => PreferencesManager.FootstepVolume,
-                    PreferencesManager.SetFootstepVolume),
+                    PreferencesManager.SetFootstepVolume,
+                    () => T("Volume of footstep sounds, zero to one hundred percent.")),
                 new VolumeItem(T("Wall Tone Volume"),
                     () => PreferencesManager.WallToneVolume,
-                    PreferencesManager.SetWallToneVolume),
+                    PreferencesManager.SetWallToneVolume,
+                    () => T("Volume of directional wall proximity tones, zero to one hundred percent.")),
                 new VolumeItem(T("Beacon Volume"),
                     () => PreferencesManager.BeaconVolume,
-                    PreferencesManager.SetBeaconVolume),
+                    PreferencesManager.SetBeaconVolume,
+                    () => T("Volume of audio beacon pings, zero to one hundred percent.")),
 
                 // Navigation Filters section
                 new SectionHeader(T("Navigation Filters")),
                 new ToggleItem(T("Pathfinding Filter"),
                     () => PreferencesManager.PathfindingFilterEnabled,
-                    () => FFII_ScreenReaderMod.Instance?.TogglePathfindingFilter()),
+                    () => FFII_ScreenReaderMod.Instance?.TogglePathfindingFilter(),
+                    () => PreferencesManager.PathfindingFilterEnabled
+                        ? T("On. Entity cycling shows only entities reachable via pathfinding.")
+                        : T("Off. All entities appear when cycling, including unreachable ones.")),
                 new ToggleItem(T("Map Exit Filter"),
                     () => PreferencesManager.MapExitFilterEnabled,
-                    () => FFII_ScreenReaderMod.Instance?.ToggleMapExitFilter()),
+                    () => FFII_ScreenReaderMod.Instance?.ToggleMapExitFilter(),
+                    () => PreferencesManager.MapExitFilterEnabled
+                        ? T("On. Multiple exits leading to the same destination collapse to the closest one.")
+                        : T("Off. All map exits appear in navigation.")),
                 new ToggleItem(T("Layer Transition Filter"),
                     () => PreferencesManager.ToLayerFilterEnabled,
-                    () => FFII_ScreenReaderMod.Instance?.ToggleToLayerFilter()),
+                    () => FFII_ScreenReaderMod.Instance?.ToggleToLayerFilter(),
+                    () => PreferencesManager.ToLayerFilterEnabled
+                        ? T("On. Layer transition entities are hidden from navigation.")
+                        : T("Off. Layer transition entities appear in navigation.")),
+                new ToggleItem(T("Stick Click Normalization"),
+                    () => PreferencesManager.StickClickNormalization,
+                    ToggleStickClickNormalization,
+                    () => PreferencesManager.StickClickNormalization
+                        ? T("On. L3 and R3 pass through to the game (auto-dash and encounter toggle). Mod functions move to mod mode.")
+                        : T("Off. L3 toggles beacon navigation; R3 toggles pathfinding filter; game cannot see them.")),
 
                 // Battle Settings section
                 new SectionHeader(T("Battle Settings")),
                 new EnumItem(T("Enemy HP Display"),
                     new[] { "Numbers", "Percentage", "Hidden" },
                     () => PreferencesManager.EnemyHPDisplay,
-                    PreferencesManager.SetEnemyHPDisplay),
+                    PreferencesManager.SetEnemyHPDisplay,
+                    () => T("Controls how enemy HP appears in battle: numeric value, percentage of max, or hidden.")),
+
+                // Announcements section
+                new SectionHeader(T("Announcements")),
+                new ToggleItem(T("Auto Detail"),
+                    () => PreferencesManager.AutoDetailEnabled,
+                    () => FFII_ScreenReaderMod.Instance?.ToggleAutoDetail(),
+                    () => PreferencesManager.AutoDetailEnabled
+                        ? T("On. Descriptions and stats announce automatically on focus for items, magic, equipment, and shops.")
+                        : T("Off. Use the I key to read descriptions on demand.")),
+                new ToggleItem(T("Beacon Destination Announcement"),
+                    () => FFII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled,
+                    () => FFII_ScreenReaderMod.Instance?.ToggleAnnounceOnBeaconRestart(),
+                    () => FFII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled
+                        ? T("On. Restarting the beacon also re-speaks the current destination.")
+                        : T("Off. Restarting the beacon only re-pings, without speaking.")),
 
                 // Close Menu action
-                new ActionItem(T("Close Menu"), Close)
+                new ActionItem(T("Close Menu"), Close,
+                    () => T("Closes the mod menu and returns to the game."))
             };
 
         }
@@ -216,18 +267,10 @@ namespace FFII_ScreenReader.Core
             if (items != null && items.Count > 1 && items[0] is SectionHeader)
                 currentIndex = 1;
 
-            // Initialize key states to current pressed state to prevent keys that opened the menu from triggering actions
-            WindowsFocusHelper.InitializeKeyStates(new[] {
-                WindowsFocusHelper.VK_ESCAPE, WindowsFocusHelper.VK_F8,
-                WindowsFocusHelper.VK_UP, WindowsFocusHelper.VK_DOWN,
-                WindowsFocusHelper.VK_LEFT, WindowsFocusHelper.VK_RIGHT,
-                WindowsFocusHelper.VK_RETURN, WindowsFocusHelper.VK_SPACE
-            });
-
-            WindowsFocusHelper.StealFocus("FFII_ModMenu");
-
-            // Window title change announces "FFII_ModMenu" via screen reader focus
-            // Just announce the first item after a short delay
+            // Announce that the menu opened (both F8 and the controller Start button reach here),
+            // then the first item after a short delay. Game input suppressed via
+            // ControllerRouter.SuppressGameInput + InputSystemManager patches (no window stealing).
+            FFII_ScreenReaderMod.SpeakText(T("Mod menu"), interrupt: true);
             CoroutineManager.StartManaged(AnnounceFirstItemDelayed());
         }
 
@@ -251,14 +294,15 @@ namespace FFII_ScreenReader.Core
             if (!IsOpen) return;
 
             IsOpen = false;
-            WindowsFocusHelper.RestoreFocus();
-            // Focus returns to game window, screen reader announces the focus change
+            // Announce on every close path (keyboard Escape/F8, "Close Menu" item, controller B/Start).
+            // Game input restored automatically — ControllerRouter.SuppressGameInput becomes false.
+            FFII_ScreenReaderMod.SpeakText(T("Mod menu closed"), interrupt: true);
         }
 
         /// <summary>
-        /// Handles input when the mod menu is open.
-        /// Uses Windows GetAsyncKeyState API for input detection, which works
-        /// even when the game window doesn't have focus.
+        /// Handles keyboard input when the mod menu is open. Reads keys via GamepadManager
+        /// (GetAsyncKeyState — hardware state); game input suppressed by InputSystemManager
+        /// patches + Input.ResetInputAxes while open. No window focus stealing.
         /// Returns true if input was consumed (menu is open).
         /// </summary>
         public static bool HandleInput()
@@ -267,48 +311,66 @@ namespace FFII_ScreenReader.Core
             if (items == null || items.Count == 0) return false;
 
             // Escape or F8 to close
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_ESCAPE) || WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_F8))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Escape) || GamepadManager.IsKeyCodePressed(KeyCode.F8))
             {
                 Close();
                 return true;
             }
 
             // Up arrow - navigate to previous item
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_UP))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.UpArrow))
             {
                 NavigatePrevious();
                 return true;
             }
 
             // Down arrow - navigate to next item
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_DOWN))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.DownArrow))
             {
                 NavigateNext();
                 return true;
             }
 
             // Left arrow - decrease value
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_LEFT))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.LeftArrow))
             {
                 AdjustCurrentItem(-1);
                 return true;
             }
 
             // Right arrow - increase value
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RIGHT))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.RightArrow))
             {
                 AdjustCurrentItem(1);
                 return true;
             }
 
             // Enter or Space - toggle/activate
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RETURN) || WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_SPACE))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Return) || GamepadManager.IsKeyCodePressed(KeyCode.Space))
             {
                 ToggleCurrentItem();
                 return true;
             }
 
+            // I - read the context description for the current item
+            if (GamepadManager.IsKeyCodePressed(KeyCode.I))
+            {
+                AnnounceCurrentItemDescription();
+                return true;
+            }
+
             return true; // Consume all input while menu is open
+        }
+
+        private static void AnnounceCurrentItemDescription()
+        {
+            if (items == null || currentIndex < 0 || currentIndex >= items.Count) return;
+
+            var item = items[currentIndex];
+            string desc = item.DescriptionGetter?.Invoke();
+            FFII_ScreenReaderMod.SpeakText(
+                string.IsNullOrWhiteSpace(desc) ? T("No description") : desc,
+                interrupt: true);
         }
 
         private static void NavigateNext()
@@ -372,6 +434,23 @@ namespace FFII_ScreenReader.Core
 
             AnnounceCurrentItem();
         }
+
+        /// <summary>
+        /// Toggles the StickClickNormalization preference and announces the new state.
+        /// </summary>
+        private static void ToggleStickClickNormalization()
+        {
+            bool newValue = !PreferencesManager.StickClickNormalization;
+            PreferencesManager.SaveToggle("StickClickNormalization", newValue);
+        }
+
+        // --- Controller-accessible navigation hooks ---
+        // The private methods above are tied to keyboard polling; these expose
+        // the same operations so ControllerRouter can drive the menu via gamepad.
+        public static void ControllerNavigatePrevious() => NavigatePrevious();
+        public static void ControllerNavigateNext() => NavigateNext();
+        public static void ControllerAdjustCurrentItem(int delta) => AdjustCurrentItem(delta);
+        public static void ControllerToggleCurrentItem() => ToggleCurrentItem();
 
         private static void AnnounceCurrentItem(bool interrupt = true)
         {

@@ -23,6 +23,13 @@ namespace FFII_ScreenReader.Field
         public string Description { get; set; }
         public List<Vector3> WorldPath { get; set; }
 
+        // Diagnostic fields (populated by FindPathTo) — expose the grid cells the path
+        // actually used so callers can log the X/Y cell conversion. No behavior impact.
+        public Vector3 StartCell { get; set; }
+        public Vector3 DestCell { get; set; }
+        public int MapWidth { get; set; }
+        public int MapHeight { get; set; }
+
         public PathInfo()
         {
             Success = false;
@@ -359,11 +366,27 @@ namespace FFII_ScreenReader.Field
             }
         }
 
+        // 8 neighbouring tile offsets (game units) used when the exact target tile is unwalkable.
+        private static readonly Vector3[] AdjacentOffsets = new Vector3[] {
+            new Vector3(0, 16, 0),    // north
+            new Vector3(16, 0, 0),    // east
+            new Vector3(0, -16, 0),   // south
+            new Vector3(-16, 0, 0),   // west
+            new Vector3(16, 16, 0),   // northeast
+            new Vector3(16, -16, 0),  // southeast
+            new Vector3(-16, -16, 0), // southwest
+            new Vector3(-16, 16, 0)   // northwest
+        };
+
         /// <summary>
         /// Finds a path from the player position to the target position.
         /// Uses the game's MapRouteSearcher for collision-aware pathfinding.
+        /// When <paramref name="targetLayer"/> (the target's Unity gameObject.layer) is supplied, the
+        /// search routes to that layer instead of brute-forcing destination Z — so a target stacked on
+        /// a different layer at the same X/Y is routed to correctly instead of mis-routing to the
+        /// player's own layer. Null keeps the legacy brute-force (callers that don't know the layer).
         /// </summary>
-        public static PathInfo FindPathTo(Vector3 playerWorldPos, Vector3 targetWorldPos, IMapAccessor mapHandle, FieldPlayer player = null)
+        public static PathInfo FindPathTo(Vector3 playerWorldPos, Vector3 targetWorldPos, IMapAccessor mapHandle, FieldPlayer player = null, int? targetLayer = null)
         {
             var pathInfo = new PathInfo { Success = false };
 
@@ -404,8 +427,34 @@ namespace FFII_ScreenReader.Field
                 if (player != null)
                 {
                     int playerLayer = player.gameObject.layer;
-                    float layerZ = playerLayer - 9;
-                    startCell.z = layerZ;
+                    startCell.z = playerLayer - 9;
+                }
+
+                // When the caller knows the target's real layer, route to THAT layer instead of
+                // brute-forcing destination Z. The brute force takes the first layer that yields a
+                // path and so mis-routes a cross-layer target to its X/Y projection on the player's
+                // own layer. Cell layer index = gameObject.layer - 9.
+                bool hasTargetLayer = player != null && targetLayer.HasValue && (targetLayer.Value - 9) >= 0;
+                if (hasTargetLayer)
+                    destCell.z = targetLayer.Value - 9;
+
+                // Record the grid cells actually used (X/Y conversion ignores Z) for diagnostics.
+                pathInfo.StartCell = startCell;
+                pathInfo.DestCell = destCell;
+                pathInfo.MapWidth = mapWidth;
+                pathInfo.MapHeight = mapHeight;
+
+                // Same-tile short-circuit: standing on the target (same cell + same layer) is "here",
+                // not a fabricated adjacency step. Layers match when the target layer is unknown or
+                // equals the player's layer.
+                bool layersMatch = !targetLayer.HasValue || (targetLayer.Value - 9) == (int)startCell.z;
+                if (startCell.x == destCell.x && startCell.y == destCell.y && layersMatch)
+                {
+                    pathInfo.Success = true;
+                    pathInfo.StepCount = 0;
+                    pathInfo.WorldPath = new List<Vector3> { startCell };
+                    pathInfo.Description = "No movement needed";
+                    return pathInfo;
                 }
 
                 Il2CppSystem.Collections.Generic.List<Vector3> pathPoints = null;
@@ -414,55 +463,59 @@ namespace FFII_ScreenReader.Field
                 {
                     bool playerCollisionState = player._IsOnCollision_k__BackingField;
 
-                    // Try pathfinding with different destination layers until one succeeds
-                    for (int tryDestZ = 2; tryDestZ >= 0; tryDestZ--)
+                    if (hasTargetLayer)
                     {
-                        destCell.z = tryDestZ;
+                        // Layer-aware: search the target's real layer only.
                         pathPoints = MapRouteSearcher.Search(mapHandle, startCell, destCell, playerCollisionState);
 
-                        if (pathPoints != null && pathPoints.Count > 0)
+                        // If the exact target tile is unwalkable, try adjacent tiles on the SAME layer.
+                        if (pathPoints == null || pathPoints.Count == 0)
                         {
-                            break;
+                            foreach (var offset in AdjacentOffsets)
+                            {
+                                Vector3 adjacentTargetWorld = targetWorldPos + offset;
+                                Vector3 adjacentDestCell = new Vector3(
+                                    Mathf.FloorToInt(mapWidth * 0.5f + adjacentTargetWorld.x * 0.0625f),
+                                    Mathf.FloorToInt(mapHeight * 0.5f - adjacentTargetWorld.y * 0.0625f),
+                                    destCell.z
+                                );
+                                pathPoints = MapRouteSearcher.Search(mapHandle, startCell, adjacentDestCell, playerCollisionState);
+                                if (pathPoints != null && pathPoints.Count > 0)
+                                    break;
+                            }
                         }
                     }
-
-                    // If direct path failed, try adjacent tiles
-                    if (pathPoints == null || pathPoints.Count == 0)
+                    else
                     {
-                        Vector3[] adjacentOffsets = new Vector3[] {
-                            new Vector3(0, 16, 0),    // north
-                            new Vector3(16, 0, 0),    // east
-                            new Vector3(0, -16, 0),   // south
-                            new Vector3(-16, 0, 0),   // west
-                            new Vector3(16, 16, 0),   // northeast
-                            new Vector3(16, -16, 0),  // southeast
-                            new Vector3(-16, -16, 0), // southwest
-                            new Vector3(-16, 16, 0)   // northwest
-                        };
-
-                        foreach (var offset in adjacentOffsets)
+                        // Unknown target layer: brute-force destination Z (legacy behaviour).
+                        for (int tryDestZ = 2; tryDestZ >= 0; tryDestZ--)
                         {
-                            Vector3 adjacentTargetWorld = targetWorldPos + offset;
-
-                            Vector3 adjacentDestCell = new Vector3(
-                                Mathf.FloorToInt(mapWidth * 0.5f + adjacentTargetWorld.x * 0.0625f),
-                                Mathf.FloorToInt(mapHeight * 0.5f - adjacentTargetWorld.y * 0.0625f),
-                                0
-                            );
-
-                            for (int tryDestZ = 2; tryDestZ >= 0; tryDestZ--)
-                            {
-                                adjacentDestCell.z = tryDestZ;
-                                pathPoints = MapRouteSearcher.Search(mapHandle, startCell, adjacentDestCell, playerCollisionState);
-
-                                if (pathPoints != null && pathPoints.Count > 0)
-                                {
-                                    break;
-                                }
-                            }
-
+                            destCell.z = tryDestZ;
+                            pathPoints = MapRouteSearcher.Search(mapHandle, startCell, destCell, playerCollisionState);
                             if (pathPoints != null && pathPoints.Count > 0)
                                 break;
+                        }
+
+                        if (pathPoints == null || pathPoints.Count == 0)
+                        {
+                            foreach (var offset in AdjacentOffsets)
+                            {
+                                Vector3 adjacentTargetWorld = targetWorldPos + offset;
+                                Vector3 adjacentDestCell = new Vector3(
+                                    Mathf.FloorToInt(mapWidth * 0.5f + adjacentTargetWorld.x * 0.0625f),
+                                    Mathf.FloorToInt(mapHeight * 0.5f - adjacentTargetWorld.y * 0.0625f),
+                                    0
+                                );
+                                for (int tryDestZ = 2; tryDestZ >= 0; tryDestZ--)
+                                {
+                                    adjacentDestCell.z = tryDestZ;
+                                    pathPoints = MapRouteSearcher.Search(mapHandle, startCell, adjacentDestCell, playerCollisionState);
+                                    if (pathPoints != null && pathPoints.Count > 0)
+                                        break;
+                                }
+                                if (pathPoints != null && pathPoints.Count > 0)
+                                    break;
+                            }
                         }
                     }
                 }

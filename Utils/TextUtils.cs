@@ -9,8 +9,8 @@ namespace FFII_ScreenReader.Utils
     /// </summary>
     public static class TextUtils
     {
-        private static readonly Regex IconMarkupRegex = new Regex(
-            @"<[iI][cC]_[^>]+>",
+        private static readonly Regex AngleBracketTagRegex = new Regex(
+            @"<[^<>\s]+?>",
             RegexOptions.Compiled);
 
         private static readonly Regex RichTextTagRegex = new Regex(
@@ -18,14 +18,17 @@ namespace FFII_ScreenReader.Utils
             RegexOptions.Compiled);
 
         /// <summary>
-        /// Removes icon markup tags from text (e.g., &lt;ic_Drag&gt;, &lt;IC_DRAG&gt;).
+        /// Removes bracket-style markup tags from text — covers &lt;ic_Drag&gt;, &lt;WMGC&gt;,
+        /// &lt;sprite=..&gt;, &lt;color=..&gt;, and any other single-token angle-bracket tag.
+        /// Does not strip tags containing whitespace, so conversational uses of '&lt;' in
+        /// game text are preserved.
         /// </summary>
         public static string StripIconMarkup(string text)
         {
             if (string.IsNullOrEmpty(text))
                 return string.Empty;
 
-            return IconMarkupRegex.Replace(text, "").Trim();
+            return AngleBracketTagRegex.Replace(text, "").Trim();
         }
 
         /// <summary>

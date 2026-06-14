@@ -33,12 +33,14 @@ namespace FFII_ScreenReader.Field
         private List<NavigableEntity> filteredEntities = new List<NavigableEntity>();
         private PathfindingFilter pathfindingFilter = new PathfindingFilter();
         private ToLayerFilter toLayerFilter = new ToLayerFilter();
+        private int lastScannedMapId = -1;
 
         // Incremental scanning: map FieldEntity to its NavigableEntity conversion
         // This avoids re-converting the same entities every scan
         private Dictionary<FieldEntity, NavigableEntity> entityMap = new Dictionary<FieldEntity, NavigableEntity>();
 
         // Track selected entity by identifier to maintain focus across re-sorts
+        private NavigableEntity selectedEntity = null;
         private Vector3? selectedEntityPosition = null;
         private EntityCategory? selectedEntityCategory = null;
         private string selectedEntityName = null;
@@ -112,6 +114,7 @@ namespace FFII_ScreenReader.Field
             var entity = CurrentEntity;
             if (entity != null)
             {
+                selectedEntity = entity;
                 selectedEntityPosition = entity.Position;
                 selectedEntityCategory = entity.Category;
                 selectedEntityName = entity.Name;
@@ -123,6 +126,7 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         public void ClearSelectedEntityIdentifier()
         {
+            selectedEntity = null;
             selectedEntityPosition = null;
             selectedEntityCategory = null;
             selectedEntityName = null;
@@ -134,6 +138,19 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         private int FindEntityByIdentifier()
         {
+            // Reference match first: the same NavigableEntity instance persists across scans
+            // (cached in entityMap), so reference equality keeps the cursor pinned to a moving
+            // entity (e.g., Sunken-Cavern slimes) even when it drifts past the position
+            // tolerance. Position/name fallbacks recover only if the object was replaced.
+            if (selectedEntity != null)
+            {
+                for (int i = 0; i < filteredEntities.Count; i++)
+                {
+                    if (ReferenceEquals(filteredEntities[i], selectedEntity))
+                        return i;
+                }
+            }
+
             if (!selectedEntityPosition.HasValue || !selectedEntityCategory.HasValue)
                 return -1;
 
@@ -190,6 +207,7 @@ namespace FFII_ScreenReader.Field
         {
             get
             {
+                EnsureCorrectMap();
                 if (filteredEntities.Count == 0 || currentIndex < 0 || currentIndex >= filteredEntities.Count)
                     return null;
                 return filteredEntities[currentIndex];
@@ -198,18 +216,25 @@ namespace FFII_ScreenReader.Field
 
         /// <summary>
         /// Scans the field for all navigable entities using incremental scanning.
-        /// Only converts new entities, keeping existing conversions to improve performance.
+        /// Removes entities no longer in the world, prunes deactivated entities
+        /// (IsAlive == false — opened chests, despawned NPCs), and converts new entities.
         /// </summary>
         public void ScanEntities()
         {
             try
             {
+                int currentMapId = GetCurrentMapId();
                 var fieldEntities = FieldNavigationHelper.GetAllFieldEntities();
                 var currentSet = new HashSet<FieldEntity>(fieldEntities);
 
-                // Remove entities that no longer exist
+                // Remove entities that no longer exist in the game's entity list
                 var toRemove = entityMap.Keys.Where(k => !currentSet.Contains(k)).ToList();
                 foreach (var key in toRemove)
+                    entityMap.Remove(key);
+
+                // Prune entities that are deactivated/destroyed in the scene
+                var dead = entityMap.Where(kv => !kv.Value.IsAlive).Select(kv => kv.Key).ToList();
+                foreach (var key in dead)
                     entityMap.Remove(key);
 
                 // Only process NEW entities (ones not already in the map)
@@ -231,6 +256,7 @@ namespace FFII_ScreenReader.Field
 
                 // Update the entities list from the map
                 entities = entityMap.Values.ToList();
+                lastScannedMapId = currentMapId;
 
                 // Re-apply filter after scanning
                 ApplyFilter();
@@ -299,6 +325,8 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         public void NextEntity()
         {
+            EnsureCorrectMap();
+
             if (filteredEntities.Count == 0)
             {
                 ScanEntities();
@@ -341,6 +369,8 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         public void PreviousEntity()
         {
+            EnsureCorrectMap();
+
             if (filteredEntities.Count == 0)
             {
                 ScanEntities();
@@ -504,6 +534,24 @@ namespace FFII_ScreenReader.Field
             if (savePointEvent != null)
                 return new SavePointEntity(fieldEntity, position, "Save Point");
 
+            // Layer transition (stairs/ladders) — must run BEFORE the generic EventTriggerEntity
+            // check below because SwitchLayerEventEntity derives from EventTriggerEntity. Tag as
+            // "ToLayer" so it surfaces as a navigable transition and ToLayerFilter can hide it.
+            bool isLayerTransition = false;
+            try { isLayerTransition = fieldEntity.TryCast<Il2CppLast.Entity.Field.SwitchLayerEventEntity>() != null; }
+            catch { }
+            if (!isLayerTransition &&
+                (goNameLower == "toupper" || goNameLower == "tobottom" || goNameLower.StartsWith("tolayer")))
+            {
+                isLayerTransition = true;
+            }
+            if (isLayerTransition)
+            {
+                string layerName = GetEntityNameFromProperty(fieldEntity);
+                if (string.IsNullOrEmpty(layerName)) layerName = goName;
+                return new EventEntity(fieldEntity, position, layerName, "ToLayer");
+            }
+
             // 6. Check for EventTriggerEntity by type casting
             var eventTrigger = fieldEntity.TryCast<EventTriggerEntity>();
             if (eventTrigger != null)
@@ -539,14 +587,6 @@ namespace FFII_ScreenReader.Field
                 goNameLower.Contains("scroll") || goNameLower.Contains("pointin") ||
                 goNameLower.Contains("opentrigger"))
                 return null;
-
-            // Layer transition detection — create EventEntity with "ToLayer" type so it can be filtered
-            if (goNameLower.Contains("tolayer"))
-            {
-                string entityName = GetEntityNameFromProperty(fieldEntity);
-                if (string.IsNullOrEmpty(entityName)) entityName = goName;
-                return new EventEntity(fieldEntity, position, entityName, "ToLayer");
-            }
 
             // 8. Check for interactive objects (generic fallback)
             var interactiveEntity = fieldEntity.TryCast<IInteractiveEntity>();
@@ -635,6 +675,8 @@ namespace FFII_ScreenReader.Field
             }
 
             // Pattern matching for event descriptions
+            if (rawEntityName.Contains("アイコンなし"))  // Dev "(no icon)" markers — invisible triggers (e.g. 定期船(アイコンなし) ferry), not real interactables
+                return true;
             if (rawEntityName.Contains("所持して通行すると発生"))  // Event triggers
                 return true;
             if (rawEntityName.Contains("に行けない"))              // Access restrictions
@@ -1063,5 +1105,37 @@ namespace FFII_ScreenReader.Field
                 return ("NPC", "NPC");
             }
         }
+
+        #region Map Transition Safety Net
+
+        /// <summary>
+        /// Soft fallback: if cycling detects the current map differs from the last scanned
+        /// map, force a full rescan. Backstop for any scripted transition that bypasses
+        /// CheckMapTransition's hard rescan path.
+        /// </summary>
+        private void EnsureCorrectMap()
+        {
+            try
+            {
+                int currentMapId = GetCurrentMapId();
+                if (currentMapId > 0 && currentMapId != lastScannedMapId)
+                    ForceRescan();
+            }
+            catch { } // Map ID read may fail during transitions
+        }
+
+        private int GetCurrentMapId()
+        {
+            try
+            {
+                var userDataManager = UserDataManager.Instance();
+                if (userDataManager != null)
+                    return userDataManager.CurrentMapId;
+            }
+            catch { } // UserDataManager may not be initialized
+            return -1;
+        }
+
+        #endregion
     }
 }

@@ -8,6 +8,7 @@ using MelonLoader;
 using UnityEngine;
 using Il2CppLast.Management;
 using FFII_ScreenReader.Field;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Utils
 {
@@ -46,6 +47,14 @@ namespace FFII_ScreenReader.Utils
         // Matches trailing ASCII digits (not circled numbers like ①②③)
         private static readonly Regex TrailingDigitsRegex = new Regex(
             @"([0-9]+)$",
+            RegexOptions.Compiled);
+
+        // Matches a single leading circled number ①-⑨ (U+2460..U+2468). The game uses
+        // these as per-instance disambiguators for duplicate NPC sprites; the entity
+        // scanner output already includes positional info ("- NPC, 1 of 7") so the
+        // circled number is dropped after stripping.
+        private static readonly Regex CircledNumberPrefixRegex = new Regex(
+            @"^[①-⑨]",
             RegexOptions.Compiled);
 
         /// <summary>
@@ -167,7 +176,45 @@ namespace FFII_ScreenReader.Utils
                 }
             }
 
-            // 5. Track untranslated name by current map (use base name to deduplicate)
+            // 5. Strip leading circled-number prefix (①-⑨) and look up the remainder.
+            //    Drop the circled number — sequence info is in the announcement format.
+            if (CircledNumberPrefixRegex.IsMatch(japaneseName))
+            {
+                string afterCircled = japaneseName.Substring(1);
+                string circledTranslation = LookupLocalized(afterCircled, lang);
+                if (circledTranslation != null)
+                    return circledTranslation;
+
+                // Combine with trailing-digit stripping
+                StripTrailingDigits(afterCircled, out string baseAfterCircled, out string suffixAfterCircled);
+                if (suffixAfterCircled != null)
+                {
+                    string both = LookupLocalized(baseAfterCircled, lang);
+                    if (both != null)
+                        return both + " " + suffixAfterCircled;
+                }
+            }
+
+            // 6. Strip leading 真 ("true/real" — late-game variants like 真ヒルダ).
+            //    Mark with "(true)" so the late-game distinction survives translation.
+            if (japaneseName.Length > 1 && japaneseName[0] == '真')
+            {
+                string afterShin = japaneseName.Substring(1);
+                string shinTranslation = LookupLocalized(afterShin, lang);
+                if (shinTranslation != null)
+                    return string.Format(T("{0} (true)"), shinTranslation);
+
+                // Combine with trailing-digit stripping
+                StripTrailingDigits(afterShin, out string baseAfterShin, out string suffixAfterShin);
+                if (suffixAfterShin != null)
+                {
+                    string both = LookupLocalized(baseAfterShin, lang);
+                    if (both != null)
+                        return string.Format(T("{0} (true)"), both) + " " + suffixAfterShin;
+                }
+            }
+
+            // 7. Track untranslated name by current map (use base name to deduplicate)
             string trackingName = baseName ?? japaneseName;
             if (ContainsJapanese(trackingName))
             {

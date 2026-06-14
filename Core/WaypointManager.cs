@@ -20,11 +20,12 @@ namespace FFII_ScreenReader.Core
         public float x;
         public float y;
         public float z;
+        public int layer = -1;  // Unity gameObject.layer at creation; -1 = unknown (legacy)
         public string created;
 
         public WaypointData() { }
 
-        public WaypointData(string id, string name, WaypointCategory category, Vector3 position)
+        public WaypointData(string id, string name, WaypointCategory category, Vector3 position, int layer)
         {
             this.id = id;
             this.name = name;
@@ -32,6 +33,7 @@ namespace FFII_ScreenReader.Core
             this.x = position.x;
             this.y = position.y;
             this.z = position.z;
+            this.layer = layer;
             this.created = DateTime.UtcNow.ToString("o");
         }
 
@@ -54,7 +56,7 @@ namespace FFII_ScreenReader.Core
     [Serializable]
     public class WaypointFileData
     {
-        public int version = 1;
+        public int version = 2;  // v2 adds per-waypoint "layer" for layer-aware pathfinding
         public Dictionary<string, List<WaypointData>> waypoints = new Dictionary<string, List<WaypointData>>();
     }
 
@@ -158,10 +160,10 @@ namespace FFII_ScreenReader.Core
         /// <summary>
         /// Adds a new waypoint at the specified position
         /// </summary>
-        public WaypointEntity AddWaypoint(string name, Vector3 position, string mapId, WaypointCategory category = WaypointCategory.Miscellaneous)
+        public WaypointEntity AddWaypoint(string name, Vector3 position, string mapId, WaypointCategory category = WaypointCategory.Miscellaneous, int layer = -1)
         {
             string id = Guid.NewGuid().ToString();
-            var data = new WaypointData(id, name, category, position);
+            var data = new WaypointData(id, name, category, position, layer);
 
             if (!fileData.waypoints.ContainsKey(mapId))
             {
@@ -170,7 +172,7 @@ namespace FFII_ScreenReader.Core
 
             fileData.waypoints[mapId].Add(data);
 
-            var entity = new WaypointEntity(id, name, position, mapId, category);
+            var entity = new WaypointEntity(id, name, position, mapId, category, layer);
             waypointEntities[id] = entity;
 
             SaveWaypoints();
@@ -233,7 +235,8 @@ namespace FFII_ScreenReader.Core
                 newName,
                 entity.Position,
                 entity.MapId,
-                entity.WaypointCategoryType
+                entity.WaypointCategoryType,
+                entity.Layer
             );
             waypointEntities[waypointId] = newEntity;
 
@@ -302,7 +305,8 @@ namespace FFII_ScreenReader.Core
                         data.name,
                         data.GetPosition(),
                         mapId,
-                        data.GetCategory()
+                        data.GetCategory(),
+                        data.layer
                     );
                     waypointEntities[data.id] = entity;
                 }
@@ -440,6 +444,7 @@ namespace FFII_ScreenReader.Core
                 data.x = ExtractFloatValue(objJson, "x");
                 data.y = ExtractFloatValue(objJson, "y");
                 data.z = ExtractFloatValue(objJson, "z");
+                data.layer = ExtractIntValue(objJson, "layer", -1);  // absent in v1 files → -1 (unknown)
                 data.created = ExtractStringValue(objJson, "created") ?? DateTime.UtcNow.ToString("o");
 
                 return data;
@@ -466,6 +471,30 @@ namespace FFII_ScreenReader.Core
             if (valueEnd < 0) return null;
 
             return json.Substring(valueStart + 1, valueEnd - valueStart - 1);
+        }
+
+        private int ExtractIntValue(string json, string key, int defaultValue)
+        {
+            string searchKey = $"\"{key}\"";
+            int keyIdx = json.IndexOf(searchKey);
+            if (keyIdx < 0) return defaultValue;
+
+            int colonIdx = json.IndexOf(":", keyIdx);
+            if (colonIdx < 0) return defaultValue;
+
+            int valueStart = colonIdx + 1;
+            while (valueStart < json.Length && (json[valueStart] == ' ' || json[valueStart] == '\t'))
+                valueStart++;
+
+            int valueEnd = valueStart;
+            while (valueEnd < json.Length && (char.IsDigit(json[valueEnd]) || json[valueEnd] == '-'))
+                valueEnd++;
+
+            string valueStr = json.Substring(valueStart, valueEnd - valueStart);
+            if (int.TryParse(valueStr, out int result))
+                return result;
+
+            return defaultValue;
         }
 
         private float ExtractFloatValue(string json, string key)
@@ -520,6 +549,7 @@ namespace FFII_ScreenReader.Core
                     sb.AppendLine($"        \"x\": {wp.x},");
                     sb.AppendLine($"        \"y\": {wp.y},");
                     sb.AppendLine($"        \"z\": {wp.z},");
+                    sb.AppendLine($"        \"layer\": {wp.layer},");
                     sb.AppendLine($"        \"created\": \"{wp.created}\"");
 
                     if (w < waypoints.Count - 1)

@@ -1,11 +1,13 @@
 using System;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
 using KeyInputEquipmentInfoWindowController = Il2CppLast.UI.KeyInput.EquipmentInfoWindowController;
@@ -15,17 +17,73 @@ using EquipUtility = Il2CppLast.Systems.EquipUtility;
 using GameCursor = Il2CppLast.UI.Cursor;
 using CustomScrollViewWithinRangeType = Il2CppLast.UI.CustomScrollView.WithinRangeType;
 using KeyInputEquipmentWindowController = Il2CppLast.UI.KeyInput.EquipmentWindowController;
-using System.Reflection;
+using KeyInputEquipmentDescriptionWindowController = Il2CppLast.UI.KeyInput.EquipmentDescriptionWindowController;
 
 namespace FFII_ScreenReader.Patches
 {
+    /// <summary>
+    /// Announces equipment detail when the I key / right-stick-up is pressed. Reads the live
+    /// UI panel text (FF1 pattern): the game renders the active panel (stats OR description)
+    /// into EquipmentDescriptionWindowView.descriptionText, so this reads the full stats panel
+    /// and is inherently panel-sensitive — no master-data lookups.
+    /// </summary>
+    public static class EquipDetailsAnnouncer
+    {
+        public static void AnnounceCurrentItemDetails()
+        {
+            try
+            {
+                if (!EquipMenuState.IsActive)
+                    return;
+
+                string announcement = GetActivePanelFromUI();
+                if (string.IsNullOrWhiteSpace(announcement))
+                    announcement = T("No description available");
+
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Equipment] Error announcing details: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// EquipmentDescriptionWindowController -> view (0x20) -> descriptionText (0x18) -> .text
+        /// </summary>
+        private static string GetActivePanelFromUI()
+        {
+            try
+            {
+                var descController = UnityEngine.Object.FindObjectOfType<KeyInputEquipmentDescriptionWindowController>();
+                if (descController == null) return null;
+
+                IntPtr ctrlPtr = descController.Pointer;
+                if (ctrlPtr == IntPtr.Zero) return null;
+
+                IntPtr viewPtr = Marshal.ReadIntPtr(ctrlPtr + IL2CppOffsets.Equipment.DescriptionView);
+                if (viewPtr == IntPtr.Zero) return null;
+
+                IntPtr textPtr = Marshal.ReadIntPtr(viewPtr + IL2CppOffsets.Equipment.DescriptionText);
+                if (textPtr == IntPtr.Zero) return null;
+
+                var text = new UnityEngine.UI.Text(textPtr);
+                string raw = text?.text;
+                return string.IsNullOrWhiteSpace(raw) ? null : TextUtils.StripIconMarkup(raw).Trim();
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
     /// <summary>
     /// State tracker for equipment menu - prevents duplicate cursor announcements.
     /// Part of the Active State Pattern ported from FF3.
     /// </summary>
     public static class EquipMenuState
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.EQUIP_MENU, AnnouncementContexts.EQUIP_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.EQUIP_MENU);
 
         static EquipMenuState()
         {
@@ -247,11 +305,16 @@ namespace FFII_ScreenReader.Patches
                     {
                         equippedItem = itemData.Name;
 
-                        // Add parameter message (ATK +12, DEF +5, etc.)
-                        string paramMsg = itemData.ParameterMessage;
-                        if (!string.IsNullOrWhiteSpace(paramMsg))
+                        // Append parameter message (ATK +12, DEF +5, etc.) only when
+                        // AutoDetail is on; otherwise the slot panel reads just the name
+                        // and stats come from the I key / right stick up.
+                        if (PreferencesManager.AutoDetailEnabled)
                         {
-                            equippedItem += ", " + paramMsg;
+                            string paramMsg = itemData.ParameterMessage;
+                            if (!string.IsNullOrWhiteSpace(paramMsg))
+                            {
+                                equippedItem += ", " + paramMsg;
+                            }
                         }
                     }
                     catch { }
@@ -287,10 +350,6 @@ namespace FFII_ScreenReader.Patches
 
                 // Strip icon markup
                 announcement = TextUtils.StripIconMarkup(announcement);
-
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.EQUIP_MENU, announcement))
-                    return;
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
@@ -345,36 +404,33 @@ namespace FFII_ScreenReader.Patches
                 // Strip icon markup from name
                 itemName = TextUtils.StripIconMarkup(itemName);
 
-                // Build announcement with item details
+                // Base is the item name; the stat change ("ATK +15") and description are
+                // the detail — gated behind AutoDetail and reachable via the I key.
                 string announcement = itemName;
 
-                // Add parameter info (ATK +15, DEF +8, etc.)
+                string detail = null;
                 try
                 {
                     string paramMessage = itemData.ParameterMessage;
                     if (!string.IsNullOrWhiteSpace(paramMessage))
-                    {
-                        paramMessage = TextUtils.StripIconMarkup(paramMessage);
-                        announcement += $", {paramMessage}";
-                    }
+                        detail = TextUtils.StripIconMarkup(paramMessage);
                 }
                 catch { }
-
-                // Add description
                 try
                 {
                     string description = itemData.Description;
                     if (!string.IsNullOrWhiteSpace(description))
                     {
                         description = TextUtils.StripIconMarkup(description);
-                        announcement += $", {description}";
+                        detail = string.IsNullOrWhiteSpace(detail) ? description : $"{detail}, {description}";
                     }
                 }
                 catch { }
 
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.EQUIP_MENU, announcement))
-                    return;
+                MenuDetailCache.Set(detail);
+
+                if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(detail))
+                    announcement += $": {detail}";
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }

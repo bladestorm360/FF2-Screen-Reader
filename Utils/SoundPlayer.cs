@@ -252,11 +252,12 @@ namespace FFII_ScreenReader.Utils
         /// Plays an audio beacon ping with directional panning.
         /// Writes PCM directly to the channel's unmanaged buffer for zero-allocation playback.
         /// </summary>
-        public static void PlayBeacon(bool isSouth, float pan, float volumeScale)
+        public static void PlayBeacon(bool isSouth, float pan, float volumeScale, bool lowPitch = false)
         {
             try
             {
                 int frequency = isSouth ? SoundConstants.Beacon.FREQUENCY_SOUTH : SoundConstants.Beacon.FREQUENCY_NORTH;
+                if (lowPitch) frequency /= 2;
                 int beaconVolumePref = FFII_ScreenReader.Core.PreferencesManager.BeaconVolume;
                 float prefMultiplier = beaconVolumePref / 50.0f;
                 float volume = Math.Max(SoundConstants.Beacon.MIN_VOLUME,

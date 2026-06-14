@@ -16,6 +16,9 @@ namespace FFII_ScreenReader.Core
         private static MelonPreferences_Entry<bool> prefWallTones;
         private static MelonPreferences_Entry<bool> prefFootsteps;
         private static MelonPreferences_Entry<bool> prefAudioBeacons;
+        private static MelonPreferences_Entry<bool> prefStickClickNormalization;
+        private static MelonPreferences_Entry<bool> prefAutoDetail;
+        private static MelonPreferences_Entry<bool> prefAnnounceOnBeaconRestart;
         private static MelonPreferences_Entry<int> prefWallBumpVolume;
         private static MelonPreferences_Entry<int> prefFootstepVolume;
         private static MelonPreferences_Entry<int> prefWallToneVolume;
@@ -38,6 +41,9 @@ namespace FFII_ScreenReader.Core
         public static bool PathfindingFilterEnabled => prefPathfindingFilter?.Value ?? false;
         public static bool MapExitFilterEnabled => prefMapExitFilter?.Value ?? false;
         public static bool ToLayerFilterEnabled => prefToLayerFilter?.Value ?? false;
+        public static bool StickClickNormalization => prefStickClickNormalization?.Value ?? false;
+        public static bool AutoDetailEnabled => prefAutoDetail?.Value ?? false;
+        public static bool AnnounceOnBeaconRestartEnabled => prefAnnounceOnBeaconRestart?.Value ?? false;
 
         public static void Initialize()
         {
@@ -48,6 +54,9 @@ namespace FFII_ScreenReader.Core
             prefWallTones = prefsCategory.CreateEntry<bool>("WallTones", false, "Wall Tones", "Play directional tones when approaching walls");
             prefFootsteps = prefsCategory.CreateEntry<bool>("Footsteps", false, "Footsteps", "Play click sound on each tile movement");
             prefAudioBeacons = prefsCategory.CreateEntry<bool>("AudioBeacons", false, "Audio Beacons", "Play ping toward selected entity");
+            prefStickClickNormalization = prefsCategory.CreateEntry<bool>("StickClickNormalization", false, "Stick Click Normalization", "When enabled, L3/R3 fall through to game; mod toggles move to mod mode");
+            prefAutoDetail = prefsCategory.CreateEntry<bool>("AutoDetail", false, "Auto Detail", "Announce descriptions/stats on focus for items, magic, equipment, and shops (off = terse; use I/U keys on demand)");
+            prefAnnounceOnBeaconRestart = prefsCategory.CreateEntry<bool>("AnnounceOnBeaconRestart", false, "Beacon Destination Announcement", "Re-speak the current destination when the beacon is restarted");
             prefWallBumpVolume = prefsCategory.CreateEntry<int>("WallBumpVolume", 50, "Wall Bump Volume", "Volume for wall bump sounds (0-100)");
             prefFootstepVolume = prefsCategory.CreateEntry<int>("FootstepVolume", 50, "Footstep Volume", "Volume for footstep sounds (0-100)");
             prefWallToneVolume = prefsCategory.CreateEntry<int>("WallToneVolume", 50, "Wall Tone Volume", "Volume for wall proximity tones (0-100)");
@@ -80,6 +89,9 @@ namespace FFII_ScreenReader.Core
                 "PathfindingFilter" => prefPathfindingFilter,
                 "MapExitFilter" => prefMapExitFilter,
                 "ToLayerFilter" => prefToLayerFilter,
+                "StickClickNormalization" => prefStickClickNormalization,
+                "AutoDetail" => prefAutoDetail,
+                "AnnounceOnBeaconRestart" => prefAnnounceOnBeaconRestart,
                 _ => null
             };
             if (pref != null)

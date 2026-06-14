@@ -1,4 +1,30 @@
 {
+  "魔法陣": {
+    "en": "Magic Circle",
+    "fr": "Cercle magique",
+    "it": "Cerchio magico",
+    "de": "Zauberkreis",
+    "es": "Círculo mágico",
+    "ko": "마법진",
+    "zht": "魔法陣",
+    "zhc": "魔法阵",
+    "ru": "Магический круг",
+    "th": "วงเวทมนตร์",
+    "pt": "Círculo mágico"
+  },
+  "生き返りの間": {
+    "en": "Revival Room",
+    "fr": "Salle de la Résurrection",
+    "it": "Sala della Resurrezione",
+    "de": "Raum der Wiederbelebung",
+    "es": "Sala de la Resurrección",
+    "ko": "부활의 방",
+    "zht": "復活之間",
+    "zhc": "复活之间",
+    "ru": "Комната воскрешения",
+    "th": "ห้องชุบชีวิต",
+    "pt": "Sala da Ressurreição"
+  },
   "ヒルダ": {
     "en": "Hilda",
     "fr": "Hilda",
@@ -544,6 +570,19 @@
     "ru": "Торговец Финна (вариант 2)",
     "th": "พ่อค้าเมืองฟินน์ (แบบ 2)",
     "pt": "Comerciante de Fynn (variante 2)"
+  },
+  "フィン王": {
+    "en": "Fynn King",
+    "fr": "Roi de Fynn",
+    "it": "Re di Fynn",
+    "de": "König von Fynn",
+    "es": "Rey de Fynn",
+    "ko": "핀 왕",
+    "zht": "芬恩王",
+    "zhc": "芬恩王",
+    "ru": "Король Финна",
+    "th": "ราชาแห่งฟินน์",
+    "pt": "Rei de Fynn"
   },
   "男性（青服）": {
     "en": "Man (Blue Clothes)",
@@ -1116,5 +1155,18 @@
     "ru": "Крышка тайного хода",
     "th": "ฝาทางลับ",
     "pt": "Tampa da Passagem Secreta"
+  },
+  "教会": {
+    "en": "Church",
+    "fr": "Église",
+    "it": "Chiesa",
+    "de": "Kirche",
+    "es": "Iglesia",
+    "ko": "교회",
+    "zht": "教堂",
+    "zhc": "教堂",
+    "ru": "Церковь",
+    "th": "โบสถ์",
+    "pt": "Igreja"
   }
 }

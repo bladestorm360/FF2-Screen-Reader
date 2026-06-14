@@ -65,6 +65,33 @@ namespace FFII_ScreenReader.Utils
             public const int STATE_COMMAND = 1;
             public const int STATE_INFO = 2;
             public const int STATE_SELECT = 3;
+
+            // Live equip detail panel (KeyInput.EquipmentDescriptionWindowController).
+            // The game renders the active panel (stats OR description) into this single Text.
+            public const int DescriptionView = 0x20;   // EquipmentDescriptionWindowController.view
+            public const int DescriptionText = 0x18;   // EquipmentDescriptionWindowView.descriptionText
+        }
+
+        /// <summary>
+        /// Live shop info panel (KeyInput.ShopInfoController). The game renders the active
+        /// panel (stats OR description) into a single Text — read it directly (FF1 pattern).
+        /// </summary>
+        internal static class ShopInfo
+        {
+            public const int InfoView = 0x18;        // ShopInfoController.view
+            public const int DescriptionText = 0x38; // ShopInfoView.descriptionText
+        }
+
+        /// <summary>
+        /// Item-menu live info panel (Last.UI.ItemWindowView). descriptionText holds the
+        /// item description (consumables / equipment description mode); equipment STATS are
+        /// rendered into ItemEquipmentDetailView row controllers (read via visible Text).
+        /// </summary>
+        internal static class ItemPanel
+        {
+            public const int WindowViewDescriptionText = 0x18; // ItemWindowView.descriptionText
+            public const int WindowViewIsFrontTextVisible = 0x48; // ItemWindowView.isFrontTextVisible (stats vs desc)
+            public const int EquipmentDetailControllerView = 0x18; // ItemEquipmentDetailController.view
         }
 
         /// <summary>
@@ -97,7 +124,9 @@ namespace FFII_ScreenReader.Utils
         internal static class Keyword
         {
             // SecretWordController offsets
+            public const int OFFSET_STATE_MACHINE = 0x20;          // SecretWordControllerBase.stateMachine
             public const int OFFSET_SELECT_CONTENT_CURSOR = 0x30;
+            public const int OFFSET_SELECT_COMMAND_CURSOR = 0x38;  // SecretWordControllerBase.selectCommandCursor
             public const int OFFSET_WORD_DATA_LIST = 0x60;
             public const int OFFSET_ITEM_DATA_LIST = 0x68;
             public const int OFFSET_SFCD_NAME_MESSAGE_ID = 0x18;
@@ -105,6 +134,11 @@ namespace FFII_ScreenReader.Utils
             public const int OFFSET_ILCD_NAME = 0x20;
             public const int OFFSET_ILCD_DESCRIPTION = 0x28;
             public const int OFFSET_CURSOR_INDEX = 0x20;
+
+            // SecretWordControllerBase.State enum values
+            public const int STATE_NONE = 0;
+            public const int STATE_COMMAND_SELECT = 1;
+            public const int STATE_COMMAND_SELECTING = 2;
 
             // WordsWindowController (KeyInput) offsets
             public const int OFFSET_WORDS_CONTENT_LIST = 0x28;
@@ -129,6 +163,14 @@ namespace FFII_ScreenReader.Utils
             public const int OFFSET_USE_CONTENT_LIST = 0x40;
             public const int OFFSET_USE_SELECT_CURSOR = 0x48;
             public const int OFFSET_GAUGE_IMAGE = 0x18;
+        }
+
+        /// <summary>
+        /// MainMenuController offsets (KeyInput variant — the active controller for keyboard/gamepad on PC).
+        /// </summary>
+        internal static class MainMenu
+        {
+            public const int OFFSET_FOCUS_ID = 0x90;  // MenuCommandId focusId (KeyInput variant, dump.cs:443866)
         }
 
         /// <summary>
@@ -205,9 +247,16 @@ namespace FFII_ScreenReader.Utils
         /// </summary>
         internal static class Shop
         {
+            // ShopController.State values
             public const int STATE_NONE = 0;
             public const int STATE_SELECT_COMMAND = 1;
+            public const int STATE_SELECT_PRODUCT = 2;     // buy list
+            public const int STATE_SELECT_SELL_ITEM = 3;   // sell list
             public const int OFFSET_SELECTED_COUNT = 0x3C;
+
+            // ShopListMainContentController offsets
+            public const int LIST_MAIN_SELECT_CURSOR = 0x48;
+            public const int LIST_MAIN_PRODUCT_LIST = 0x68;
         }
 
         /// <summary>
@@ -216,6 +265,7 @@ namespace FFII_ScreenReader.Utils
         internal static class StatusDetails
         {
             public const int OFFSET_SKILL_VIEW = 0x18;
+            public const int OFFSET_SKILL_WEAPON_TYPE = 0x20; // SkillLevelContentController.weaponType (SkillLevelTarget enum)
             public const int OFFSET_GAUGE_IMAGE = 0x18;
             public const int OFFSET_SKILL_LEVEL_CONTENT_LIST_KEYINPUT = 0x80;
             public const int OFFSET_CONTENT_LIST = 0x48;

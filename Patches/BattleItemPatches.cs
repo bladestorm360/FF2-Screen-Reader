@@ -5,7 +5,6 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 
 // Type aliases for IL2CPP types
 using BattleItemInfomationController = Il2CppLast.UI.KeyInput.BattleItemInfomationController;
@@ -67,7 +66,7 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleItemMenuState
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_ITEM, AnnouncementContexts.BATTLE_ITEM);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_ITEM);
 
         static BattleItemMenuState()
         {
@@ -135,9 +134,6 @@ namespace FFII_ScreenReader.Patches
                 string announcement = TryGetItemFromContentList(controller, cursorIndex);
 
                 if (string.IsNullOrEmpty(announcement))
-                    return;
-
-                if (!ShouldAnnounce(AnnouncementContexts.BATTLE_ITEM, announcement))
                     return;
 
                 BattleItemMenuState.SetActive();

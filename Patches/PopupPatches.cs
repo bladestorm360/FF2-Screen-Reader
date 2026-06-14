@@ -630,6 +630,11 @@ namespace FFII_ScreenReader.Patches
             catch { }
         }
 
+        // Local cursor-index guards (the GameOver popup Update methods fire repeatedly while
+        // the popup is active). Reset to -1 on popup close so reopening starts fresh.
+        private static int _lastGameOverButtonIndex = -1;
+        private static int _lastGameOverLoadButtonIndex = -1;
+
         /// <summary>
         /// Postfix for base Popup.Close - clears state.
         /// </summary>
@@ -642,7 +647,8 @@ namespace FFII_ScreenReader.Patches
                     PopupState.Clear();
                 }
                 // Always reset button tracking on popup close to ensure fresh state for next popup
-                AnnouncementDeduplicator.Reset("Popup.Button", "Popup.GameOverButton", "Popup.GameOverLoadButton");
+                _lastGameOverButtonIndex = -1;
+                _lastGameOverLoadButtonIndex = -1;
             }
             catch { }
         }
@@ -673,9 +679,10 @@ namespace FFII_ScreenReader.Patches
                 var cursor = new GameCursor(cursorPtr);
                 int cursorIndex = cursor.Index;
 
-                // Use central deduplicator - skip if same button as last announced
-                if (!AnnouncementDeduplicator.ShouldAnnounce("Popup.GameOverButton", cursorIndex))
+                // Local index guard - skip if same button as last announced
+                if (cursorIndex == _lastGameOverButtonIndex)
                     return;
+                _lastGameOverButtonIndex = cursorIndex;
 
                 // Read commandList at offset 0x40
                 IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVER_CMDLIST_OFFSET);
@@ -740,9 +747,10 @@ namespace FFII_ScreenReader.Patches
                 var cursor = new GameCursor(cursorPtr);
                 int cursorIndex = cursor.Index;
 
-                // Use central deduplicator - skip if same button as last announced
-                if (!AnnouncementDeduplicator.ShouldAnnounce("Popup.GameOverLoadButton", cursorIndex))
+                // Local index guard - skip if same button as last announced
+                if (cursorIndex == _lastGameOverLoadButtonIndex)
                     return;
+                _lastGameOverLoadButtonIndex = cursorIndex;
 
                 // Read commandList at offset 0x60
                 IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVERLOAD_CMDLIST_OFFSET);

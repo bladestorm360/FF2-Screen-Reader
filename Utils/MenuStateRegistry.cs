@@ -23,6 +23,10 @@ namespace FFII_ScreenReader.Utils
         public const string BATTLE_TARGET = "BattleTarget";
         public const string CONFIG_MENU = "ConfigMenu";
         public const string EQUIP_MENU = "EquipMenu";
+        // Parent container for the field/pause menu. Set while the MainMenuController is
+        // shown and preserved across submenu switches (see SetActiveExclusive) so the
+        // controller router keeps treating the whole pause menu as "not field".
+        public const string MAIN_MENU = "MainMenu";
         public const string ITEM_MENU = "ItemMenu";
         public const string KEYWORD_MENU = "KeywordMenu";
         public const string WORDS_MENU = "WordsMenu";
@@ -65,11 +69,15 @@ namespace FFII_ScreenReader.Utils
         /// </summary>
         public static void SetActiveExclusive(string key)
         {
-            // Clear all states first
+            // Clear all states first, but preserve MAIN_MENU: it's the parent container
+            // for every field/pause submenu. Clearing it when a submenu opens would create
+            // a gap where AnyActive() momentarily reflects only the submenu, and once the
+            // submenu closes nothing keeps the pause menu marked active — field controls
+            // would leak back in while still in the menu. (FF1 ClearOtherMenuStates pattern.)
             var keys = new List<string>(_states.Keys);
             foreach (var k in keys)
             {
-                if (k != key && _states.TryGetValue(k, out var wasActive) && wasActive)
+                if (k != key && k != MAIN_MENU && _states.TryGetValue(k, out var wasActive) && wasActive)
                 {
                     SetActive(k, false);
                 }

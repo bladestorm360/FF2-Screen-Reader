@@ -6,7 +6,6 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using FFII_ScreenReader.Menus;
 using Il2CppLast.Management;
 
@@ -24,7 +23,7 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class StatusMenuState
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.STATUS_MENU, AnnouncementContexts.STATUS_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.STATUS_MENU);
 
         static StatusMenuState()
         {
@@ -226,10 +225,6 @@ namespace FFII_ScreenReader.Patches
                 catch
                 {
                 }
-
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.STATUS_MENU, announcement))
-                    return;
 
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }

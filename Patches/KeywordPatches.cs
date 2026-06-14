@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -6,7 +7,6 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
 
 // Type aliases for IL2CPP types
@@ -30,11 +30,7 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class KeywordMenuState
     {
-        // Context keys for index-based deduplication
-        private const string CONTEXT_COMMAND_INDEX = "Keyword.CommandIndex";
-        private const string CONTEXT_WORD_INDEX = "Keyword.WordIndex";
-
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.KEYWORD_MENU, AnnouncementContexts.KEYWORD_COMMAND, AnnouncementContexts.KEYWORD_WORD, CONTEXT_COMMAND_INDEX, CONTEXT_WORD_INDEX);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.KEYWORD_MENU);
 
         static KeywordMenuState()
         {
@@ -45,19 +41,34 @@ namespace FFII_ScreenReader.Patches
 
         public static void SetActive() => _helper.SetActiveExclusive();
 
-        public static bool ShouldSuppress() => IsActive;
+        /// <summary>
+        /// Suppress the generic cursor reader for the entire active keyword menu
+        /// (the command bar and the sub-lists are both announced by dedicated
+        /// postfixes). State-validated like the shop tracker so it auto-clears when
+        /// the controller is gone or the state machine returns to None.
+        /// </summary>
+        public static bool ShouldSuppress()
+        {
+            if (!IsActive)
+                return false;
+
+            var controller = GameObjectCache.GetOrRefresh<KeyInputSecretWordController>();
+            if (controller == null || !controller.gameObject.activeInHierarchy)
+            {
+                ClearState();
+                return false;
+            }
+
+            int state = StateReaderHelper.ReadStateTag(controller.Pointer, IL2CppOffsets.Keyword.OFFSET_STATE_MACHINE);
+            if (state == IL2CppOffsets.Keyword.STATE_NONE)
+            {
+                ClearState();
+                return false;
+            }
+            return true;
+        }
 
         public static void ClearState() => _helper.IsActive = false;
-
-        public static bool CommandIndexChanged(int index)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_COMMAND_INDEX, index);
-        }
-
-        public static bool WordIndexChanged(int index)
-        {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_WORD_INDEX, index);
-        }
 
         public static string GetCommandName(int commandId)
         {
@@ -78,14 +89,15 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class WordsMenuState
     {
-        // Context key for index-based deduplication
-        private const string CONTEXT_WORD_INDEX = "WordsMenu.WordIndex";
+        // Words SetDescriptionText/UpdateView fire on open and can repeat for the same
+        // focused keyword; a local single-slot index guard announces once per keyword.
+        private static int _lastIndex = -1;
 
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.WORDS_MENU, AnnouncementContexts.WORDS_MENU, CONTEXT_WORD_INDEX);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.WORDS_MENU);
 
         static WordsMenuState()
         {
-            _helper.RegisterResetHandler();
+            _helper.RegisterResetHandler(() => _lastIndex = -1);
         }
 
         public static bool IsActive => _helper.IsActive;
@@ -96,9 +108,12 @@ namespace FFII_ScreenReader.Patches
 
         public static void ClearState() => _helper.IsActive = false;
 
-        public static bool WordIndexChanged(int index)
+        /// <summary>True (and records it) when the focused keyword index changed.</summary>
+        public static bool IsNewIndex(int index)
         {
-            return AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_WORD_INDEX, index);
+            if (index == _lastIndex) return false;
+            _lastIndex = index;
+            return true;
         }
     }
 
@@ -130,6 +145,21 @@ namespace FFII_ScreenReader.Patches
                 else
                 {
                     MelonLogger.Error("[Keyword] Could not find SelectCommand method");
+                }
+
+                // Patch the command-bar interactive-entry method (CommandSelectingInit) only to
+                // take ownership of the menu (engage suppression) the moment the bar appears.
+                // It does NOT announce — SelectCommand fires on entry and navigation and is the
+                // sole command speaker, so announcing here too would double it ("ask ask").
+                var commandSelectingInit = AccessTools.Method(typeof(KeyInputSecretWordController), "CommandSelectingInit");
+                if (commandSelectingInit != null)
+                {
+                    var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(CommandSelectEntry_Postfix));
+                    harmony.Patch(commandSelectingInit, postfix: new HarmonyMethod(postfix));
+                }
+                else
+                {
+                    MelonLogger.Error("[Keyword] Could not find CommandSelectingInit method");
                 }
 
                 // Patch SecretWordController.SelectContentByWord for keyword list navigation (Ask/Learn)
@@ -179,6 +209,17 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("[Keyword] Could not find WordsContentListController.SetDescriptionText method");
                 }
 
+                // Patch WordsContentListController.UpdateView (KeyInput) — fires when menu opens
+                // with the keyword list, so we can announce the first keyword on entry.
+                var wordsUpdateViewMethod = AccessTools.Method(
+                    typeof(KeyInputWordsContentListController),
+                    "UpdateView");
+                if (wordsUpdateViewMethod != null)
+                {
+                    var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsUpdateView_KeyInput_Postfix));
+                    harmony.Patch(wordsUpdateViewMethod, postfix: new HarmonyMethod(postfix));
+                }
+
                 // Also try Touch version with SetSelectContent
                 try
                 {
@@ -188,6 +229,14 @@ namespace FFII_ScreenReader.Patches
                     {
                         var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsSetSelectContent_Touch_Postfix));
                         harmony.Patch(touchSetSelectMethod, postfix: new HarmonyMethod(postfix));
+                    }
+
+                    // Touch UpdateView for initial-focus announcement
+                    var touchUpdateViewMethod = AccessTools.Method(touchWordsController, "UpdateView");
+                    if (touchUpdateViewMethod != null)
+                    {
+                        var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsUpdateView_Touch_Postfix));
+                        harmony.Patch(touchUpdateViewMethod, postfix: new HarmonyMethod(postfix));
                     }
                 }
                 catch { }
@@ -202,26 +251,61 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Postfix for command selection (Ask/Learn/Key Items/Cancel).
+        /// Also kicks off a delayed announcement of the first list entry so users
+        /// hear the highlighted keyword/item on submenu entry (especially load-bearing
+        /// when only one entry exists — navigation never fires).
         /// </summary>
         public static void SelectCommand_Postfix(KeyInputSecretWordController __instance, int index)
         {
             try
             {
-                if (!KeywordMenuState.CommandIndexChanged(index))
+                // Only speak the command when the controller is genuinely focused on the
+                // command bar. SelectCommand can also fire as the cursor is reset while a
+                // term is selected or the menu closes — those must stay silent.
+                if (!IsAtCommandBar(__instance))
                     return;
 
                 string commandName = KeywordMenuState.GetCommandName(index);
-
-                if (!ShouldAnnounce(AnnouncementContexts.KEYWORD_COMMAND, commandName))
+                if (string.IsNullOrEmpty(commandName))
                     return;
 
-                // Set active state AFTER validation
                 KeywordMenuState.SetActive();
 
-                // Use interrupt: false to avoid cutting off NPC intro dialogue
+                // Command name only — the sub-list entry is announced when a command is
+                // actually selected (SelectContentByWord/ByItem), not while arrowing.
+                // interrupt: false to avoid cutting off NPC intro dialogue.
                 FFII_ScreenReaderMod.SpeakText(commandName, interrupt: false);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Postfix for the command-bar interactive-entry method (CommandSelectingInit). Takes
+        /// ownership of the menu so the generic cursor reader is suppressed the moment the
+        /// command bar appears. It does NOT announce — SelectCommand fires on entry AND
+        /// navigation and is the sole command speaker, so announcing here too would double it.
+        /// </summary>
+        public static void CommandSelectEntry_Postfix(KeyInputSecretWordController __instance)
+        {
+            try
+            {
+                KeywordMenuState.SetActive();
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// True only when the keyword controller's state machine is on the command bar
+        /// (CommandSelect / CommandSelecting). Used to suppress command announces that
+        /// would otherwise fire as the cursor resets during term-select or menu close.
+        /// </summary>
+        private static bool IsAtCommandBar(KeyInputSecretWordController controller)
+        {
+            if (controller == null)
+                return false;
+            int state = StateReaderHelper.ReadStateTag(controller.Pointer, IL2CppOffsets.Keyword.OFFSET_STATE_MACHINE);
+            return state == IL2CppOffsets.Keyword.STATE_COMMAND_SELECT
+                || state == IL2CppOffsets.Keyword.STATE_COMMAND_SELECTING;
         }
 
         /// <summary>
@@ -234,14 +318,8 @@ namespace FFII_ScreenReader.Patches
                 if (index < 0)
                     return;
 
-                if (!KeywordMenuState.WordIndexChanged(index))
-                    return;
-
                 string keywordAnnouncement = GetKeywordAtIndex(__instance, index);
                 if (string.IsNullOrEmpty(keywordAnnouncement))
-                    return;
-
-                if (!ShouldAnnounce(AnnouncementContexts.KEYWORD_WORD, keywordAnnouncement))
                     return;
 
                 KeywordMenuState.SetActive();
@@ -260,14 +338,8 @@ namespace FFII_ScreenReader.Patches
                 if (index < 0)
                     return;
 
-                if (!KeywordMenuState.WordIndexChanged(index))
-                    return;
-
                 string itemAnnouncement = GetItemAtIndex(__instance, index);
                 if (string.IsNullOrEmpty(itemAnnouncement))
-                    return;
-
-                if (!ShouldAnnounce(AnnouncementContexts.KEYWORD_WORD, itemAnnouncement))
                     return;
 
                 KeywordMenuState.SetActive();
@@ -292,7 +364,7 @@ namespace FFII_ScreenReader.Patches
                 if (index < 0)
                     return;
 
-                if (!WordsMenuState.WordIndexChanged(index))
+                if (!WordsMenuState.IsNewIndex(index))
                     return;
 
                 // Get keyword name and description from keyWordContentDictionary
@@ -301,13 +373,95 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
-                if (!ShouldAnnounce(AnnouncementContexts.WORDS_MENU, keywordAnnouncement))
-                    return;
-
                 WordsMenuState.SetActive();
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Postfix for Words menu UpdateView (KeyInput). Fires when the menu opens with
+        /// the keyword list populated — announces the default-focused first keyword.
+        /// </summary>
+        public static void WordsUpdateView_KeyInput_Postfix(KeyInputWordsContentListController __instance)
+        {
+            try
+            {
+                var menuManager = MenuManager.Instance;
+                if (menuManager == null || !menuManager.IsOpen)
+                    return;
+
+                CoroutineManager.StartManaged(AnnounceWordsFirstKeyword_KeyInput(__instance));
+            }
+            catch { }
+        }
+
+        private static IEnumerator AnnounceWordsFirstKeyword_KeyInput(KeyInputWordsContentListController controller)
+        {
+            yield return null;
+            yield return null;
+
+            string announcement = null;
+            try
+            {
+                if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
+                    yield break;
+
+                // Skip if SetDescriptionText already announced the first keyword this open.
+                if (!WordsMenuState.IsNewIndex(0))
+                    yield break;
+
+                announcement = GetWordsKeywordFromDictionary(controller, 0);
+            }
+            catch { }
+
+            if (!string.IsNullOrEmpty(announcement))
+            {
+                WordsMenuState.SetActive();
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
+        }
+
+        /// <summary>
+        /// Postfix for Words menu UpdateView (Touch). Same role as the KeyInput variant.
+        /// </summary>
+        public static void WordsUpdateView_Touch_Postfix(TouchWordsContentListController __instance)
+        {
+            try
+            {
+                var menuManager = MenuManager.Instance;
+                if (menuManager == null || !menuManager.IsOpen)
+                    return;
+
+                CoroutineManager.StartManaged(AnnounceWordsFirstKeyword_Touch(__instance));
+            }
+            catch { }
+        }
+
+        private static IEnumerator AnnounceWordsFirstKeyword_Touch(TouchWordsContentListController controller)
+        {
+            yield return null;
+            yield return null;
+
+            string announcement = null;
+            try
+            {
+                if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
+                    yield break;
+
+                // Skip if SetSelectContent already announced the first keyword this open.
+                if (!WordsMenuState.IsNewIndex(0))
+                    yield break;
+
+                announcement = GetWordsTouchKeywordAtIndex(controller, 0);
+            }
+            catch { }
+
+            if (!string.IsNullOrEmpty(announcement))
+            {
+                WordsMenuState.SetActive();
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+            }
         }
 
         /// <summary>
@@ -322,15 +476,12 @@ namespace FFII_ScreenReader.Patches
                 if (menuManager == null || !menuManager.IsOpen)
                     return;
 
-                if (!WordsMenuState.WordIndexChanged(id))
+                if (!WordsMenuState.IsNewIndex(id))
                     return;
 
                 // Get keyword name from Touch controller
                 string keywordAnnouncement = GetWordsTouchKeywordAtIndex(__instance, id);
                 if (string.IsNullOrEmpty(keywordAnnouncement))
-                    return;
-
-                if (!ShouldAnnounce(AnnouncementContexts.WORDS_MENU, keywordAnnouncement))
                     return;
 
                 WordsMenuState.SetActive();

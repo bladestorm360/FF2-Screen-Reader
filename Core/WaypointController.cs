@@ -27,8 +27,10 @@ namespace FFII_ScreenReader.Core
 
         public void CycleNext()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
+
+            NavigationTargetTracker.MarkWaypoint();
 
             string mapId = mod.GetCurrentMapIdString();
             waypointNavigator.RefreshList(mapId);
@@ -45,8 +47,10 @@ namespace FFII_ScreenReader.Core
 
         public void CyclePrevious()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
+
+            NavigationTargetTracker.MarkWaypoint();
 
             string mapId = mod.GetCurrentMapIdString();
             waypointNavigator.RefreshList(mapId);
@@ -63,8 +67,10 @@ namespace FFII_ScreenReader.Core
 
         public void CycleNextCategory()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
+
+            NavigationTargetTracker.MarkWaypoint();
 
             string mapId = mod.GetCurrentMapIdString();
             waypointNavigator.CycleNextCategory(mapId);
@@ -73,8 +79,10 @@ namespace FFII_ScreenReader.Core
 
         public void CyclePreviousCategory()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
+
+            NavigationTargetTracker.MarkWaypoint();
 
             string mapId = mod.GetCurrentMapIdString();
             waypointNavigator.CyclePreviousCategory(mapId);
@@ -83,13 +91,24 @@ namespace FFII_ScreenReader.Core
 
         public void Pathfind()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
+
+            NavigationTargetTracker.MarkWaypoint();
 
             var waypoint = waypointNavigator.SelectedWaypoint;
             if (waypoint == null)
             {
                 FFII_ScreenReaderMod.SpeakText(T("No waypoint selected"));
+                return;
+            }
+
+            // Beacon mode: re-ping toward this waypoint instead of turn-by-turn directions.
+            if (PreferencesManager.AudioBeaconsEnabled)
+            {
+                mod.RestartBeacon();
+                if (FFII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled)
+                    FFII_ScreenReaderMod.SpeakText(waypointNavigator.FormatCurrentWaypoint());
                 return;
             }
 
@@ -104,12 +123,14 @@ namespace FFII_ScreenReader.Core
 
                 Vector3 playerPos = playerController.fieldPlayer.transform.localPosition;
                 Vector3 targetPos = waypoint.Position;
+                int? targetLayer = waypoint.Layer >= 0 ? waypoint.Layer : (int?)null;
 
                 var pathInfo = FieldNavigationHelper.FindPathTo(
                     playerPos,
                     targetPos,
                     playerController.mapHandle,
-                    playerController.fieldPlayer
+                    playerController.fieldPlayer,
+                    targetLayer
                 );
 
                 if (pathInfo.Success && !string.IsNullOrEmpty(pathInfo.Description))
@@ -130,7 +151,7 @@ namespace FFII_ScreenReader.Core
 
         public void Add()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
 
             string mapId = mod.GetCurrentMapIdString();
@@ -147,7 +168,8 @@ namespace FFII_ScreenReader.Core
                     }
 
                     Vector3 position = playerController.fieldPlayer.transform.localPosition;
-                    waypointManager.AddWaypoint(name, position, mapId);
+                    int layer = playerController.fieldPlayer.gameObject.layer;
+                    waypointManager.AddWaypoint(name, position, mapId, layer: layer);
                     waypointNavigator.RefreshList(mapId);
 
                     FFII_ScreenReaderMod.SpeakText(string.Format(T("Waypoint added: {0}"), name));
@@ -162,7 +184,7 @@ namespace FFII_ScreenReader.Core
 
         public void Rename()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
 
             var waypoint = waypointNavigator.SelectedWaypoint;
@@ -191,7 +213,7 @@ namespace FFII_ScreenReader.Core
 
         public void Delete()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
 
             var waypoint = waypointNavigator.SelectedWaypoint;
@@ -224,7 +246,7 @@ namespace FFII_ScreenReader.Core
 
         public void ClearAll()
         {
-            if (!mod.EnsureFieldContext())
+            if (!mod.EnsureFieldContext(speakIfMissing: false))
                 return;
 
             string mapId = mod.GetCurrentMapIdString();
@@ -238,20 +260,17 @@ namespace FFII_ScreenReader.Core
 
             string plural = count == 1 ? T("waypoint") : T("waypoints");
 
-            // First confirmation (silent Yes - proceeds directly to second prompt without "Yes" announcement)
-            ConfirmationDialog.Open(string.Format(T("Clear all {0} {1} from this map?"), count, plural), () =>
-            {
-                // Second confirmation (normal with speech)
-                ConfirmationDialog.Open(T("Are you sure?"), () =>
+            ConfirmationDialog.Open(
+                string.Format(T("Clear all {0} {1} from this map?"), count, plural),
+                onYes: () =>
                 {
                     int cleared = waypointManager.ClearMapWaypoints(mapId);
                     waypointNavigator.RefreshList(mapId);
                     waypointNavigator.ClearSelection();
 
-                    string clearedPlural = cleared == 1 ? T("waypoint") : T("waypoints");
-                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Cleared {0} {1}"), cleared, clearedPlural));
-                });
-            }, silentYes: true);
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Cleared {0} {1}"), cleared, plural));
+                },
+                onNo: () => { });
         }
     }
 }

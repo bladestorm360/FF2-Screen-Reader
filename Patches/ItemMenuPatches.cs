@@ -1,14 +1,19 @@
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
+using ItemWindowView = Il2CppLast.UI.ItemWindowView;
+using KeyInputItemEquipmentDetailController = Il2CppLast.UI.KeyInput.ItemEquipmentDetailController;
 using KeyInputItemListController = Il2CppLast.UI.KeyInput.ItemListController;
 using KeyInputItemUseController = Il2CppLast.UI.KeyInput.ItemUseController;
 using ItemListContentData = Il2CppLast.UI.ItemListContentData;
@@ -24,11 +29,100 @@ using System.Reflection;
 namespace FFII_ScreenReader.Patches
 {
     /// <summary>
+    /// Announces item-menu detail when the I key / right-stick-up is pressed. Reads the live
+    /// UI panel (FF1 pattern) instead of master data: the description comes from the live
+    /// ItemWindowView.descriptionText; for equipment in the stats panel the visible stat rows
+    /// (ItemEquipmentDetailView) are read. Which panel is shown is driven by the game's own
+    /// toggle (ItemWindowView.isFrontTextVisible). Logs both sources for in-game verification.
+    /// </summary>
+    public static class ItemDetailsAnnouncer
+    {
+        public static void AnnounceCurrentItemDetails()
+        {
+            try
+            {
+                var view = UnityEngine.Object.FindObjectOfType<ItemWindowView>();
+                if (view == null || view.Pointer == IntPtr.Zero)
+                {
+                    FFII_ScreenReaderMod.SpeakText(T("No details"), interrupt: true);
+                    return;
+                }
+
+                // isFrontTextVisible == true → description panel shown; false → parameter/stats panel.
+                bool descriptionShown = Marshal.ReadByte(view.Pointer + IL2CppOffsets.ItemPanel.WindowViewIsFrontTextVisible) != 0;
+
+                string description = ReadText(Marshal.ReadIntPtr(view.Pointer + IL2CppOffsets.ItemPanel.WindowViewDescriptionText));
+                string stats = ReadEquipmentStatsPanel();
+
+                MelonLogger.Msg($"[ItemDetails] descriptionShown={descriptionShown} desc='{description}' stats='{stats}'");
+
+                string announcement = descriptionShown
+                    ? (description ?? stats)
+                    : (stats ?? description);
+
+                FFII_ScreenReaderMod.SpeakText(
+                    string.IsNullOrWhiteSpace(announcement) ? T("No details") : announcement,
+                    interrupt: true);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[ItemDetails] Error: {ex.Message}");
+            }
+        }
+
+        /// <summary>Reads all visible stat rows from the live equipment detail panel, if shown.</summary>
+        private static string ReadEquipmentStatsPanel()
+        {
+            try
+            {
+                var detail = UnityEngine.Object.FindObjectOfType<KeyInputItemEquipmentDetailController>();
+                if (detail == null || detail.Pointer == IntPtr.Zero) return null;
+
+                IntPtr viewPtr = Marshal.ReadIntPtr(detail.Pointer + IL2CppOffsets.ItemPanel.EquipmentDetailControllerView);
+                if (viewPtr == IntPtr.Zero) return null;
+
+                var view = new MonoBehaviour(viewPtr);
+                if (view.gameObject == null || !view.gameObject.activeInHierarchy) return null;
+
+                var texts = view.GetComponentsInChildren<Text>(false);
+                if (texts == null) return null;
+
+                var sb = new StringBuilder();
+                foreach (var t in texts)
+                {
+                    if (t == null || !t.gameObject.activeInHierarchy) continue;
+                    string s = t.text;
+                    if (string.IsNullOrWhiteSpace(s)) continue;
+                    if (sb.Length > 0) sb.Append(", ");
+                    sb.Append(TextUtils.StripIconMarkup(s).Trim());
+                }
+                return sb.Length > 0 ? sb.ToString() : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string ReadText(IntPtr textPtr)
+        {
+            if (textPtr == IntPtr.Zero) return null;
+            try
+            {
+                var t = new Text(textPtr);
+                string raw = t?.text;
+                return string.IsNullOrWhiteSpace(raw) ? null : TextUtils.StripIconMarkup(raw).Trim();
+            }
+            catch { return null; }
+        }
+    }
+
+    /// <summary>
     /// Helper for item menu announcements.
     /// </summary>
     public static class ItemMenuState
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.ITEM_MENU, AnnouncementContexts.ITEM_MENU);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.ITEM_MENU);
 
         static ItemMenuState()
         {
@@ -181,25 +275,20 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(itemName))
                     return;
 
-                // Build announcement: "Item Name (quantity): Description"
+                // Build announcement: "Item Name (quantity)" — description appended only when
+                // AutoDetail is on; otherwise the I key reads it on demand.
                 int quantity = itemData.Count;
                 string announcement = quantity > 1 ? $"{itemName} ({quantity})" : itemName;
 
-                // Add description if available
                 string description = itemData.Description;
                 if (!string.IsNullOrWhiteSpace(description))
-                {
                     description = TextUtils.StripIconMarkup(description);
 
-                    if (!string.IsNullOrWhiteSpace(description))
-                    {
-                        announcement += ": " + description;
-                    }
-                }
+                // Cache the detail for the I key (item-menu items are consumables, no U-key).
+                MenuDetailCache.Set(description);
 
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.ITEM_MENU, announcement))
-                    return;
+                if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(description))
+                    announcement += ": " + description;
 
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 ItemMenuState.SetActive();
@@ -300,10 +389,6 @@ namespace FFII_ScreenReader.Patches
                 catch
                 {
                 }
-
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.ITEM_MENU, announcement))
-                    return;
 
                 // Set active state AFTER validation
                 ItemMenuState.SetActive();

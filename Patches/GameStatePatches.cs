@@ -45,9 +45,14 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        // Config menu bestiary states (SubSceneManagerMainGame): FF2 uses MenuLibraryUi=17, MenuLibraryInfo=18.
+        private const int STATE_MENU_LIBRARY_UI = 17;
+        private const int STATE_MENU_LIBRARY_INFO = 18;
+
         /// <summary>
         /// Called when game state changes (field, battle, menu, etc.).
-        /// Handles map transition announcements and battle state clearing.
+        /// Handles map transition announcements, battle state clearing,
+        /// and config menu bestiary dispatch (states 17/18).
         /// </summary>
         public static void ChangeState_Postfix(SubSceneManagerMainGame.State state)
         {
@@ -64,8 +69,24 @@ namespace FFII_ScreenReader.Patches
                         ClearAllBattleState();
                     }
 
+                    // If we were in config bestiary, handle exit
+                    if (ConfigBestiaryStateHandler.WasInConfigBestiary)
+                    {
+                        ConfigBestiaryStateHandler.HandleExit();
+                    }
+
                     // Check for map transition
                     CheckMapTransition();
+                }
+                // Config menu bestiary states
+                else if (stateValue == STATE_MENU_LIBRARY_UI || stateValue == STATE_MENU_LIBRARY_INFO)
+                {
+                    ConfigBestiaryStateHandler.HandleStateChange(stateValue);
+                }
+                // Exiting config bestiary to another non-field state
+                else if (ConfigBestiaryStateHandler.WasInConfigBestiary)
+                {
+                    ConfigBestiaryStateHandler.HandleExit();
                 }
             }
             catch (Exception ex)
@@ -100,6 +121,11 @@ namespace FFII_ScreenReader.Patches
 
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                     lastAnnouncedMapId = currentMapId;
+
+                    // Map actually changed — clear any menu/popup flag that got stuck due to a
+                    // set/clear patch mismatch, which would otherwise silently block field
+                    // navigation on the new map.
+                    FFII_ScreenReaderMod.ClearMenuFlagsForMapTransition();
 
                     // Clear vehicle type map so it gets repopulated with new map's vehicles
                     FieldNavigationHelper.ResetTransportationDebug();

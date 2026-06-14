@@ -56,11 +56,16 @@ namespace FFII_ScreenReader.Core.Filters
             Vector3 playerPos = context.PlayerPosition;
             Vector3 targetPos = entity.Position;
 
+            // Route to the entity's real layer so a different-layer target is judged reachable only
+            // if it genuinely is — not via a mis-routed path on the player's own layer.
+            int? targetLayer = (entity.GameEntity as FieldEntity)?.gameObject.layer;
+
             var pathInfo = FieldNavigationHelper.FindPathTo(
                 playerPos,
                 targetPos,
                 context.MapHandle,
-                context.FieldPlayer
+                context.FieldPlayer,
+                targetLayer
             );
 
             return pathInfo.Success;

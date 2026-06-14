@@ -151,7 +151,9 @@ namespace FFII_ScreenReader.Patches
                 BattleResultData data = controller.targetData;
 
                 if (data != null)
+                {
                     AnnouncePointsGained(data);
+                }
             }
             catch { }
         }

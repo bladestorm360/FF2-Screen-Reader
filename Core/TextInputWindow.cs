@@ -10,32 +10,19 @@ using static FFII_ScreenReader.Utils.ModTextTranslator;
 namespace FFII_ScreenReader.Core
 {
     /// <summary>
-    /// Modal text input dialog using Windows API focus stealing.
-    /// Creates an invisible window to capture keyboard input, preventing keys from reaching the game.
-    /// Used for waypoint naming and other text input scenarios.
+    /// Modal text input dialog using Unity Input.GetKeyDown.
+    /// Game input suppressed via ControllerRouter.SuppressGameInput + InputSystemManager patches.
     /// </summary>
-    public static class TextInputWindow
+    internal static class TextInputWindow
     {
-        /// <summary>
-        /// Whether the text input window is currently open.
-        /// </summary>
         public static bool IsOpen { get; private set; }
 
         private static StringBuilder inputBuffer = new StringBuilder();
         private static string prompt = "";
         private static Action<string> onConfirmCallback;
         private static Action onCancelCallback;
-
-        // Cursor position for navigation
         private static int cursorPosition = 0;
 
-        /// <summary>
-        /// Opens the text input dialog.
-        /// </summary>
-        /// <param name="promptText">Prompt to display to user (spoken via TTS)</param>
-        /// <param name="initialText">Initial text in the input field</param>
-        /// <param name="onConfirm">Callback when user presses Enter (receives final text)</param>
-        /// <param name="onCancel">Callback when user presses Escape</param>
         public static void Open(string promptText, string initialText, Action<string> onConfirm, Action onCancel = null)
         {
             if (IsOpen) return;
@@ -48,71 +35,28 @@ namespace FFII_ScreenReader.Core
 
             onConfirmCallback = onConfirm;
             onCancelCallback = onCancel;
-
-            // Initialize cursor position to end of text
             cursorPosition = inputBuffer.Length;
 
-            // Initialize key states to prevent keys from triggering immediately
-            var trackedKeys = new List<int> {
-                WindowsFocusHelper.VK_BACK, WindowsFocusHelper.VK_RETURN,
-                WindowsFocusHelper.VK_SHIFT, WindowsFocusHelper.VK_ESCAPE,
-                WindowsFocusHelper.VK_SPACE,
-                WindowsFocusHelper.VK_LEFT, WindowsFocusHelper.VK_UP,
-                WindowsFocusHelper.VK_RIGHT, WindowsFocusHelper.VK_DOWN,
-                WindowsFocusHelper.VK_HOME, WindowsFocusHelper.VK_END,
-                WindowsFocusHelper.VK_OEM_MINUS, WindowsFocusHelper.VK_OEM_PERIOD,
-                WindowsFocusHelper.VK_OEM_COMMA, WindowsFocusHelper.VK_OEM_7,
-                WindowsFocusHelper.VK_OEM_1, WindowsFocusHelper.VK_OEM_2,
-                WindowsFocusHelper.VK_OEM_3, WindowsFocusHelper.VK_OEM_4,
-                WindowsFocusHelper.VK_OEM_5, WindowsFocusHelper.VK_OEM_6,
-                WindowsFocusHelper.VK_OEM_PLUS
-            };
-            // Letters A-Z
-            for (int vk = WindowsFocusHelper.VK_A; vk <= WindowsFocusHelper.VK_Z; vk++)
-                trackedKeys.Add(vk);
-            // Numbers 0-9
-            for (int vk = WindowsFocusHelper.VK_0; vk <= WindowsFocusHelper.VK_9; vk++)
-                trackedKeys.Add(vk);
-            WindowsFocusHelper.InitializeKeyStates(trackedKeys.ToArray());
-
-            // Steal focus from game
-            WindowsFocusHelper.StealFocus("FFII_TextInput");
-
-            // Delay prompt announcement to let NVDA finish announcing window title
             CoroutineManager.StartManaged(DelayedPromptAnnouncement(prompt, inputBuffer.ToString()));
         }
 
-        /// <summary>
-        /// Delays the prompt announcement to avoid being interrupted by NVDA's window title announcement.
-        /// </summary>
         private static IEnumerator DelayedPromptAnnouncement(string promptText, string initialText)
         {
-            // Wait for NVDA focus announcement to complete
-            yield return new WaitForSeconds(0.1f);
-
+            yield return new WaitForSeconds(0.3f);
             string announcement = promptText;
             if (!string.IsNullOrEmpty(initialText))
-            {
                 announcement += $": {initialText}";
-            }
             FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
         }
 
-        /// <summary>
-        /// Closes the dialog, waits for NVDA to finish announcing window title, then speaks and invokes callback.
-        /// </summary>
         private static IEnumerator DelayedCloseAnnouncement(string text, Action callback)
         {
             Close();
-            yield return new WaitForSeconds(0.1f);
+            yield return new WaitForSeconds(0.3f);
             FFII_ScreenReaderMod.SpeakText(text, interrupt: true);
             callback?.Invoke();
         }
 
-        /// <summary>
-        /// Converts a character to a speakable name for screen readers.
-        /// Letters and numbers are returned as-is; punctuation gets descriptive names.
-        /// </summary>
         private static string GetCharacterName(char c)
         {
             switch (c)
@@ -145,32 +89,24 @@ namespace FFII_ScreenReader.Core
             }
         }
 
-        /// <summary>
-        /// Closes the text input dialog and restores focus to game.
-        /// </summary>
         public static void Close()
         {
             if (!IsOpen) return;
-
             IsOpen = false;
-            WindowsFocusHelper.RestoreFocus();
-
-            // Clear callbacks
             onConfirmCallback = null;
             onCancelCallback = null;
         }
 
         /// <summary>
-        /// Handles keyboard input for the text input dialog.
-        /// Should be called from InputManager.Update() before any other input handling.
+        /// Handles keyboard input via Unity Input.GetKeyDown.
+        /// Game input suppressed via InputSystemManager patches when IsOpen.
         /// Returns true if input was consumed (dialog is open).
         /// </summary>
         public static bool HandleInput()
         {
             if (!IsOpen) return false;
 
-            // Enter - confirm
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RETURN))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Return))
             {
                 string finalText = inputBuffer.ToString().Trim();
                 if (string.IsNullOrEmpty(finalText))
@@ -178,22 +114,19 @@ namespace FFII_ScreenReader.Core
                     FFII_ScreenReaderMod.SpeakText(T("Name cannot be empty"), interrupt: true);
                     return true;
                 }
-
                 var callback = onConfirmCallback;
                 CoroutineManager.StartManaged(DelayedCloseAnnouncement(string.Format(T("Confirmed: {0}"), finalText), () => callback?.Invoke(finalText)));
                 return true;
             }
 
-            // Escape - cancel
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_ESCAPE))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Escape))
             {
                 var callback = onCancelCallback;
                 CoroutineManager.StartManaged(DelayedCloseAnnouncement(T("Cancelled"), callback));
                 return true;
             }
 
-            // Backspace - delete character before cursor
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_BACK))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Backspace))
             {
                 if (cursorPosition > 0)
                 {
@@ -205,8 +138,7 @@ namespace FFII_ScreenReader.Core
                 return true;
             }
 
-            // Left Arrow - move cursor left
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_LEFT))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.LeftArrow))
             {
                 if (cursorPosition > 0)
                 {
@@ -216,8 +148,7 @@ namespace FFII_ScreenReader.Core
                 return true;
             }
 
-            // Right Arrow - move cursor right
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_RIGHT))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.RightArrow))
             {
                 if (cursorPosition < inputBuffer.Length)
                 {
@@ -227,167 +158,87 @@ namespace FFII_ScreenReader.Core
                 return true;
             }
 
-            // Up Arrow - read full text
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_UP))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.UpArrow) || GamepadManager.IsKeyCodePressed(KeyCode.DownArrow))
             {
                 string text = inputBuffer.Length > 0 ? inputBuffer.ToString() : T("empty");
                 FFII_ScreenReaderMod.SpeakText(text, interrupt: true);
                 return true;
             }
 
-            // Down Arrow - read full text
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_DOWN))
-            {
-                string text = inputBuffer.Length > 0 ? inputBuffer.ToString() : T("empty");
-                FFII_ScreenReaderMod.SpeakText(text, interrupt: true);
-                return true;
-            }
-
-            // Home - move cursor to start
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_HOME))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Home))
             {
                 cursorPosition = 0;
                 if (inputBuffer.Length > 0)
-                {
                     FFII_ScreenReaderMod.SpeakText(GetCharacterName(inputBuffer[0]), interrupt: true);
-                }
                 return true;
             }
 
-            // End - move cursor to end
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_END))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.End))
             {
                 cursorPosition = inputBuffer.Length;
                 return true;
             }
 
-            // Space - silent when typing
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_SPACE))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.Space))
             {
                 inputBuffer.Insert(cursorPosition, ' ');
                 cursorPosition++;
                 return true;
             }
 
-            bool shiftHeld = WindowsFocusHelper.IsKeyPressed(WindowsFocusHelper.VK_SHIFT);
+            bool shiftHeld = GamepadManager.IsKeyCodeHeld(KeyCode.LeftShift) || GamepadManager.IsKeyCodeHeld(KeyCode.RightShift);
 
-            // Letters A-Z - silent when typing
-            for (int vk = WindowsFocusHelper.VK_A; vk <= WindowsFocusHelper.VK_Z; vk++)
+            // Letters A-Z
+            for (KeyCode kc = KeyCode.A; kc <= KeyCode.Z; kc++)
             {
-                if (WindowsFocusHelper.IsKeyDown(vk))
+                if (GamepadManager.IsKeyCodePressed(kc))
                 {
-                    char c = (char)('a' + (vk - WindowsFocusHelper.VK_A));
-                    if (shiftHeld)
-                        c = char.ToUpper(c);
-
+                    char c = (char)('a' + (kc - KeyCode.A));
+                    if (shiftHeld) c = char.ToUpper(c);
                     inputBuffer.Insert(cursorPosition, c);
                     cursorPosition++;
                     return true;
                 }
             }
 
-            // Numbers 0-9 - silent when typing
-            for (int vk = WindowsFocusHelper.VK_0; vk <= WindowsFocusHelper.VK_9; vk++)
+            // Numbers 0-9
+            for (KeyCode kc = KeyCode.Alpha0; kc <= KeyCode.Alpha9; kc++)
             {
-                if (WindowsFocusHelper.IsKeyDown(vk))
+                if (GamepadManager.IsKeyCodePressed(kc))
                 {
-                    char c = (char)('0' + (vk - WindowsFocusHelper.VK_0));
+                    char c = (char)('0' + (kc - KeyCode.Alpha0));
                     inputBuffer.Insert(cursorPosition, c);
                     cursorPosition++;
                     return true;
                 }
             }
 
-            // Punctuation - all silent when typing
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_MINUS))
-            {
-                char c = shiftHeld ? '_' : '-';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_PERIOD))
-            {
-                char c = shiftHeld ? '>' : '.';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_COMMA))
-            {
-                char c = shiftHeld ? '<' : ',';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_7))
-            {
-                char c = shiftHeld ? '"' : '\'';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_1))
-            {
-                char c = shiftHeld ? ':' : ';';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_2))
-            {
-                char c = shiftHeld ? '?' : '/';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_3))
-            {
-                char c = shiftHeld ? '~' : '`';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_4))
-            {
-                char c = shiftHeld ? '{' : '[';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_5))
-            {
-                char c = shiftHeld ? '|' : '\\';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_6))
-            {
-                char c = shiftHeld ? '}' : ']';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
-
-            if (WindowsFocusHelper.IsKeyDown(WindowsFocusHelper.VK_OEM_PLUS))
-            {
-                char c = shiftHeld ? '+' : '=';
-                inputBuffer.Insert(cursorPosition, c);
-                cursorPosition++;
-                return true;
-            }
+            // Punctuation
+            if (HandlePunctuation(KeyCode.Minus, shiftHeld, '_', '-')) return true;
+            if (HandlePunctuation(KeyCode.Period, shiftHeld, '>', '.')) return true;
+            if (HandlePunctuation(KeyCode.Comma, shiftHeld, '<', ',')) return true;
+            if (HandlePunctuation(KeyCode.Quote, shiftHeld, '"', '\'')) return true;
+            if (HandlePunctuation(KeyCode.Semicolon, shiftHeld, ':', ';')) return true;
+            if (HandlePunctuation(KeyCode.Slash, shiftHeld, '?', '/')) return true;
+            if (HandlePunctuation(KeyCode.BackQuote, shiftHeld, '~', '`')) return true;
+            if (HandlePunctuation(KeyCode.LeftBracket, shiftHeld, '{', '[')) return true;
+            if (HandlePunctuation(KeyCode.Backslash, shiftHeld, '|', '\\')) return true;
+            if (HandlePunctuation(KeyCode.RightBracket, shiftHeld, '}', ']')) return true;
+            if (HandlePunctuation(KeyCode.Equals, shiftHeld, '+', '=')) return true;
 
             return true; // Consume all input while dialog is open
+        }
+
+        private static bool HandlePunctuation(KeyCode key, bool shiftHeld, char shiftChar, char normalChar)
+        {
+            if (GamepadManager.IsKeyCodePressed(key))
+            {
+                char c = shiftHeld ? shiftChar : normalChar;
+                inputBuffer.Insert(cursorPosition, c);
+                cursorPosition++;
+                return true;
+            }
+            return false;
         }
     }
 }

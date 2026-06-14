@@ -315,7 +315,7 @@ namespace FFII_ScreenReader.Menus
 
         /// <summary>
         /// Cache for weapon skill data read from UI.
-        /// Key: SkillLevelTarget enum value (list index), Value: (level, percentage)
+        /// Key: SkillLevelTarget enum value (read from each element's weaponType), Value: (level, percentage)
         /// Event-driven: populated when status screen opens, cleared when it closes.
         /// </summary>
         private static Dictionary<int, (int level, int percentage)> weaponSkillCache = new Dictionary<int, (int, int)>();
@@ -333,14 +333,6 @@ namespace FFII_ScreenReader.Menus
         /// Reset when InvalidateUICache() is called.
         /// </summary>
         private static bool cachePopulated = false;
-
-        /// <summary>
-        /// Mapping from UI list index to SkillLevelTarget enum value.
-        /// UI displays: Sword, Knife, Spear, Staff, Axe, Bow, Shield, Unarmed
-        /// Enum order:  Sword(0), Knife(1), Spear(2), Axe(3), Staff(4), Bow(5), Shield(6), Unarmed(7)
-        /// Indices 3 and 4 are SWAPPED between UI and enum.
-        /// </summary>
-        private static readonly int[] uiIndexToSkillType = { 0, 1, 2, 4, 3, 5, 6, 7 };
 
         #endregion
 
@@ -374,10 +366,10 @@ namespace FFII_ScreenReader.Menus
         }
 
         /// <summary>
-        /// Cache all weapon skill data from UI controllers using LIST INDEX approach.
-        /// The skillLevelContentList in StatusDetailsController is ordered to match visual display.
-        /// Index 0 = Sword, Index 1 = Knife, ..., Index 7 = Unarmed (matches SkillLevelTarget enum).
-        /// This avoids relying on weaponType field or visible text which may not match.
+        /// Cache all weapon skill data from the status UI's skillLevelContentList.
+        /// Each element's level (LevelText) and percentage (gauge fill) are paired with that
+        /// element's own SkillLevelTarget (weaponType @0x20) — the list is NOT in enum order,
+        /// so keying by list position mislabels skills. Keying by weaponType is order-independent.
         /// </summary>
         private static void CacheWeaponSkillsFromUI()
         {
@@ -494,8 +486,15 @@ namespace FFII_ScreenReader.Menus
                             }
                         }
 
-                        // Map UI index to SkillLevelTarget enum value (indices 3 and 4 are swapped)
-                        int skillType = uiIndexToSkillType[i];
+                        // Key by the element's own SkillLevelTarget (weaponType @0x20) — authoritative,
+                        // no positional guessing. The skillLevelContentList is NOT in enum order, so
+                        // mapping by list index mislabels skills (sword read as spear, etc.).
+                        int skillType;
+                        unsafe
+                        {
+                            skillType = *(int*)((byte*)skillControllerPtr + IL2CppOffsets.StatusDetails.OFFSET_SKILL_WEAPON_TYPE);
+                        }
+                        if (skillType < 0 || skillType > 9) continue; // ignore unexpected values
                         weaponSkillCache[skillType] = (level, percentage);
                     }
                     catch

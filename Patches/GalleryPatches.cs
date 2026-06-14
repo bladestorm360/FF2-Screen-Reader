@@ -30,8 +30,6 @@ namespace FFII_ScreenReader.Patches
             CachedFocusedPtr = IntPtr.Zero;
             PreviousState = 0;
             MenuStateRegistry.Reset(MenuStateRegistry.GALLERY);
-            AnnouncementDeduplicator.Reset(AnnouncementContexts.GALLERY_LIST_ENTRY);
-            AnnouncementDeduplicator.Reset(AnnouncementContexts.TITLE_MENU_COMMAND);
         }
     }
 
@@ -56,10 +54,6 @@ namespace FFII_ScreenReader.Patches
                             GalleryStateTracker.SuppressContentChange = true;
                             MenuStateRegistry.SetActiveExclusive(MenuStateRegistry.GALLERY);
                             CoroutineManager.StartManaged(AnnounceGalleryEntry());
-                        }
-                        else if (GalleryStateTracker.PreviousState == 2) // Returning from Details
-                        {
-                            AnnouncementDeduplicator.Reset(AnnouncementContexts.GALLERY_LIST_ENTRY);
                         }
                         GalleryStateTracker.PreviousState = 1;
                         break;
@@ -152,8 +146,7 @@ namespace FFII_ScreenReader.Patches
                 string entry = GalleryReader.ReadListEntry(number, name);
                 if (!string.IsNullOrEmpty(entry))
                 {
-                    AnnouncementDeduplicator.AnnounceIfNew(
-                        AnnouncementContexts.GALLERY_LIST_ENTRY, entry);
+                    FFII_ScreenReaderMod.SpeakText(entry);
                 }
             }
             catch (Exception ex)

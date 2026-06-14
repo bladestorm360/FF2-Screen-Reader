@@ -129,7 +129,10 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Converts a slider value to percentage.
+        /// Formats a slider value for announcement. Small-range integer sliders
+        /// (BGM/SFX, max-min <= 10) return the raw value since the on-screen UI
+        /// already shows it as an integer. Larger sliders (Master Volume, Brightness)
+        /// keep percentage conversion since their on-screen UI shows a percentage.
         /// </summary>
         public static string GetSliderPercentage(UnityEngine.UI.Slider slider)
         {
@@ -141,6 +144,10 @@ namespace FFII_ScreenReader.Patches
 
             float range = max - min;
             if (range <= 0) return "0%";
+
+            // Raw integer for small-range sliders (e.g., BGM/SFX volume shown as 1-10)
+            if (range <= 10)
+                return ((int)Math.Round(current)).ToString();
 
             float percentage = ((current - min) / range) * 100f;
             int roundedPercentage = (int)Math.Round(percentage);

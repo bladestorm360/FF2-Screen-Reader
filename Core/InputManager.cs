@@ -101,6 +101,10 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.V, KeyContext.Global, AnnounceVehicleState, "Announce vehicle state");
             registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, KeyHelpReader.AnnounceKeyHelp, "Announce visible controls");
             registry.Register(KeyCode.I, KeyModifier.None, KeyContext.Global, HandleItemDetailsKey, "Item details / config tooltip");
+            // R repeats the current dialogue page (silent when no message window is open).
+            // The Status context registers its own R (repeat current stat) above; the
+            // registry prefers the more-specific Status binding on the status screen.
+            registry.Register(KeyCode.R, KeyModifier.None, KeyContext.Global, HandleRepeatDialogueKey, "Repeat dialogue");
 
             // --- Battle-only: character status ---
             registry.Register(KeyCode.H, KeyContext.Battle, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
@@ -128,6 +132,30 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public void CheckInput()
         {
+            // Poll SDL3 gamepad + GetAsyncKeyState keyboard once per frame.
+            // Must come before any mod input handling so edge-detection state is fresh.
+            GamepadManager.Update();
+
+            // Suppress Unity legacy Input when the mod is consuming. Safe because the mod reads
+            // keyboard via GetAsyncKeyState (unaffected by ResetInputAxes). This + the
+            // InputSystemManager patches = complete game keyboard suppression, and it works even
+            // when no gamepad is connected (the passthrough patches early-return without one).
+            if (ControllerRouter.SuppressGameInput)
+                Input.ResetInputAxes();
+
+            // Route controller inputs to the appropriate state-machine bucket.
+            // ControllerRouter also computes IsFieldActive for audio suppression even
+            // without a gamepad, so it runs every frame.
+            ControllerRouter.Update(DetermineContext());
+
+            // Per-frame footstep tile-crossing poll (field-active gated, silent in vehicles).
+            // Cadence naturally tracks actual movement speed — walk slower than dash. Runs in
+            // the existing input loop, not a new per-frame Harmony patch.
+            MovementSoundPatches.PollFootsteps();
+
+            if (GamepadManager.AnyKeyboardKeyDown())
+                ControllerRouter.NotifyKeyboardInput();
+
             // Handle text input window first (consumes all input when open)
             if (TextInputWindow.HandleInput())
                 return;
@@ -140,21 +168,36 @@ namespace FFII_ScreenReader.Core
             if (ModMenu.HandleInput())
                 return;
 
-            if (!Input.anyKeyDown)
+            // Game-context hotkeys below only fire when the game window is the foreground
+            // window, so mod functions don't trigger while the player is in another app.
+            // (The mod's own dialogs/menu above handle their own input and may hold focus.)
+            if (!WindowsFocusHelper.IsGameWindowFocused())
                 return;
 
-            // F8 to open mod menu (only when not in battle)
-            if (Input.GetKeyDown(KeyCode.F8))
+            if (!GamepadManager.AnyKeyboardKeyDown())
+                return;
+
+            // Bare F-keys only fire with no modifier held, so OS shortcuts like Alt+F4
+            // (close window), Ctrl+F-keys and Shift+F-keys don't trigger the screen
+            // reader. Explicit Shift/Ctrl bindings still match via GetCurrentModifiers.
+            bool anyModifierHeld = IsAnyModifierHeld();
+
+            // F8 to open mod menu — gated to field-only via ControllerRouter.IsFieldActive
+            // (blocks battle, in-game menus, title/boot screen, transitions — IsFieldActive is
+            // robust because DetermineContext only reports Field when a field player exists).
+            // Rejection wording lives in SpeakModMenuUnavailable so Start and F8 stay in sync.
+            if (!anyModifierHeld && GamepadManager.IsKeyCodePressed(KeyCode.F8))
             {
-                if (!FFII_ScreenReaderMod.IsInBattle)
+                if (ControllerRouter.IsFieldActive)
                     ModMenu.Open();
                 else
-                    FFII_ScreenReaderMod.SpeakText(T("Unavailable in battle"), interrupt: true);
+                    ControllerRouter.SpeakModMenuUnavailable();
                 return;
             }
 
-            // Handle function keys (F1/F3/F5 -- special coroutine/toggle logic)
-            HandleFunctionKeyInput();
+            // Handle function keys (F1/F3/F5 -- special coroutine/toggle logic) — bare keypress only
+            if (!anyModifierHeld)
+                HandleFunctionKeyInput();
 
             // Skip hotkeys when player is typing in a text field
             if (IsInputFieldFocused())
@@ -164,8 +207,30 @@ namespace FFII_ScreenReader.Core
             KeyContext activeContext = DetermineContext();
             KeyModifier currentModifiers = GetCurrentModifiers();
 
+            // Alt held with no registered Alt-binding → skip dispatch so Alt+<key> doesn't
+            // accidentally trigger the unmodified binding. (Shift/Ctrl are routed through
+            // currentModifiers and matched exactly by the registry, so they still work.)
+            if (IsAltHeld())
+                return;
+
             // Dispatch all registered bindings
             DispatchRegisteredBindings(activeContext, currentModifiers);
+        }
+
+        private static bool IsAltHeld()
+        {
+            return GamepadManager.IsKeyCodeHeld(KeyCode.LeftAlt)
+                || GamepadManager.IsKeyCodeHeld(KeyCode.RightAlt);
+        }
+
+        private static bool IsAnyModifierHeld()
+        {
+            return GamepadManager.IsKeyCodeHeld(KeyCode.LeftShift)
+                || GamepadManager.IsKeyCodeHeld(KeyCode.RightShift)
+                || GamepadManager.IsKeyCodeHeld(KeyCode.LeftControl)
+                || GamepadManager.IsKeyCodeHeld(KeyCode.RightControl)
+                || GamepadManager.IsKeyCodeHeld(KeyCode.LeftAlt)
+                || GamepadManager.IsKeyCodeHeld(KeyCode.RightAlt);
         }
 
         private KeyContext DetermineContext()
@@ -177,13 +242,26 @@ namespace FFII_ScreenReader.Core
             if (FFII_ScreenReaderMod.IsInBattle)
                 return KeyContext.Battle;
 
-            return KeyContext.Field;
+            // Only return Field if a field player actually exists (matches FF1). Prevents the
+            // Field context — and thus mod-menu/F5 opening, which gate on IsFieldActive — from
+            // being reported on the title screen, boot screen, or during map transitions, where
+            // no FieldPlayerController is present. Everything else is Global (Global bindings
+            // still fire; Field-only bindings correctly don't).
+            try
+            {
+                var pc = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>();
+                if (pc?.fieldPlayer != null)
+                    return KeyContext.Field;
+            }
+            catch { }
+
+            return KeyContext.Global;
         }
 
         private KeyModifier GetCurrentModifiers()
         {
-            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
-            bool ctrl = Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
+            bool shift = GamepadManager.IsKeyCodeHeld(KeyCode.LeftShift) || GamepadManager.IsKeyCodeHeld(KeyCode.RightShift);
+            bool ctrl = GamepadManager.IsKeyCodeHeld(KeyCode.LeftControl) || GamepadManager.IsKeyCodeHeld(KeyCode.RightControl);
 
             if (ctrl && shift) return KeyModifier.CtrlShift;
             if (ctrl) return KeyModifier.Ctrl;
@@ -195,31 +273,39 @@ namespace FFII_ScreenReader.Core
         {
             foreach (var key in registry.RegisteredKeys)
             {
-                if (Input.GetKeyDown(key))
+                if (GamepadManager.IsKeyCodePressed(key))
                     registry.TryExecute(key, currentModifiers, activeContext);
             }
         }
 
         private void HandleFunctionKeyInput()
         {
+            // F7 toggles AutoDetail (auto-announce descriptions/stats on focus)
+            if (GamepadManager.IsKeyCodePressed(KeyCode.F7))
+            {
+                FFII_ScreenReaderMod.Instance?.ToggleAutoDetail();
+                return;
+            }
+
             // F1 toggles walk/run speed - announce after game processes it
-            if (Input.GetKeyDown(KeyCode.F1))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.F1))
             {
                 CoroutineManager.StartManaged(AnnounceWalkRunState());
                 return;
             }
 
             // F3 toggles encounters - announce after game processes it
-            if (Input.GetKeyDown(KeyCode.F3))
+            if (GamepadManager.IsKeyCodePressed(KeyCode.F3))
             {
                 CoroutineManager.StartManaged(AnnounceEncounterState());
                 return;
             }
 
-            // F5 cycles enemy HP display (only when not in battle)
-            if (Input.GetKeyDown(KeyCode.F5))
+            // F5 cycles enemy HP display (field-only via ControllerRouter.IsFieldActive,
+            // which now excludes battle, menus, and non-field screens — matches FF1).
+            if (GamepadManager.IsKeyCodePressed(KeyCode.F5))
             {
-                if (!FFII_ScreenReaderMod.IsInBattle)
+                if (ControllerRouter.IsFieldActive)
                 {
                     int current = PreferencesManager.EnemyHPDisplay;
                     int next = (current + 1) % 3;
@@ -230,7 +316,7 @@ namespace FFII_ScreenReader.Core
                 }
                 else
                 {
-                    FFII_ScreenReaderMod.SpeakText(T("Unavailable in battle"), interrupt: true);
+                    ControllerRouter.SpeakModMenuUnavailable();
                 }
             }
         }
@@ -249,8 +335,21 @@ namespace FFII_ScreenReader.Core
             catch { }
         }
 
-        private void HandleItemDetailsKey()
+        /// <summary>
+        /// R key: re-speak the current dialogue page. Silent when no message window is
+        /// open so R does nothing on the field/in battle (matches FF1).
+        /// </summary>
+        private static void HandleRepeatDialogueKey()
         {
+            if (DialogueTracker.IsInDialogue)
+                DialogueTracker.RepeatLastDialogue();
+        }
+
+        internal static void HandleItemDetailsKey()
+        {
+            // Read the live UI panel for the active menu (FF1 pattern) so the detail key
+            // reads exactly what's on screen — the full stats panel or the description,
+            // whichever the player has toggled to — instead of master-data lookups.
             if (IsConfigMenuActive())
             {
                 AnnounceConfigTooltip();
@@ -259,12 +358,28 @@ namespace FFII_ScreenReader.Core
             {
                 ShopDetailsAnnouncer.AnnounceCurrentItemDetails();
             }
+            else if (EquipMenuState.IsActive)
+            {
+                EquipDetailsAnnouncer.AnnounceCurrentItemDetails();
+            }
+            else if (ItemMenuState.IsActive)
+            {
+                ItemDetailsAnnouncer.AnnounceCurrentItemDetails();
+            }
+            else if (MagicMenuState.IsActive)
+            {
+                // Spells have no stats panel — the cached description is the detail.
+                string detail = MenuDetailCache.LastDetail;
+                FFII_ScreenReaderMod.SpeakText(
+                    string.IsNullOrWhiteSpace(detail) ? T("No details") : detail,
+                    interrupt: true);
+            }
         }
 
         /// <summary>
         /// Checks if a config menu is currently active.
         /// </summary>
-        private bool IsConfigMenuActive()
+        private static bool IsConfigMenuActive()
         {
             try
             {
@@ -284,7 +399,7 @@ namespace FFII_ScreenReader.Core
         /// <summary>
         /// Announces the description/tooltip text for the currently highlighted config option.
         /// </summary>
-        private void AnnounceConfigTooltip()
+        private static void AnnounceConfigTooltip()
         {
             try
             {
@@ -322,7 +437,7 @@ namespace FFII_ScreenReader.Core
         /// Gets the description text from a KeyInput ConfigActualDetailsControllerBase.
         /// Uses pointer offset 0xA0 for descriptionText field.
         /// </summary>
-        private string GetConfigDescriptionText(ConfigActualDetailsControllerBase_KeyInput controller)
+        private static string GetConfigDescriptionText(ConfigActualDetailsControllerBase_KeyInput controller)
         {
             if (controller == null) return null;
 
@@ -349,7 +464,7 @@ namespace FFII_ScreenReader.Core
         /// Gets the description text from a Touch ConfigActualDetailsControllerBase.
         /// Uses pointer offset 0x50 for descriptionText field.
         /// </summary>
-        private string GetConfigDescriptionTextTouch(ConfigActualDetailsControllerBase_Touch controller)
+        private static string GetConfigDescriptionTextTouch(ConfigActualDetailsControllerBase_Touch controller)
         {
             if (controller == null) return null;
 

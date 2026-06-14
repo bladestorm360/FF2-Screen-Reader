@@ -77,6 +77,7 @@ namespace FFII_ScreenReader.Utils
         private static ChannelState[] channels;
         private static WAVEFORMATEX waveFormat;
         private static bool initialized = false;
+        private const int ChannelCount = 4;
 
         #endregion
 
@@ -98,8 +99,8 @@ namespace FFII_ScreenReader.Utils
                 cbSize = 0
             };
 
-            channels = new ChannelState[4];
-            for (int i = 0; i < 4; i++)
+            channels = new ChannelState[ChannelCount];
+            for (int i = 0; i < ChannelCount; i++)
             {
                 channels[i] = new ChannelState();
                 int result = waveOutOpen(out channels[i].WaveOutHandle,
@@ -128,7 +129,7 @@ namespace FFII_ScreenReader.Utils
         {
             if (!initialized || channels == null) return;
 
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < ChannelCount; i++)
             {
                 if (channels[i] != null)
                 {

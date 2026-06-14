@@ -1,17 +1,24 @@
 using System;
 using System.Reflection;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // FF2 Shop UI types
 using ShopListItemContentController = Il2CppLast.UI.KeyInput.ShopListItemContentController;
+using ShopListMainContentController = Il2CppLast.UI.KeyInput.ShopListMainContentController;
+using ShopInfoController = Il2CppLast.UI.KeyInput.ShopInfoController;
+using ShopCommandMenuController = Il2CppLast.UI.KeyInput.ShopCommandMenuController;
+using ShopCommandMenuContentController = Il2CppLast.UI.KeyInput.ShopCommandMenuContentController;
+using ShopCommandId = Il2CppLast.Defaine.ShopCommandId;
 using ShopTradeWindowController = Il2CppLast.UI.KeyInput.ShopTradeWindowController;
 using KeyInputShopController = Il2CppLast.UI.KeyInput.ShopController;
+using GameCursor = Il2CppLast.UI.Cursor;
 
 // Master data types for item stats
 using MasterManager = Il2CppLast.Data.Master.MasterManager;
@@ -29,7 +36,7 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class ShopMenuTracker
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.SHOP_MENU, AnnouncementContexts.SHOP_ITEM, AnnouncementContexts.SHOP_QUANTITY);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.SHOP_MENU);
 
         static ShopMenuTracker()
         {
@@ -39,6 +46,7 @@ namespace FFII_ScreenReader.Patches
                 LastItemDescription = null;
                 LastItemPrice = null;
                 LastItemStats = null;
+                ShopPatches.ResetGuards();
             });
         }
 
@@ -51,8 +59,10 @@ namespace FFII_ScreenReader.Patches
         public static void ResetState() => ClearState();
 
         /// <summary>
-        /// Check if GenericCursor should be suppressed.
-        /// Validates state machine to auto-clear when backing to command bar.
+        /// Check if GenericCursor should be suppressed. The command bar and the item
+        /// lists are now both announced by dedicated postfixes (CommandSetCursor /
+        /// SetDescription), so suppress the generic reader for the whole active shop
+        /// and only auto-clear when the state machine returns to None.
         /// </summary>
         public static bool ShouldSuppress()
         {
@@ -67,12 +77,21 @@ namespace FFII_ScreenReader.Patches
             }
 
             int state = StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_SHOP_CONTROLLER);
-            if (state == IL2CppOffsets.Shop.STATE_SELECT_COMMAND || state == IL2CppOffsets.Shop.STATE_NONE)
+            if (state == IL2CppOffsets.Shop.STATE_NONE)
             {
                 ClearState();
                 return false;
             }
             return true;
+        }
+
+        /// <summary>Reads the live ShopController.State tag (-1/None if unavailable).</summary>
+        public static int GetState()
+        {
+            var windowController = GameObjectCache.GetOrRefresh<KeyInputShopController>();
+            if (windowController == null || !windowController.gameObject.activeInHierarchy)
+                return IL2CppOffsets.Shop.STATE_NONE;
+            return StateReaderHelper.ReadStateTag(windowController.Pointer, StateReaderHelper.OFFSET_SHOP_CONTROLLER);
         }
 
         public static bool ValidateState() => ShouldSuppress();
@@ -86,7 +105,10 @@ namespace FFII_ScreenReader.Patches
     }
 
     /// <summary>
-    /// Announces shop item details when 'I' key is pressed.
+    /// Announces shop item details when the I key / right-stick-up is pressed.
+    /// Reads the live UI panel text directly (FF1 pattern): the game renders whichever
+    /// panel is active (stats OR description) into ShopInfoView.descriptionText, so this
+    /// is inherently panel-sensitive and reads the full stats panel — no master-data lookups.
     /// </summary>
     public static class ShopDetailsAnnouncer
     {
@@ -97,37 +119,45 @@ namespace FFII_ScreenReader.Patches
                 if (!ShopMenuTracker.ValidateState())
                     return;
 
-                string stats = ShopMenuTracker.LastItemStats;
-                string description = ShopMenuTracker.LastItemDescription;
-
-                string announcement = "";
-
-                if (!string.IsNullOrEmpty(stats))
-                {
-                    announcement = stats;
-                }
-
-                if (!string.IsNullOrEmpty(description))
-                {
-                    if (!string.IsNullOrEmpty(announcement))
-                    {
-                        announcement += ". " + description;
-                    }
-                    else
-                    {
-                        announcement = description;
-                    }
-                }
-
-                if (string.IsNullOrEmpty(announcement))
-                {
-                    announcement = "No item details available";
-                }
+                string announcement = GetActivePanelFromUI();
+                if (string.IsNullOrWhiteSpace(announcement))
+                    announcement = T("No item details available");
 
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Shop] Error announcing details: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Reads the live shop info panel text:
+        /// ShopInfoController -> view (0x18) -> descriptionText (0x38) -> .text
+        /// </summary>
+        private static string GetActivePanelFromUI()
+        {
+            try
+            {
+                var infoController = UnityEngine.Object.FindObjectOfType<ShopInfoController>();
+                if (infoController == null) return null;
+
+                IntPtr ctrlPtr = infoController.Pointer;
+                if (ctrlPtr == IntPtr.Zero) return null;
+
+                IntPtr viewPtr = Marshal.ReadIntPtr(ctrlPtr + IL2CppOffsets.ShopInfo.InfoView);
+                if (viewPtr == IntPtr.Zero) return null;
+
+                IntPtr textPtr = Marshal.ReadIntPtr(viewPtr + IL2CppOffsets.ShopInfo.DescriptionText);
+                if (textPtr == IntPtr.Zero) return null;
+
+                var text = new UnityEngine.UI.Text(textPtr);
+                string raw = text?.text;
+                return string.IsNullOrWhiteSpace(raw) ? null : TextUtils.StripIconMarkup(raw).Trim();
+            }
             catch
             {
+                return null;
             }
         }
     }
@@ -146,7 +176,8 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                PatchSetFocus(harmony);
+                PatchSetDescription(harmony);
+                PatchCommandSetCursor(harmony);
                 PatchTradeWindow(harmony);
 
                 isPatched = true;
@@ -157,21 +188,57 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        private static void PatchSetFocus(HarmonyLib.Harmony harmony)
+        // ShopInfoController.SetDescription(string) fires on every cursor move in the buy/sell
+        // item list regardless of affordability (unlike ShopListItemContentController.SetFocus,
+        // which never fires for greyed/unaffordable items). Use it as the cursor-moved signal
+        // and read the focused item from ShopListMainContentController.
+        private static void PatchSetDescription(HarmonyLib.Harmony harmony)
         {
             try
             {
-                Type controllerType = typeof(ShopListItemContentController);
-                var setFocusMethod = controllerType.GetMethod("SetFocus", new Type[] { typeof(bool) });
-
-                if (setFocusMethod != null)
+                var method = typeof(ShopInfoController).GetMethod("SetDescription", new Type[] { typeof(string) });
+                if (method != null)
                 {
-                    harmony.Patch(setFocusMethod,
-                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(SetFocus_Postfix)));
+                    harmony.Patch(method,
+                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(SetDescription_Postfix)));
+                }
+                else
+                {
+                    MelonLogger.Warning("[Shop] Could not find ShopInfoController.SetDescription(string)");
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                MelonLogger.Error($"[Shop] Failed to patch SetDescription: {ex.Message}");
+            }
+        }
+
+        // ShopCommandMenuController.SetCursor(int) fires when the Buy/Sell/Equipment/Back
+        // command bar is focused — on shop open AND on navigation — so it announces the
+        // initial command without an arrow press.
+        private static void PatchCommandSetCursor(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var method = typeof(ShopCommandMenuController).GetMethod(
+                    "SetCursor",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null,
+                    new Type[] { typeof(int) },
+                    null);
+                if (method != null)
+                {
+                    harmony.Patch(method,
+                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(CommandSetCursor_Postfix)));
+                }
+                else
+                {
+                    MelonLogger.Warning("[Shop] Could not find ShopCommandMenuController.SetCursor(int)");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Shop] Failed to patch command SetCursor: {ex.Message}");
             }
         }
 
@@ -193,105 +260,240 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        public static void SetFocus_Postfix(ShopListItemContentController __instance, bool isFocus)
+        private static ShopListMainContentController _cachedMainList;
+        // Local value/index guards replace the central deduplicator: announce only when the
+        // focused item / command / quantity actually changed. Re-armed at level boundaries
+        // (see CommandSetCursor / SetDescription) and cleared on shop close (ResetGuards).
+        private static int _lastAnnouncedListIndex = -1;
+        private static int _lastCommandIndex = -1;
+        private static int _lastQuantity = -1;
+
+        internal static void ResetGuards()
+        {
+            _lastAnnouncedListIndex = -1;
+            _lastCommandIndex = -1;
+            _lastQuantity = -1;
+        }
+
+        /// <summary>
+        /// Fires on every cursor move in the shop's buy/sell item list — including greyed
+        /// unaffordable items, which ShopListItemContentController.SetFocus skips. Reads the
+        /// focused item from ShopListMainContentController (selectCursor.Index into
+        /// productContentList) and announces it. The description parameter is ignored.
+        /// </summary>
+        public static void SetDescription_Postfix(ShopInfoController __instance)
         {
             try
             {
                 if (__instance == null)
                     return;
 
-                // Only announce when item gains focus
-                if (!isFocus)
+                // Gate on the ShopController state — only the buy/sell item lists.
+                // Other states (command bar, confirm, equipment) also fire SetDescription
+                // as a panel refresh and must not announce an item.
+                int state = ShopMenuTracker.GetState();
+                if (state != IL2CppOffsets.Shop.STATE_SELECT_PRODUCT && state != IL2CppOffsets.Shop.STATE_SELECT_SELL_ITEM)
+                {
+                    _lastAnnouncedListIndex = -1;
+                    return;
+                }
+
+                var mainList = FindActiveMainContentController();
+                if (mainList == null)
                     return;
 
                 ShopMenuTracker.SetActive();
+                // In the item list — re-arm the command-bar and quantity announcements for
+                // the trip back / into the trade window.
+                _lastCommandIndex = -1;
+                _lastQuantity = -1;
 
-                string itemName = null;
-                try
-                {
-                    itemName = __instance.iconTextView?.nameText?.text;
-                }
-                catch { }
+                IntPtr instancePtr = mainList.Pointer;
+                if (instancePtr == IntPtr.Zero)
+                    return;
 
-                // Get content ID early for fallback name lookup and stats
-                int contentId = 0;
-                try { contentId = __instance.ContentId; } catch { }
+                IntPtr cursorPtr = StateReaderHelper.ReadPointerField(instancePtr, IL2CppOffsets.Shop.LIST_MAIN_SELECT_CURSOR);
+                if (cursorPtr == IntPtr.Zero)
+                    return;
 
-                // Fallback: get name from master data if UI text is empty (unaffordable items)
-                if (string.IsNullOrEmpty(itemName) && contentId > 0)
+                int index = new GameCursor(cursorPtr).Index;
+                if (index < 0)
+                    return;
+
+                // SetDescription also fires on a stats/description panel toggle for the same
+                // focused item; dedup by list index. Resets at state-exit boundaries keep
+                // re-entries on the same cursor audible.
+                if (index == _lastAnnouncedListIndex)
+                    return;
+                _lastAnnouncedListIndex = index;
+
+                IntPtr listPtr = StateReaderHelper.ReadPointerField(instancePtr, IL2CppOffsets.Shop.LIST_MAIN_PRODUCT_LIST);
+                if (listPtr == IntPtr.Zero)
+                    return;
+
+                var list = new Il2CppSystem.Collections.Generic.List<ShopListItemContentController>(listPtr);
+                if (list == null || index >= list.Count)
+                    return;
+
+                AnnounceShopItem(list[index]);
+            }
+            catch { }
+        }
+
+        private static ShopListMainContentController FindActiveMainContentController()
+        {
+            try
+            {
+                if (_cachedMainList != null)
                 {
                     try
                     {
-                        var masterManager = MasterManager.Instance;
-                        var content = masterManager.GetData<Content>(contentId);
-                        if (content != null)
+                        if (_cachedMainList.Pointer != IntPtr.Zero &&
+                            _cachedMainList.gameObject != null &&
+                            _cachedMainList.gameObject.activeInHierarchy)
                         {
-                            var messageManager = MessageManager.Instance;
-                            itemName = messageManager.GetMessage(content.MesIdName, false);
+                            return _cachedMainList;
                         }
                     }
-                    catch
+                    catch { _cachedMainList = null; }
+                }
+
+                var all = UnityEngine.Object.FindObjectsOfType<ShopListMainContentController>();
+                if (all != null)
+                {
+                    foreach (var candidate in all)
                     {
+                        if (candidate == null) continue;
+                        try
+                        {
+                            if (candidate.gameObject != null && candidate.gameObject.activeInHierarchy)
+                            {
+                                _cachedMainList = candidate;
+                                return candidate;
+                            }
+                        }
+                        catch { }
                     }
                 }
-
-                if (string.IsNullOrEmpty(itemName))
-                {
-                    return;
-                }
-
-                itemName = TextUtils.StripIconMarkup(itemName);
-
-                string price = null;
-                try
-                {
-                    price = __instance.shopListItemContentView?.priceText?.text;
-                }
-                catch { }
-
-                string description = null;
-                try
-                {
-                    description = __instance.Message;
-                }
-                catch { }
-
-                string stats = null;
-                if (contentId > 0)
-                {
-                    stats = GetItemStats(contentId);
-                }
-
-                ShopMenuTracker.LastItemName = itemName;
-                ShopMenuTracker.LastItemPrice = price;
-                ShopMenuTracker.LastItemDescription = description;
-                ShopMenuTracker.LastItemStats = stats;
-
-                // For equipment: "Name, Price" (use I key for stats + description)
-                // For items/magic: "Name, Price. Description" (description shown immediately)
-                bool isEquipment = contentId > 0 && IsEquipmentItem(contentId);
-                string announcement;
-
-                if (isEquipment || string.IsNullOrEmpty(description))
-                {
-                    announcement = string.IsNullOrEmpty(price) ? itemName : $"{itemName}, {price}";
-                }
-                else
-                {
-                    announcement = string.IsNullOrEmpty(price)
-                        ? $"{itemName}. {description}"
-                        : $"{itemName}, {price}. {description}";
-                }
-
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.SHOP_ITEM, announcement))
-                    return;
-
-                FFII_ScreenReaderMod.SpeakText(announcement);
             }
-            catch
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// Announces a focused shop item (name, price, and inline description for
+        /// consumables) and caches it for the I key. Empty sell slots announce "Empty"
+        /// without overwriting the cached I-key target.
+        /// </summary>
+        private static void AnnounceShopItem(ShopListItemContentController content)
+        {
+            if (content == null)
+                return;
+
+            string itemName = null;
+            try { itemName = content.iconTextView?.nameText?.text; } catch { }
+
+            int contentId = 0;
+            try { contentId = content.ContentId; } catch { }
+
+            // Fallback: master-data name when the UI text is empty (unaffordable items).
+            if (string.IsNullOrEmpty(itemName) && contentId > 0)
             {
+                try
+                {
+                    var master = MasterManager.Instance.GetData<Content>(contentId);
+                    if (master != null)
+                        itemName = MessageManager.Instance.GetMessage(master.MesIdName, false);
+                }
+                catch { }
             }
+
+            if (string.IsNullOrEmpty(itemName))
+            {
+                // Empty sell slot — announce but keep the last real item for the I key.
+                FFII_ScreenReaderMod.SpeakText("Empty");
+                return;
+            }
+
+            itemName = TextUtils.StripIconMarkup(itemName);
+
+            string price = null;
+            try { price = content.shopListItemContentView?.priceText?.text; } catch { }
+
+            string description = null;
+            try { description = content.Message; } catch { }
+
+            string stats = contentId > 0 ? GetItemStats(contentId) : null;
+
+            ShopMenuTracker.LastItemName = itemName;
+            ShopMenuTracker.LastItemPrice = price;
+            ShopMenuTracker.LastItemDescription = description;
+            ShopMenuTracker.LastItemStats = stats;
+
+            // Detail = stats + description; the I key reads it via ShopDetailsAnnouncer
+            // (ShopMenuTracker.LastItemStats/Description, set above).
+            string detail = stats;
+            if (!string.IsNullOrEmpty(description))
+                detail = string.IsNullOrEmpty(detail) ? description : $"{detail}. {description}";
+
+            // Terse by default ("Name, Price"); AutoDetail appends the detail inline.
+            string baseAnnouncement = string.IsNullOrEmpty(price) ? itemName : $"{itemName}, {price}";
+            string announcement = baseAnnouncement;
+            if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(detail))
+                announcement = $"{baseAnnouncement}: {detail}";
+
+            // Caller (SetDescription) already gated on the list-index guard, so announce.
+            FFII_ScreenReaderMod.SpeakText(announcement);
+        }
+
+        /// <summary>
+        /// Fires when the Buy/Sell/Equipment/Back command bar is focused — on shop open
+        /// AND on navigation — so the initial command is announced without an arrow press.
+        /// </summary>
+        public static void CommandSetCursor_Postfix(ShopCommandMenuController __instance, int index)
+        {
+            try
+            {
+                if (__instance == null)
+                    return;
+
+                ShopMenuTracker.SetActive();
+                // In the command bar — re-arm the item-list announcement for the trip back.
+                _lastAnnouncedListIndex = -1;
+
+                var contentList = __instance.contentList;
+                if (contentList == null || index < 0 || index >= contentList.Count)
+                    return;
+
+                var commandContent = contentList[index];
+                if (commandContent == null)
+                    return;
+
+                string commandName = GetShopCommandName(commandContent.CommandId);
+                if (string.IsNullOrEmpty(commandName))
+                    return;
+
+                // SetCursor can fire more than once for the same focus on open — local
+                // index guard announces once per command.
+                if (index == _lastCommandIndex)
+                    return;
+                _lastCommandIndex = index;
+
+                FFII_ScreenReaderMod.SpeakText(commandName, interrupt: true);
+            }
+            catch { }
+        }
+
+        private static string GetShopCommandName(ShopCommandId commandId)
+        {
+            return commandId switch
+            {
+                ShopCommandId.Buy => "Buy",
+                ShopCommandId.Sell => "Sell",
+                ShopCommandId.Equipment => "Equipment",
+                ShopCommandId.Back => "Back",
+                _ => null
+            };
         }
 
         private static string GetItemStats(int contentId)
@@ -323,31 +525,6 @@ namespace FFII_ScreenReader.Patches
             catch
             {
                 return null;
-            }
-        }
-
-        /// <summary>
-        /// Checks if the content is equipment (weapon or armor) vs item/magic.
-        /// Used to determine announcement format.
-        /// </summary>
-        private static bool IsEquipmentItem(int contentId)
-        {
-            try
-            {
-                var masterManager = MasterManager.Instance;
-                if (masterManager == null)
-                    return false;
-
-                var content = masterManager.GetData<Content>(contentId);
-                if (content == null)
-                    return false;
-
-                var typeId = (ContentType)content.TypeId;
-                return typeId == ContentType.Weapon || typeId == ContentType.Armor;
-            }
-            catch
-            {
-                return false;
             }
         }
 
@@ -438,9 +615,10 @@ namespace FFII_ScreenReader.Patches
 
                 int selectedCount = GetSelectedCount(__instance);
 
-                // Skip duplicates using centralized deduplication
-                if (!ShouldAnnounce(AnnouncementContexts.SHOP_QUANTITY, selectedCount))
+                // Local quantity guard — the trade window calls this every frame for visual sync.
+                if (selectedCount == _lastQuantity)
                     return;
+                _lastQuantity = selectedCount;
 
                 string totalPrice = GetTotalPriceText(__instance);
 

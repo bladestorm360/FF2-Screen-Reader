@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using FieldEntity = Il2CppLast.Entity.Field.FieldEntity;
+using FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox;
 
 namespace FFII_ScreenReader.Field
 {
@@ -48,6 +50,77 @@ namespace FFII_ScreenReader.Field
         public virtual bool IsInteractive => true;
 
         /// <summary>
+        /// Whether the underlying game entity is still alive and active in the scene.
+        /// Used by the delta scan to prune entities deactivated by events (opened chests'
+        /// interaction collider, NPCs despawned mid-cutscene).
+        /// </summary>
+        public virtual bool IsAlive
+        {
+            get
+            {
+                if (GameEntity == null) return false;
+                try
+                {
+                    var fe = GameEntity as FieldEntity;
+                    if (fe == null) return false;
+                    var go = fe.gameObject;
+                    if (go == null) return false;
+                    return go.activeInHierarchy;
+                }
+                catch { return false; }
+            }
+        }
+
+        /// <summary>
+        /// Reads the live position from the backing FieldEntity, or returns the fallback.
+        /// </summary>
+        protected Vector3 ReadLivePosition(Vector3 fallback)
+        {
+            try
+            {
+                var fe = GameEntity as FieldEntity;
+                if (fe?.transform != null)
+                    return fe.transform.localPosition;
+            }
+            catch { }
+            return fallback;
+        }
+
+        /// <summary>
+        /// Reads the live isOpen state from a backing FieldTresureBox.
+        /// Tries reflection on the private isOpen field, falls back to IL2CPP pointer
+        /// access at offset 0x159 (offset confirmed via EntityScanner.GetTreasureBoxOpenedState).
+        /// </summary>
+        protected internal static bool ReadTreasureOpened(object gameEntity, bool fallback)
+        {
+            if (gameEntity == null) return fallback;
+            try
+            {
+                var fe = gameEntity as FieldEntity;
+                if (fe == null) return fallback;
+                var treasureBox = fe.TryCast<FieldTresureBox>();
+                if (treasureBox == null) return fallback;
+
+                var isOpenField = treasureBox.GetType().GetField("isOpen",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                if (isOpenField != null)
+                {
+                    var value = isOpenField.GetValue(treasureBox);
+                    if (value != null) return (bool)value;
+                }
+
+                unsafe
+                {
+                    IntPtr ptr = treasureBox.Pointer;
+                    if (ptr != IntPtr.Zero)
+                        return *(bool*)(ptr + 0x159);
+                }
+            }
+            catch { }
+            return fallback;
+        }
+
+        /// <summary>
         /// Gets the display name for this entity (without distance/direction)
         /// </summary>
         protected abstract string GetDisplayName();
@@ -90,9 +163,10 @@ namespace FFII_ScreenReader.Field
         public override string Name => name;
 
         /// <summary>
-        /// Whether this treasure chest has been opened
+        /// Whether this treasure chest has been opened. Reads live from the game entity
+        /// so the delta scan reflects state changes without recreating the wrapper.
         /// </summary>
-        public bool IsOpened => isOpened;
+        public bool IsOpened => ReadTreasureOpened(GameEntity, isOpened);
 
         public override EntityCategory Category => EntityCategory.Chests;
         public override int Priority => 3;
@@ -134,7 +208,7 @@ namespace FFII_ScreenReader.Field
             isShop = shop;
         }
 
-        public override Vector3 Position => position;
+        public override Vector3 Position => ReadLivePosition(position);
         public override string Name => name;
 
         /// <summary>
@@ -309,7 +383,7 @@ namespace FFII_ScreenReader.Field
             transportationId = transportId;
         }
 
-        public override Vector3 Position => position;
+        public override Vector3 Position => ReadLivePosition(position);
         public override string Name => name;
 
         /// <summary>

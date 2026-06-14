@@ -7,6 +7,7 @@ using MelonLoader;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using Il2CppInterop.Runtime;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -35,6 +36,12 @@ namespace FFII_ScreenReader.Patches
 
         // Track if we're in a dialogue sequence
         private static bool isInDialogue = false;
+
+        /// <summary>
+        /// True while a dialogue / message window is on screen. Used by the R key
+        /// (repeat) to decide whether there is dialogue to re-read.
+        /// </summary>
+        public static bool IsInDialogue => isInDialogue;
 
         /// <summary>
         /// Known invalid speaker names (locations, menu labels, etc.)
@@ -192,6 +199,33 @@ namespace FFII_ScreenReader.Patches
 
             lastAnnouncedPageIndex = pageIndex;
             FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
+        }
+
+        /// <summary>
+        /// Re-speaks the most recently announced dialogue page (with speaker prefix if
+        /// known). Bound to the R key while a message window is open.
+        /// </summary>
+        public static void RepeatLastDialogue()
+        {
+            if (!isInDialogue
+                || lastAnnouncedPageIndex < 0
+                || lastAnnouncedPageIndex >= currentPageBreaks.Count)
+            {
+                FFII_ScreenReaderMod.SpeakText(T("Nothing to repeat"), interrupt: true);
+                return;
+            }
+
+            string pageText = GetPageText(lastAnnouncedPageIndex);
+            if (string.IsNullOrWhiteSpace(pageText))
+            {
+                FFII_ScreenReaderMod.SpeakText(T("Nothing to repeat"), interrupt: true);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(lastAnnouncedSpeaker))
+                pageText = $"{lastAnnouncedSpeaker}: {pageText}";
+
+            FFII_ScreenReaderMod.SpeakText(pageText, interrupt: true);
         }
 
         /// <summary>
@@ -565,15 +599,12 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Postfix for MessageWindowManager.Close - resets dialogue state.
         /// Ensures the same NPC dialogue can be announced on subsequent interactions.
-        /// Also triggers entity refresh to update NPC/interactive object states.
+        /// Entity state updates (NPCs that despawned, etc.) are now handled by the
+        /// delta scan on the next cycle — no eager refresh needed here.
         /// </summary>
         public static void Close_Postfix()
         {
-            // Reset dialogue state for next conversation
             DialogueTracker.Reset();
-
-            // Trigger entity refresh after dialogue ends (NPC interaction complete)
-            FFII_ScreenReader.Core.FFII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
     }
 }

@@ -20,10 +20,10 @@ namespace FFII_ScreenReader.Utils
         /// </summary>
         public static class WallToneFrequencies
         {
-            public const int NORTH = 330;
-            public const int SOUTH = 110;
+            public const int NORTH = 294;
+            public const int SOUTH = 165;
             public const int EAST = 220;
-            public const int WEST = 200;
+            public const int WEST = 196;
         }
 
         /// <summary>

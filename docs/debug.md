@@ -188,7 +188,12 @@ BattlePauseController.isActivePauseMenu: 0x71
 ## Key Discoveries
 
 ### Weapon Skill UI Order vs Enum
-UI displays in different order than SkillLevelTarget enum. Solution: Use list index directly from `skillLevelContentList` (index 0=Sword, 1=Knife, etc.)
+`skillLevelContentList` is NOT in `SkillLevelTarget` enum order, and the order is not reliable —
+do NOT key by list index (a prior positional guess mislabeled skills, e.g. sword read as spear).
+Each element is a `SkillLevelContentController` carrying its own type: `weaponType`
+(`SkillLevelTarget`) @0x20 (the level/gauge `view` is @0x18). `StatusDetailsReader.CacheWeaponSkillsFromUI`
+reads `weaponType` per element and keys `weaponSkillCache` by it — order-independent, matches how
+`BattleResultPatches.GetWeaponSkillName` works off the enum directly.
 
 ### Accuracy Count
 `ConfirmedAccuracyCount()` returns 0 for players (BaseAccuracyCount never initialized). Count comes from equipped weapons, read from UI or use direct API.
@@ -227,6 +232,65 @@ KeyInput and Touch often have different method names:
 | R | Repeat current stat |
 
 ## Bug Fixes Reference
+
+### Controller field context poisoned by stale KEYWORD_MENU (2026-06-13)
+**Problem**: On the field, after opening the NPC keyword menu (Ask/Learn), right-stick-down
+announced the on-screen game controls instead of cycling field entities/pathfinding targets.
+**Cause**: `ControllerRouter.IsFieldActive` = `context==Field && !MenuStateRegistry.AnyActive()
+&& !IsInBattle`. The keyword menu (`SecretWordController`) sets `KEYWORD_MENU` via
+`SetActiveExclusive`, but its only reliable clear is the lazy self-heal in
+`KeywordMenuState.ShouldSuppress()`, which runs only via `CursorSuppressionCheck.Check()`
+during menu cursor navigation — never on the field. So the flag leaked stuck-active, making
+`IsFieldActive` false on the field and routing right-stick to `KeyHelpReader.AnnounceKeyHelp`.
+The controller code was the first consumer to read `AnyActive()` on the field (keyboard nav
+keys off `DetermineContext()`, which ignores menu flags), exposing the latent leak.
+**Fix** (FF1 state-flag-checking pattern): in `ControllerRouter.Update()`, before computing
+`IsFieldActive`, when `context==Field && !IsInBattle && AnyActive()`, invoke
+`CursorSuppressionCheck.Check()` for its self-healing side effect so dead flags (keyword,
+words, shop) clear via their `ShouldSuppress()`/`ValidateState()`. One-shot: a stuck flag
+clears within ~1 frame, then `AnyActive()` short-circuits.
+
+### Pause menu mis-detected as field for controller (2026-06-13)
+**Problem**: Inside the game's pause menu, right-stick scanned entities and the D-pad was
+consumed for waypoints (menu treated as field).
+**Cause**: `MainMenuPatches` registered no menu state, so `IsFieldActive` stayed true while
+the pause menu was open.
+**Fix** (FF1 `MAIN_MENU` parent-container pattern): added `MenuStateRegistry.MAIN_MENU`,
+preserved across submenu switches in `SetActiveExclusive` (so the whole pause menu reads as
+non-field), set in `MainMenuController.Show` postfix and cleared in a new `Close` postfix.
+Also added to `ClearMenuFlagsForMapTransition` as a backstop.
+
+### Controller right-stick-up reads item details in menus (2026-06-13)
+**Added** (FF1 parity): in `ControllerRouter.HandleNormalNonField`, right-stick-up now calls
+`InputManager.HandleItemDetailsKey()` — the same dispatcher the keyboard "I" key uses (config
+tooltip → shop → item/magic/equip detail). Made that method and its config-tooltip helpers
+`internal static` so the router can call them. Right-stick-down still reads on-screen controls.
+FF1's right-stick-left "usable-by" reader was deliberately NOT ported (FF2 has no equip restrictions).
+
+### Teleport could fire from menus/battle — game-breaking (2026-06-13)
+**Problem**: Mod-mode right-stick teleport (and keyboard Ctrl+Arrow) only guarded via
+`GetFieldPlayer()`. A menu/battle overlay keeps the field loaded, so the player still exists and
+teleport moved it underneath the menu (out of bounds / into events).
+**Fix**: structural `if (!ControllerRouter.IsFieldActive) { speak "Not available here"; return; }`
+guard at the top of `TeleportInDirection` (covers controller AND keyboard callers). Also
+restructured `HandleModModeState` so field mod functions (Gil/Location/toggles/teleport) run only
+under `else if (IsFieldActive)`; battle branch unchanged; menu/non-field does nothing field-specific.
+
+### Item detail key reads live UI panel, not master data (2026-06-13)
+**Problem**: The detail key (I / right-stick-up) built shop/equip stats from master-data lookups
+(`ShopPatches.GetItemStats` → `Weapon.Attack`/`Armor.Defense`/…) concatenated with the description.
+This excluded some displayed stats and wasn't panel-sensitive (read both stats + description).
+**Fix** (FF1 pattern): read the single live UI `Text` the game fills with the active panel —
+- Shop: `ShopInfoController.view (0x18) → ShopInfoView.descriptionText (0x38)` (`ShopDetailsAnnouncer`).
+- Equip: `EquipmentDescriptionWindowController.view (0x20) → descriptionText (0x18)` (`EquipDetailsAnnouncer`).
+Reading that field is inherently panel-sensitive and reads the full stats panel (the game renders
+whichever panel is toggled into it). `InputManager.HandleItemDetailsKey` dispatch now matches FF1:
+config → shop → equip → item → magic, each reading live UI. Offsets in `IL2CppOffsets.ShopInfo` /
+`Equipment` (KeyInput variants — Touch variants lack these fields). The item menu renders stats into
+row controllers, not a single field, so `ItemDetailsAnnouncer` reads the live
+`ItemWindowView.descriptionText (0x18)` for description and the visible `Text` under
+`ItemEquipmentDetailView` for the stats panel, chosen by `isFrontTextVisible (0x48)` (logs both for
+verification). FF1 got the same item-menu live-read fix; FF1 shop/equip were already correct.
 
 ### Battle Pause Menu (2026-01-22)
 **Problem**: Spacebar pause menu not announcing commands.
@@ -362,6 +426,16 @@ currentPageNumber: 0xF8     // int - current page being displayed
 - `lastAnnouncedPageIndex` - Prevents duplicate announcements
 - `currentSpeaker` / `lastAnnouncedSpeaker` - Speaker deduplication
 - `GetPageText(pageIndex)` - Combines lines within page boundaries
+- `IsInDialogue` / `RepeatLastDialogue()` - Re-speaks the last announced page (with
+  speaker prefix). Bound to the **R key** (ported from FF1) via a `KeyContext.Global`
+  binding in `InputManager` (`HandleRepeatDialogueKey`, silent when no window is open).
+  R is also bound in `KeyContext.Status` (repeat current stat); the registry prefers
+  the more-specific Status binding on the status screen, so the two never collide.
+  - **Controller**: mod mode (Back/Select) + **West (X)** repeats the dialogue. In
+    `ControllerRouter.HandleModModeState`, a `DialogueTracker.IsInDialogue` block runs
+    *before* the battle/field branches (field dialogue still reads as `IsFieldActive`,
+    so West would otherwise announce Gil). `AnnounceModModeControls` gains a matching
+    dialogue branch so RB/right-stick-down describes the repeat control.
 
 **LineFadeMessageTracker** (ScrollMessagePatches.cs):
 - `storedMessages[]` - Array of auto-scroll lines
@@ -505,10 +579,17 @@ SoundPlayer.cs (Utils/) - waveOut P/Invoke, 4 channels, procedural tone generati
 - **Audio beacons**: Panning ping (400Hz north / 280Hz south) toward selected entity every 2s
 
 ### Movement Sound Patches
-- Patches `FieldPlayerKeyController.OnTouchPadCallback` (prefix)
-- Coroutine waits 0.08s, compares position before/after
-- Wall bump: requires 2+ consecutive hits at same position, 300ms cooldown
-- Footstep: on tile change, gated by `IsFootstepsEnabled()`, 150ms cooldown
+- **Wall bumps** — patches `FieldPlayerKeyController.OnTouchPadCallback` (prefix); coroutine
+  waits 0.08s, compares position before/after; requires 2+ consecutive hits at same position,
+  300ms cooldown. On a confirmed bump sets `collisionDetectedThisFrame = true` so the footstep
+  poll skips the coincident frame.
+- **Footsteps (2026-06-14, FF1 parity)** — moved OUT of the wall-bump coroutine into a per-frame
+  `MovementSoundPatches.PollFootsteps()` called from `InputManager.CheckInput()` (right after
+  `ControllerRouter.Update`). Plays one step per live tile change, so cadence naturally tracks
+  movement speed (walk slower than dash) — **no fixed cooldown** (the old 150ms `FOOTSTEP_COOLDOWN`
+  capped it at ~6.6/s and decoupled it from real speed). Gated by `ControllerRouter.IsFieldActive`,
+  `FFII_ScreenReaderMod.Instance.IsFootstepsEnabled()`, and `MoveStateHelper.IsOnFoot()` (silent in
+  vehicles/menus/battle). Not a new per-frame Harmony patch — it rides the existing input loop.
 
 ### Wall Tone Loop
 - 100ms coroutine interval
@@ -519,6 +600,46 @@ SoundPlayer.cs (Utils/) - waveOut P/Invoke, 4 channels, procedural tone generati
 
 ### Map ID for FF2
 Uses `UserDataManager.Instance().CurrentMapId` (not FF1's `FieldMapProvisionInformation.Instance.CurrentMapId`)
+
+## Layer-aware pathfinding + `[NavDiag]` (2026-06-14)
+
+FFPR maps are 2D tile maps with stacked collision layers (multi-floor dungeons). The native
+`MapRouteSearcher` is layer-aware: `MapParameter.MappingData = List<int[,]>` (one collision grid per
+layer), `LayerLength`, a 3D `int[layer,x,y]` route map, 64-cell bounded search. A cell's `z` =
+`gameObject.layer - 9`. Crossing a layer is automatic as the player walks over a transition tile.
+
+**Bug (confirmed via `[NavDiag]`):** the *Magic Circle* (layer 9, `z=349`) sits directly above the
+player + *Revival Room* (layer 10, `z=249`) at the same X/Y `(0,0)`. `FindPathTo` set the start
+cell's Z from the player's layer but **brute-forced the destination Z (`for tryDestZ = 2..0`) and
+took the first hit** — the Magic Circle's X/Y is walkable on the player's own layer 10 (`z=1`), so
+that search succeeded and routed horizontally on layer 10 to the target's X/Y projection; it never
+tried the target's real layer 9 (`z=0`). Result: bogus "North N" toward a spot that isn't the
+target. The 8-tile adjacency fallback also fabricated a "North 1" when the player stood on a target.
+
+**Fix:**
+- `FindPathTo(..., int? targetLayer = null)` — when the target's real Unity layer is supplied, set
+  `destCell.z = targetLayer - 9` and search **that layer only** (no brute-force; adjacency fallback
+  pinned to that layer). `MapRouteSearcher` then routes to the actual layer, crossing transitions.
+  Null `targetLayer` keeps the legacy brute-force.
+- **Same-tile short-circuit:** same X/Y cell + same layer → `Description="No movement needed"`,
+  `StepCount=0` (fixes the standing-on-target "North 1").
+- Callers pass the real layer: entities via `(GameEntity as FieldEntity).gameObject.layer`
+  (`GetPathToEntity`, `PathfindingFilter`, `AudioLoopManager` beacon); **waypoints** persist the
+  player's layer at creation (`"layer"` in `waypoints.json`, file `version` 2; legacy/absent → `-1`
+  → brute-force fallback) and pass it from `WaypointController.Pathfind`.
+- Layer transitions detected robustly (`EntityScanner`): `SwitchLayerEventEntity` cast (runs before
+  the generic `EventTriggerEntity` check since it derives from it) or name `toupper`/`tobottom`/
+  `tolayer*` → `EventEntity "ToLayer"` (so `ToLayerFilter` / `Ctrl+\` work).
+- The crow-flies list distance (`FormatDescription`, 3D `Vector3.Distance`) is intentionally left
+  unchanged — a stacked-layer target reads as distant in the `[`/`]` list while `\` gives its route.
+
+**`[NavDiag]`** (kept) — one line per `\` press from `GetPathToEntity`; `destCell.z` now reflects the
+target's real layer (`entityLayer - 9`), confirming the layer-aware route:
+```
+[NavDiag] entity='<name>' playerPos=(x,y,z) playerLayer=L entityPos=(x,y,z) entityLayer=L
+          crowDist=NN.N steps=N.N startCell=(cx,cy,cz) destCell=(cx,cy,cz) map=WxH
+          success=bool stepCount=N points=N err='...' desc='...'
+```
 
 ## Entity Name Translation (2026-01-27)
 
@@ -590,37 +711,30 @@ Party Defeated → SetMessage("The party was defeated") → announce with interr
              → Navigate Yes/No → UpdateCommand → announce button text
 ```
 
-## Confirmation Dialog System (2026-02-04)
+## Modal dialogs + mod menu (FF1 model — no invisible windows) (2026-06-14)
 
-Custom Yes/No confirmation dialog using Windows API focus stealing. Used for waypoint deletion confirmations.
+`ModMenu`, `TextInputWindow`, and `ConfirmationDialog` are **virtual** (in-memory state +
+TTS only). There is **no** focus-stealing / invisible window anymore — the old
+`WindowsFocusHelper.StealFocus()/RestoreFocus()` mechanism was removed (the class now only
+exposes `IsGameWindowFocused()`).
 
-### Architecture
-```
-ConfirmationDialog.cs (Core/)
-├── Open(prompt, onYes, onNo, silentYes) - Opens dialog, optionally in silent mode
-├── HandleInput() - Processes Y/N/Enter/Escape/Arrow keys
-├── StealFocus() - Creates invisible window to capture keyboard
-└── RestoreFocus() - Returns focus to game
-```
+While any of these is open, the game receives no input because:
+1. `ControllerRouter.SuppressGameInput` is true (it already includes `ModMenu.IsOpen ||
+   TextInputWindow.IsOpen || ConfirmationDialog.IsOpen`), which makes the
+   `InputPassthroughPatches` postfixes on `InputSystemManager.GetKeyDown/GetKey/GetKeyUp/
+   GetAnyKey` return `false`; **and**
+2. `InputManager.CheckInput()` calls `Input.ResetInputAxes()` every frame while
+   `SuppressGameInput` is true — this is the keyboard-only net, because the passthrough
+   postfixes early-return when no gamepad is connected (`!GamepadManager.IsAvailable`).
 
-### Silent Yes Mode
+The modals read the keyboard via `GamepadManager.IsKeyCodePressed/IsKeyCodeHeld`
+(GetAsyncKeyState — hardware state, no window focus needed). This matches FF1 exactly.
 
-The `silentYes` parameter enables seamless chained confirmations:
-- When `true`: Yes confirmation invokes callback immediately without "Yes" announcement or focus window
-- When `false`: Normal flow with "Yes" speech and delayed callback
+### ConfirmationDialog
+Plain Yes/No: `Open(prompt, onYes, onNo)`. No `silentYes` mode (removed — was FF2-only).
+`WaypointController.ClearAll()` now uses a **single** confirmation ("Clear all X waypoints
+from this map?") like FF1, not a two-stage "Are you sure?" chain.
 
-Used by `WaypointClearAll()` for 2-step confirmation:
-```
-First prompt (silentYes: true): "Clear all X waypoints?"
-  → Yes → Immediately opens second prompt (no "Yes" announcement)
-  → No → "Cancelled"
-
-Second prompt (normal): "Are you sure?"
-  → Yes → Clears waypoints, announces count
-  → No → "Cancelled"
-```
-
-### Key Handling
 | Key | Action |
 |-----|--------|
 | Y | Confirm Yes immediately |
@@ -628,3 +742,161 @@ Second prompt (normal): "Are you sure?"
 | Enter | Confirm current selection (Yes/No) |
 | Escape | Cancel (same as No) |
 | Left/Right | Toggle selection, announce |
+
+### Mod menu gating + open/close speech (FF1-exact)
+Both entry points gate on `ControllerRouter.IsFieldActive` in the caller, exactly like FF1:
+F8 in `InputManager.CheckInput()` and Start via `ControllerRouter.HandleStateTransitions` →
+`OpenModMenu()`. `ModMenu.Open()` itself does **not** self-gate (matches FF1). F5's enemy-HP
+cycle gates the same way.
+
+The robustness ("only on a walkable field map — not title/boot/menus/battle/transitions") comes
+from **`DetermineContext()`**, which — like FF1 — returns `KeyContext.Field` **only when a
+`FieldPlayerController.fieldPlayer` exists**, otherwise `KeyContext.Global`. So `IsFieldActive`
+(`gameContext == Field && !MenuStateRegistry.AnyActive() && !IsInBattle`) is trustworthy on its
+own; no extra `EnsureFieldContext` chokepoint is needed. (Earlier FF2 had a weaker
+`DetermineContext` that defaulted to `Field`; fixing it at the root removed the need for the
+band-aid gate.) `KeyBindingRegistry` treats `Global` as "matches any context," so `Global`
+bindings still fire everywhere; only `Field`-context bindings correctly stop firing off-field.
+
+Open/close announcements ("Mod menu" / "Mod menu closed") live in `ModMenu.Open()/Close()`
+(centralized — `ControllerRouter` no longer announces them).
+
+### Mod menu item descriptions (I key — FF1 parity)
+Each `MenuItem` carries a `Func<string> DescriptionGetter` (toggles return state-dependent text).
+`I` in `ModMenu.HandleInput()` calls `AnnounceCurrentItemDescription()` (falls back to
+`T("No description")`). Keyboard-only, exactly like FF1 (the controller path has no description
+button). All description strings are localized in `mod_text.json` (12 locales).
+
+### Beacon Destination Announcement (ported from FF1)
+Toggle `AnnounceOnBeaconRestart` (pref + `FFII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled`
++ `ToggleAnnounceOnBeaconRestart()`; mod-menu item under Announcements). When on and beacon nav
+is on, restarting the beacon also re-speaks the destination — entities via
+`RestartEntityBeacon()` (ControllerRouter left-trigger), waypoints via the beacon branch in
+`WaypointController.Pathfind()` (re-pings instead of turn-by-turn directions in beacon mode).
+
+### Mod menu order (FF1 layout)
+Audio Feedback → Volume Controls → Navigation Filters (Pathfinding, Map Exit, Layer Transition,
+**Stick Click Normalization** last) → Battle Settings → Announcements (Auto Detail, **Beacon
+Destination Announcement**) → Close Menu. The separate "Controller" section was removed.
+
+## Keyword/Ask Menu (FF1-manner, fully custom)
+
+`SecretWordController` (NPC Ask/Learn/Key Items) is now a fully-custom menu: the
+generic cursor reader is suppressed across the whole active menu and every level is
+announced by a dedicated postfix that fires on open AND navigation.
+
+- `KeywordMenuState.ShouldSuppress()` is state-validated (reads `stateMachine` @0x20 via
+  `StateReaderHelper`): suppress whenever active and state != `None`; auto-clear on
+  None/dead controller. No SetActive(false) backstop.
+- Command bar **open/return**: postfix on `CommandSelectInit` + `CommandSelectingInit`
+  → 1-frame coroutine reads `selectCommandCursor` (@0x38) `.Index` → `GetCommandName`.
+  This is what speaks the default "Ask" on appear (`SelectCommand` only fires on nav).
+- Command bar **nav**: `SelectCommand` postfix announces the command name only (the old
+  first-list-entry coroutine leak was removed).
+- Sub-list (Ask/Learn keywords, Key Items): `SelectContentByWord`/`SelectContentByItem`
+  postfixes (rich "name: description"), fire on entry + nav.
+- Symmetric dedup cross-reset: command-bar entry resets the WORD dedup; sub-list entry
+  resets the COMMAND dedup, so returning to either level re-announces.
+- New offsets in `IL2CppOffsets.Keyword`: `OFFSET_STATE_MACHINE` 0x20,
+  `OFFSET_SELECT_COMMAND_CURSOR` 0x38, `STATE_NONE` 0.
+
+## Shop FF1-parity
+
+Command bar and item list are both fully custom now (generic reader suppressed for the
+whole shop; `ShouldSuppress` only clears on `STATE_NONE`).
+
+- Command bar on open + nav: `ShopCommandMenuController.SetCursor(int)` postfix reads
+  `contentList[index].CommandId` → Buy/Sell/Equipment/Back. Index-dedup via `SHOP_COMMAND`.
+- Unaffordable items: item announce moved from `ShopListItemContentController.SetFocus`
+  (skips greyed items) to `ShopInfoController.SetDescription(string)`, which fires for
+  every focused item. Reads the focused item from `ShopListMainContentController`
+  (`selectCursor` @0x48 → `productContentList` @0x68). Gated to states SelectProduct(2)/
+  SelectSellItem(3); list-index dedup. Empty sell slots say "Empty" without clobbering the
+  I-key cache. New offsets in `IL2CppOffsets.Shop`: `STATE_SELECT_PRODUCT` 2,
+  `STATE_SELECT_SELL_ITEM` 3, `LIST_MAIN_SELECT_CURSOR` 0x48, `LIST_MAIN_PRODUCT_LIST` 0x68.
+
+## Ported FF1 fixes (cross-game parity)
+
+- **SpeakText** strips rich-text tags centrally (`TextUtils.StripRichTextTags`);
+  `StripIconMarkup` regex broadened to `<[^<>\s]+?>` (any single-token tag, preserves prose `<`).
+- **Battle**: buff/debuff spells (value=0, non-Miss hitType) no longer announce a false
+  "Miss" — suppressed in `CreateDamageViewWithHitType_Postfix` (the condition is announced
+  by `ConditionAdd_Postfix`). Status dedup is now per-unit (keyed by `BattleUnitData`
+  pointer) so same-named enemies each announce.
+- **Map transition**: `FFII_ScreenReaderMod.ClearMenuFlagsForMapTransition()` clears stuck
+  non-battle menu/popup flags on map-id change (`GameStatePatches.CheckMapTransition`).
+- **Input**: bare F-keys gated on no-modifier; `Alt` held skips hotkey dispatch (Alt+F4 etc.).
+- **Field**: `EntityScanner.FindEntityByIdentifier` matches the selected entity by reference
+  first, so moving NPCs stay pinned instead of snapping to a same-named neighbor.
+
+Already present in FF2 (not re-ported): controller hotplug (GamepadManager/SDL3), popup
+cursor-index dedup, unified beacon/waypoint A*. Skipped: FF1 game-toggle announcer
+(per-frame poll, conflicts with the no-polling rule) and the event-driven config refactor
+(FF2 already dedups config announcements).
+
+## AutoDetail mode (FF1 port)
+
+A toggle (`PreferencesManager.AutoDetailEnabled`, **default OFF**) that controls whether
+item/magic/equip/shop focus announcements include the description/stats inline.
+
+- **Toggle**: F7 → `FFII_ScreenReaderMod.ToggleAutoDetail()` (flips the `AutoDetail` pref,
+  announces on/off); also a ModMenu "Announcements → Auto Detail" toggle. Pref defined in
+  `PreferencesManager` (`prefAutoDetail`, `AutoDetailEnabled`, `SaveToggle` case).
+- **Gating**: each focus handler announces a terse base by default and appends the detail
+  only when AutoDetail is on:
+  - Item menu (`ItemMenuPatches`): base "Name (qty)"; detail = description.
+  - Magic menu (`MagicMenuPatches.AnnounceSpell`): base "Name lvN, MP n"; detail = description.
+  - Equip slot panel (`EquipMenuPatches.EquipmentInfoWindowController_SelectContent_Postfix`):
+    base "Slot: Name"; detail = parameter message ("ATK +10") appended inline only when
+    AutoDetail is on. With it off, stats come from the I key / right stick up, which reads
+    the live stat panel via `EquipDetailsAnnouncer` (not the cache).
+  - Equip select (`EquipMenuPatches.EquipmentSelectWindowController_SelectContent_Postfix`):
+    base "Name"; detail = parameter change ("ATK +15") + description.
+  - Shop (`ShopPatches.AnnounceShopItem`): base "Name, Price"; detail = stats + description.
+- **On-demand (I key)**: `Core/MenuDetailCache` holds the focused item's detail string
+  (written by item/magic/equip handlers); `InputManager.HandleItemDetailsKey` announces it
+  when an item/magic/equip menu is active (else "No details"). Shop keeps its existing
+  `ShopDetailsAnnouncer` (reads `ShopMenuTracker.LastItemStats/Description`). So detail is
+  always reachable via I even with AutoDetail off.
+- **No U key**: FF1's U key announces "which classes can equip" — FF2 has no equip
+  restrictions (every character can equip everything), so it was intentionally not ported.
+
+## Announcement model: no central deduplicator (FF1 parity)
+
+The central `AnnouncementDeduplicator` + `AnnouncementContexts` were **deleted**. The mod no
+longer "decides when speech should fire" via a global cache — it announces whatever is in
+focus, driven by event hooks. `MenuStateHelper` keeps only IsActive/registry + reset-handler
+registration (no dedup).
+
+Rule (FF1): a hook that fires **once per user action** (SelectContent / SetCursor / SetFocus /
+SelectCommand / state-entry / per-hit battle event) announces **directly, no guard**. A hook the
+game calls **repeatedly / per-frame** keeps a **local single-slot value-or-index guard**, reset
+at the menu boundary. Local guards in FF2:
+- Shop: `_lastAnnouncedListIndex` (item list), `_lastCommandIndex` (command bar), `_lastQuantity`
+  (trade window) — re-armed at level boundaries, all cleared on shop close (`ResetGuards`).
+- Config sliders/arrows: `ConfigMenuState.ShouldAnnounce` + `lastSliderPercentage`/`lastArrowValue`
+  (already local — value-change detection).
+- Magic: `lastSpellId` / `lastCommandAnnouncement` / `lastTargetAnnouncement` (already local).
+- Popup (game-over): `_lastGameOverButtonIndex` / `_lastGameOverLoadButtonIndex`, reset on close.
+- Words browser: `WordsMenuState._lastIndex`.
+- Battle: damage `lastDamageAnnouncement`/`lastDamageTime`; message `_lastMessage`; action
+  `_lastActDataPtr` (native ptr); condition `_lastConditionByUnit` (per-unit ptr dict).
+- New-game naming: `lastTargetIndex` / `_lastNameAnnounced` / `_lastAutoIndex`.
+- Fade/scroll messages: `LocationMessageTracker` last-message guard.
+
+## Keyword "Ask" — state-gated, no dedup
+
+`SelectCommand_Postfix` is the **sole** command speaker — it fires on command-bar entry AND
+navigation, so it announces the initial "Ask" and each arrow. It's gated on `IsAtCommandBar`
+(state CommandSelect(1)/CommandSelecting(2)) so a cursor reset during term-select / menu-close
+stays silent. `CommandSelectEntry_Postfix` (hooked to `CommandSelectingInit`) only calls
+`SetActive()` to engage suppression on entry — it does NOT announce (announcing there too
+doubled the command, "ask ask", once the dedup was gone). Offsets `STATE_COMMAND_SELECT`/
+`STATE_COMMAND_SELECTING` added.
+
+## Hotkeys gated on window focus
+
+`WindowsFocusHelper.IsGameWindowFocused()` (cached `Process.MainWindowHandle` vs
+`GetForegroundWindow`, fail-open) gates the keyboard hotkey dispatch in `InputManager.CheckInput`,
+placed **after** the mod's own dialog/menu handlers (which may hold focus) and **before** the
+F-key/registered-binding block. Controller input and `IsFieldActive` are unaffected.

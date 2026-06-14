@@ -28,6 +28,7 @@ namespace FFII_ScreenReader.Field
         private readonly Vector3 position;
         private readonly WaypointCategory waypointCategory;
         private readonly string mapId;
+        private readonly int layer;
 
         public string WaypointId => waypointId;
         public string WaypointName => waypointName;
@@ -36,15 +37,23 @@ namespace FFII_ScreenReader.Field
 
         public Vector3 Position => position;
 
+        /// <summary>
+        /// Unity gameObject.layer captured from the player when the waypoint was created, used for
+        /// layer-aware pathfinding. -1 = unknown (legacy waypoints) → pathfinding falls back to the
+        /// brute-force destination-Z search.
+        /// </summary>
+        public int Layer => layer;
+
         public string Name => waypointName;
 
-        public WaypointEntity(string id, string name, Vector3 pos, string mapId, WaypointCategory category)
+        public WaypointEntity(string id, string name, Vector3 pos, string mapId, WaypointCategory category, int layer = -1)
         {
             this.waypointId = id;
             this.waypointName = name;
             this.position = pos;
             this.mapId = mapId;
             this.waypointCategory = category;
+            this.layer = layer;
         }
 
         /// <summary>

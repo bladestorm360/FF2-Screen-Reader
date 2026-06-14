@@ -6,7 +6,6 @@ using UnityEngine;
 using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.AnnouncementDeduplicator;
 using Il2CppLast.Management;
 using Il2CppLast.Battle;
 using Il2CppLast.Systems;
@@ -96,7 +95,7 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class BattleMagicMenuState
     {
-        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_MAGIC, AnnouncementContexts.BATTLE_MAGIC);
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.BATTLE_MAGIC);
 
         static BattleMagicMenuState()
         {
@@ -168,9 +167,6 @@ namespace FFII_ScreenReader.Patches
                 string announcement = TryGetAbilityAnnouncement(__instance, cursorIndex);
 
                 if (string.IsNullOrEmpty(announcement))
-                    return;
-
-                if (!ShouldAnnounce(AnnouncementContexts.BATTLE_MAGIC, announcement))
                     return;
 
                 // Set active state and clear other menus

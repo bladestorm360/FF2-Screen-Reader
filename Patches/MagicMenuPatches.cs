@@ -966,9 +966,10 @@ namespace FFII_ScreenReader.Patches
                     announcement += $", MP {mpCost}";
                 }
 
-                // Add description
+                // Description appended only when AutoDetail is on; cached for the I key.
                 string description = MagicMenuState.GetSpellDescription(ability);
-                if (!string.IsNullOrEmpty(description))
+                MenuDetailCache.Set(description);
+                if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrEmpty(description))
                 {
                     announcement += $": {description}";
                 }

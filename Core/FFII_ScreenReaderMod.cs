@@ -110,6 +110,9 @@ namespace FFII_ScreenReader.Core
             // Initialize external sound player for distinct audio feedback
             SoundPlayer.Initialize();
 
+            // Initialize SDL3 gamepad/keyboard input (must come after SoundPlayer.Initialize)
+            GamepadManager.Initialize();
+
             // EntityTranslator now uses embedded dictionary - no initialization needed
 
             // Initialize input manager with event-driven input handling
@@ -120,13 +123,13 @@ namespace FFII_ScreenReader.Core
             entityScanner = new EntityScanner();
             entityScanner.FilterToLayer = filterToLayer;
 
-            // Initialize audio loop manager
-            audioLoopManager = new AudioLoopManager(this);
-
-            // Initialize waypoint system
+            // Initialize waypoint system (must come before AudioLoopManager so beacon can read SelectedWaypoint)
             waypointManager = new WaypointManager();
             waypointNavigator = new WaypointNavigator(waypointManager);
             waypointController = new WaypointController(this, waypointManager, waypointNavigator);
+
+            // Initialize audio loop manager (needs waypointNavigator for beacon target tracking)
+            audioLoopManager = new AudioLoopManager(this, waypointNavigator);
 
             // Apply Harmony patches
             TryManualPatching();
@@ -201,6 +204,9 @@ namespace FFII_ScreenReader.Core
             // Patch keyword system (NPC dialogue and Words menu)
             KeywordPatches.ApplyPatches(harmony);
 
+            // Patch main field menu for initial-focus announcement
+            MainMenuPatches.ApplyPatches(harmony);
+
             // Patch popup dialogs (Yes/No confirmations)
             PopupPatches.ApplyPatches(harmony);
 
@@ -222,39 +228,8 @@ namespace FFII_ScreenReader.Core
             // Patch walk/run toggle (F1 key) for accurate state tracking
             DashFlagPatches.ApplyPatches(harmony);
 
-            // Patch entity interactions for event-driven entity refresh
-            TryPatchEntityInteractions(harmony);
-        }
-
-        /// <summary>
-        /// Patches entity interaction methods for event-driven entity scanner refresh.
-        /// Triggers rescan when treasure chests are opened or dialogue ends.
-        /// </summary>
-        private void TryPatchEntityInteractions(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                LoggerInstance.Msg("[EntityRefresh] Applying entity interaction patches...");
-
-                // Patch FieldTresureBox.Open() - triggers entity refresh when chest is opened
-                Type treasureBoxType = typeof(Il2CppLast.Entity.Field.FieldTresureBox);
-                var openMethod = treasureBoxType.GetMethod("Open", BindingFlags.Public | BindingFlags.Instance);
-                var openPostfix = typeof(ManualPatches).GetMethod("TreasureBox_Open_Postfix", BindingFlags.Public | BindingFlags.Static);
-
-                if (openMethod != null && openPostfix != null)
-                {
-                    harmony.Patch(openMethod, postfix: new HarmonyMethod(openPostfix));
-                    LoggerInstance.Msg("[EntityRefresh] Patched FieldTresureBox.Open for entity refresh");
-                }
-                else
-                {
-                    LoggerInstance.Warning($"[EntityRefresh] FieldTresureBox.Open not patched. Method: {openMethod != null}, Postfix: {openPostfix != null}");
-                }
-            }
-            catch (Exception ex)
-            {
-                LoggerInstance.Warning($"[EntityRefresh] Error patching entity interactions: {ex.Message}");
-            }
+            // Patch InputSystemManager for SDL controller passthrough and mod input suppression
+            InputPassthroughPatches.ApplyPatches(harmony);
         }
 
         /// <summary>
@@ -342,6 +317,9 @@ namespace FFII_ScreenReader.Core
             // Stop audio loops
             audioLoopManager?.StopWallToneLoop();
             audioLoopManager?.StopBeaconLoop();
+
+            // Shutdown SDL3 gamepad/keyboard subsystem
+            GamepadManager.Shutdown();
 
             // Shutdown sound player (closes waveOut handles, frees unmanaged memory)
             SoundPlayer.Shutdown();
@@ -458,14 +436,16 @@ namespace FFII_ScreenReader.Core
         /// Checks if player is on an active field map.
         /// Returns true if on valid map (ready for entity navigation), false otherwise.
         /// Prevents entity navigation on title screen, menus, loading screens.
+        /// When speakIfMissing is false, fails silently — used by waypoint/pathfinding
+        /// commands so they don't chatter on screens where they were never expected to work.
         /// </summary>
-        internal bool EnsureFieldContext()
+        internal bool EnsureFieldContext(bool speakIfMissing = true)
         {
             // Check if FieldMap exists and is active
             var fieldMap = GameObjectCache.Get<FieldMap>();
             if (fieldMap == null || !fieldMap.gameObject.activeInHierarchy)
             {
-                SpeakText(T("Not on map"));
+                if (speakIfMissing) SpeakText(T("Not on map"));
                 return false;
             }
 
@@ -473,7 +453,7 @@ namespace FFII_ScreenReader.Core
             var playerController = GameObjectCache.Get<FieldPlayerController>();
             if (playerController?.fieldPlayer == null)
             {
-                SpeakText(T("Not on map"));
+                if (speakIfMissing) SpeakText(T("Not on map"));
                 return false;
             }
 
@@ -484,6 +464,8 @@ namespace FFII_ScreenReader.Core
         {
             if (!EnsureFieldContext())
                 return;
+
+            NavigationTargetTracker.MarkEntity();
 
             try
             {
@@ -543,13 +525,38 @@ namespace FFII_ScreenReader.Core
                 // Get target position using localPosition
                 Vector3 targetPos = entity.Position;
 
+                // Route to the entity's real layer so a target stacked on another layer at the same
+                // X/Y is pathed to correctly (not mis-routed to the player's own layer).
+                int? targetLayer = (entity.GameEntity as Il2CppLast.Entity.Field.FieldEntity)?.gameObject.layer;
+
                 // Get path using the controller's mapHandle and fieldPlayer
                 var pathInfo = FieldNavigationHelper.FindPathTo(
                     playerPos,
                     targetPos,
                     playerController.mapHandle,
-                    playerController.fieldPlayer
+                    playerController.fieldPlayer,
+                    targetLayer
                 );
+
+                // [NavDiag] one line per \ press: player/entity positions + layers, crow-flies 3D
+                // distance, the real-layer dest cell (destCell.z now = entityLayer-9), and the path
+                // result. Logging only; announcement behavior is unchanged.
+                try
+                {
+                    int playerLayer = playerController.fieldPlayer.gameObject.layer;
+                    float crowDist = Vector3.Distance(playerPos, targetPos);
+                    LoggerInstance.Msg(
+                        $"[NavDiag] entity='{entity.Name}' " +
+                        $"playerPos=({playerPos.x:F1},{playerPos.y:F1},{playerPos.z:F1}) playerLayer={playerLayer} " +
+                        $"entityPos=({targetPos.x:F1},{targetPos.y:F1},{targetPos.z:F1}) entityLayer={targetLayer?.ToString() ?? "?"} " +
+                        $"crowDist={crowDist:F1} steps={crowDist / 16f:F1} " +
+                        $"startCell=({pathInfo.StartCell.x},{pathInfo.StartCell.y},{pathInfo.StartCell.z}) " +
+                        $"destCell=({pathInfo.DestCell.x},{pathInfo.DestCell.y},{pathInfo.DestCell.z}) " +
+                        $"map={pathInfo.MapWidth}x{pathInfo.MapHeight} " +
+                        $"success={pathInfo.Success} stepCount={pathInfo.StepCount} points={pathInfo.WorldPath?.Count ?? 0} " +
+                        $"err='{pathInfo.ErrorMessage}' desc='{pathInfo.Description}'");
+                }
+                catch { }
 
                 if (pathInfo.Success && !string.IsNullOrEmpty(pathInfo.Description))
                 {
@@ -565,6 +572,8 @@ namespace FFII_ScreenReader.Core
         {
             if (!EnsureFieldContext())
                 return;
+
+            NavigationTargetTracker.MarkEntity();
 
             try
             {
@@ -582,18 +591,7 @@ namespace FFII_ScreenReader.Core
                     return;
                 }
 
-                var playerPos = GetPlayerPosition();
-                if (playerPos.HasValue)
-                {
-                    string description = entity.FormatDescription(playerPos.Value);
-                    int index = entityScanner.CurrentIndex + 1;
-                    int total = entityScanner.Entities.Count;
-                    SpeakText($"{description}, {string.Format(T("{0} of {1}"), index, total)}");
-                }
-                else
-                {
-                    SpeakText(entity.Name);
-                }
+                SpeakText(FormatEntityListAnnouncement(entity));
             }
             catch (Exception ex)
             {
@@ -606,6 +604,8 @@ namespace FFII_ScreenReader.Core
         {
             if (!EnsureFieldContext())
                 return;
+
+            NavigationTargetTracker.MarkEntity();
 
             try
             {
@@ -623,18 +623,7 @@ namespace FFII_ScreenReader.Core
                     return;
                 }
 
-                var playerPos = GetPlayerPosition();
-                if (playerPos.HasValue)
-                {
-                    string description = entity.FormatDescription(playerPos.Value);
-                    int index = entityScanner.CurrentIndex + 1;
-                    int total = entityScanner.Entities.Count;
-                    SpeakText($"{description}, {string.Format(T("{0} of {1}"), index, total)}");
-                }
-                else
-                {
-                    SpeakText(entity.Name);
-                }
+                SpeakText(FormatEntityListAnnouncement(entity));
             }
             catch (Exception ex)
             {
@@ -672,35 +661,14 @@ namespace FFII_ScreenReader.Core
         }
 
         /// <summary>
-        /// Only scans entities if the list is empty.
-        /// Event-driven hooks (treasure chest open, dialogue end) handle state updates.
+        /// Delta-scans entities on every navigation input. The scanner handles map-change
+        /// detection (ForceRescan) internally via EnsureCorrectMap, and prunes deactivated
+        /// entities via IsAlive — so chest opens, dialogue ends, and event completions all
+        /// surface state changes on the next cycle without any eager-push hooks.
         /// </summary>
         private void RefreshEntitiesIfNeeded()
         {
-            if (entityScanner.Entities.Count == 0)
-            {
-                entityScanner.ScanEntities();
-            }
-        }
-
-        /// <summary>
-        /// Schedules an entity refresh after a 1-frame delay.
-        /// Called by interaction hooks (treasure chest, dialogue end) to update entity states.
-        /// The delay ensures the game state has fully updated before rescanning.
-        /// </summary>
-        internal void ScheduleEntityRefresh()
-        {
-            CoroutineManager.StartManaged(EntityRefreshCoroutine());
-        }
-
-        private IEnumerator EntityRefreshCoroutine()
-        {
-            // Wait one frame for game state to fully update
-            yield return null;
-
-            // Rescan entities to pick up state changes (e.g., chest opened)
             entityScanner.ScanEntities();
-            LoggerInstance.Msg("[EntityRefresh] Rescanned entities after interaction");
         }
 
         private Vector3? GetPlayerPosition()
@@ -727,6 +695,8 @@ namespace FFII_ScreenReader.Core
             if (!EnsureFieldContext())
                 return;
 
+            NavigationTargetTracker.MarkEntity();
+
             int nextCategory = ((int)currentCategory + 1) % CategoryCount;
             currentCategory = (EntityCategory)nextCategory;
             entityScanner.CurrentCategory = currentCategory;
@@ -737,6 +707,8 @@ namespace FFII_ScreenReader.Core
         {
             if (!EnsureFieldContext())
                 return;
+
+            NavigationTargetTracker.MarkEntity();
 
             int prevCategory = (int)currentCategory - 1;
             if (prevCategory < 0)
@@ -834,13 +806,58 @@ namespace FFII_ScreenReader.Core
             SpeakText(string.Format(T("Audio beacons {0}"), status));
         }
 
+        internal void ToggleAutoDetail()
+        {
+            bool newValue = !PreferencesManager.AutoDetailEnabled;
+            PreferencesManager.SaveToggle("AutoDetail", newValue);
+
+            string status = newValue ? T("on") : T("off");
+            SpeakText(string.Format(T("Auto detail {0}"), status));
+        }
+
+        internal void ToggleAnnounceOnBeaconRestart()
+        {
+            bool newValue = !PreferencesManager.AnnounceOnBeaconRestartEnabled;
+            PreferencesManager.SaveToggle("AnnounceOnBeaconRestart", newValue);
+
+            string status = newValue ? T("on") : T("off");
+            SpeakText(string.Format(T("Beacon destination announcement {0}"), status));
+        }
+
         // Accessors for audio feedback state (used by MovementSoundPatches)
         internal bool IsFootstepsEnabled() => enableFootsteps;
 
+        /// <summary>
+        /// Formats an entity exactly the way []-cycling announces it: description + "X of Y"
+        /// (falls back to the bare name when player position is unavailable).
+        /// </summary>
+        private string FormatEntityListAnnouncement(NavigableEntity entity)
+        {
+            var playerPos = GetPlayerPosition();
+            if (!playerPos.HasValue)
+                return entity.Name;
+
+            string description = entity.FormatDescription(playerPos.Value);
+            int index = entityScanner.CurrentIndex + 1;
+            int total = entityScanner.Entities.Count;
+            return $"{description}, {string.Format(T("{0} of {1}"), index, total)}";
+        }
+
         private void AnnounceCategoryChange()
         {
-            string categoryName = GetCategoryName(currentCategory);
-            SpeakText(string.Format(T("Category: {0}"), categoryName));
+            string categoryText = string.Format(T("Category: {0}"), GetCategoryName(currentCategory));
+            RefreshEntitiesIfNeeded();
+
+            var entity = entityScanner.CurrentEntity;
+            if (entity == null)
+            {
+                // No entity selected — just the category name (no "No entities found" here).
+                SpeakText(categoryText);
+                return;
+            }
+
+            // Entity selected — announce it the same as [] cycling, after the category name.
+            SpeakText($"{categoryText}, {FormatEntityListAnnouncement(entity)}");
         }
 
         public static string GetCategoryName(EntityCategory category)
@@ -865,6 +882,15 @@ namespace FFII_ScreenReader.Core
         {
             try
             {
+                // Field-only: a menu/battle overlay keeps the field loaded, so GetFieldPlayer()
+                // alone still succeeds and would move the player underneath the menu. Gate on the
+                // single source of truth so this covers BOTH controller mod mode and keyboard Ctrl+Arrow.
+                if (!ControllerRouter.IsFieldActive)
+                {
+                    SpeakText(T("Not available here"));
+                    return;
+                }
+
                 var player = GetFieldPlayer();
                 if (player == null)
                 {
@@ -1034,6 +1060,47 @@ namespace FFII_ScreenReader.Core
             IsInBattle = false;
         }
 
+        /// <summary>
+        /// Clears menu and popup flags after a map transition completes. Battle flags are
+        /// deliberately left alone (battle scene transitions don't change CurrentMapId, so
+        /// this never fires mid-battle). POPUP is cleared because some flows (game-over →
+        /// load, scene reset) dismiss popups without invoking the Close patch, leaking the
+        /// flag and silently blocking field navigation on the next map. Active flags are
+        /// logged pre-clear for diagnosis.
+        /// </summary>
+        public static void ClearMenuFlagsForMapTransition()
+        {
+            try
+            {
+                var stuck = MenuStateRegistry.GetActiveStates();
+                if (stuck.Count > 0)
+                    MelonLogger.Msg($"[MapTransition] Pre-clear active flags: {string.Join(",", stuck)}");
+
+                MenuStateRegistry.Reset(
+                    MenuStateRegistry.MAIN_MENU,
+                    MenuStateRegistry.CONFIG_MENU,
+                    MenuStateRegistry.EQUIP_MENU,
+                    MenuStateRegistry.ITEM_MENU,
+                    MenuStateRegistry.KEYWORD_MENU,
+                    MenuStateRegistry.WORDS_MENU,
+                    MenuStateRegistry.MAGIC_MENU,
+                    MenuStateRegistry.SAVE_LOAD_MENU,
+                    MenuStateRegistry.SHOP_MENU,
+                    MenuStateRegistry.STATUS_MENU,
+                    MenuStateRegistry.GALLERY,
+                    MenuStateRegistry.MUSIC_PLAYER,
+                    MenuStateRegistry.BESTIARY_LIST,
+                    MenuStateRegistry.BESTIARY_DETAIL,
+                    MenuStateRegistry.BESTIARY_FORMATION,
+                    MenuStateRegistry.BESTIARY_MAP,
+                    MenuStateRegistry.POPUP);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[MapTransition] Error clearing menu flags: {ex.Message}");
+            }
+        }
+
         #endregion
 
         /// <summary>
@@ -1042,8 +1109,48 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public static void SpeakText(string text, bool interrupt = true)
         {
-            tolk?.Speak(text, interrupt);
+            // Strip any leftover Unity rich-text / markup tags so they aren't read aloud.
+            tolk?.Speak(TextUtils.StripRichTextTags(text), interrupt);
         }
+
+        /// <summary>
+        /// Silences current speech immediately. Used by controller navigation
+        /// to interrupt ongoing announcements since NVDA doesn't see controller
+        /// input as key events.
+        /// </summary>
+        public static void InterruptSpeech()
+        {
+            try { tolk?.Silence(); } catch { }
+        }
+
+        /// <summary>
+        /// Forces the audio beacon to ping on its next loop iteration and clears
+        /// any silence latch. Called by pathfinding commands when beacon nav mode is on.
+        /// </summary>
+        internal void RestartBeacon()
+        {
+            audioLoopManager?.RestartBeacon();
+        }
+
+        /// <summary>
+        /// Re-target the beacon to the current entity. When the "beacon destination announcement"
+        /// toggle is on, also re-speaks the entity (same as cycling the list).
+        /// </summary>
+        internal void RestartEntityBeacon()
+        {
+            RestartBeacon();
+            if (AnnounceOnBeaconRestartEnabled) AnnounceEntityOnly();
+        }
+
+        /// <summary>
+        /// True if Stick Click Normalization is enabled (mod stick-click features move to mod mode).
+        /// </summary>
+        public static bool StickClickNormalizationEnabled => PreferencesManager.StickClickNormalization;
+
+        /// <summary>
+        /// True if restarting the beacon should also re-speak the current destination.
+        /// </summary>
+        public static bool AnnounceOnBeaconRestartEnabled => PreferencesManager.AnnounceOnBeaconRestartEnabled;
     }
 
     /// <summary>
@@ -1111,15 +1218,6 @@ namespace FFII_ScreenReader.Core
                 );
             }
             catch { }
-        }
-
-        /// <summary>
-        /// Postfix for FieldTresureBox.Open - triggers entity refresh when chest is opened.
-        /// Updates the entity scanner to reflect the chest's new opened state.
-        /// </summary>
-        public static void TreasureBox_Open_Postfix()
-        {
-            FFII_ScreenReaderMod.Instance?.ScheduleEntityRefresh();
         }
     }
 

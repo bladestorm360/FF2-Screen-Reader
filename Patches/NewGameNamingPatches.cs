@@ -21,10 +21,10 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class NewGameNamingPatches
     {
-        private const string CONTEXT_NAME = "NewGame.Name";
-        private const string CONTEXT_AUTO_INDEX = "NewGame.AutoNameIndex";
-        private const string CONTEXT_SELECTED = "NewGame.SelectedIndex";
-        private const string CONTEXT_SLOT_NAME = "NewGame.SlotName";
+        // Local value guards (replace the central deduplicator). The char-slot index
+        // reuses the existing lastTargetIndex field.
+        private static string _lastNameAnnounced = null;
+        private static int _lastAutoIndex = -1;
 
         // Reference to the current NewGameWindowController for accessing data
         private static object currentController = null;
@@ -161,7 +161,8 @@ namespace FFII_ScreenReader.Patches
 
                 // Reset tracking when entering character selection
                 // Don't pre-register any index - let first navigation announce correctly
-                AnnouncementDeduplicator.Reset(CONTEXT_NAME, CONTEXT_AUTO_INDEX, CONTEXT_SELECTED, CONTEXT_SLOT_NAME);
+                _lastNameAnnounced = null;
+                _lastAutoIndex = -1;
 
                 // Reset slot name tracking
                 lastSlotNames = new string[4];
@@ -218,8 +219,8 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                // Only announce if index changed
-                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_SELECTED, index))
+                // Only announce if the slot index changed
+                if (index == lastTargetIndex)
                 {
                     return;
                 }
@@ -331,7 +332,8 @@ namespace FFII_ScreenReader.Patches
                 currentController = __instance;
 
                 // Reset tracking
-                AnnouncementDeduplicator.Reset(CONTEXT_NAME, CONTEXT_AUTO_INDEX);
+                _lastNameAnnounced = null;
+                _lastAutoIndex = -1;
 
                 // Try to get CurrentData property which has CharacterName
                 string characterName = GetCurrentCharacterName(__instance);
@@ -352,7 +354,7 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrEmpty(suggestedName))
                 {
                     announcement += $". Current: {suggestedName}";
-                    AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_NAME, suggestedName);
+                    _lastNameAnnounced = suggestedName;
                 }
 
                 FFII_ScreenReaderMod.SpeakText(announcement);
@@ -369,10 +371,11 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 // Check if index changed
-                if (!AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_AUTO_INDEX, index))
+                if (index == _lastAutoIndex)
                 {
                     return;
                 }
+                _lastAutoIndex = index;
 
                 // Get the name at this index from stored NewGameWindowController
                 string currentName = null;
@@ -381,9 +384,9 @@ namespace FFII_ScreenReader.Patches
                     currentName = GetAutoNameByIndex(currentController, index);
                 }
 
-                if (!string.IsNullOrEmpty(currentName) &&
-                    AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_NAME, currentName))
+                if (!string.IsNullOrEmpty(currentName) && currentName != _lastNameAnnounced)
                 {
+                    _lastNameAnnounced = currentName;
                     FFII_ScreenReaderMod.SpeakText(currentName);
                 }
             }
@@ -523,7 +526,7 @@ namespace FFII_ScreenReader.Patches
                 if (autoNameIndexField != null)
                 {
                     int index = (int)autoNameIndexField.GetValue(controller);
-                    AnnouncementDeduplicator.ShouldAnnounce(CONTEXT_AUTO_INDEX, index);
+                    _lastAutoIndex = index;
                     return GetAutoNameByIndex(controller, index);
                 }
             }
