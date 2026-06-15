@@ -1,4 +1,30 @@
 {
+  "ワールドマップへ": {
+    "en": "To the World Map",
+    "fr": "Vers la carte du monde",
+    "it": "Verso la mappa del mondo",
+    "de": "Zur Weltkarte",
+    "es": "Al mapamundi",
+    "ko": "월드맵으로",
+    "zht": "前往世界地圖",
+    "zhc": "前往世界地图",
+    "ru": "К карте мира",
+    "th": "ไปยังแผนที่โลก",
+    "pt": "Para o mapa-múndi"
+  },
+  "ミシディアの塔上部コリジョン": {
+    "en": "Mysidia Tower Upper Collision",
+    "fr": "Collision supérieure de la tour de Mysidia",
+    "it": "Collisione superiore della Torre di Mysidia",
+    "de": "Obere Kollision des Mysidia-Turms",
+    "es": "Colisión superior de la Torre de Mysidia",
+    "ko": "미시디아 탑 상부 콜리전",
+    "zht": "密西迪亞之塔上部碰撞",
+    "zhc": "密西迪亚之塔上部碰撞",
+    "ru": "Верхняя коллизия башни Мисидии",
+    "th": "การชนส่วนบนของหอคอยมิซิเดีย",
+    "pt": "Colisão superior da Torre de Mysidia"
+  },
   "魔法陣": {
     "en": "Magic Circle",
     "fr": "Cercle magique",
@@ -63,6 +89,19 @@
     "ru": "Пол",
     "th": "พอล",
     "pt": "Paul"
+  },
+  "スコット": {
+    "en": "Scott",
+    "fr": "Scott",
+    "it": "Scott",
+    "de": "Scott",
+    "es": "Scott",
+    "ko": "스콧",
+    "zht": "史考特",
+    "zhc": "斯科特",
+    "ru": "Скотт",
+    "th": "สก็อตต์",
+    "pt": "Scott"
   },
   "ゴードン": {
     "en": "Gordon",
@@ -1142,6 +1181,19 @@
     "ru": "Проглоченный старец",
     "th": "ผู้อาวุโสที่ถูกกลืน",
     "pt": "Ancião Engolido"
+  },
+  "隠し通路": {
+    "en": "Hidden Passage",
+    "fr": "Passage secret",
+    "it": "Passaggio segreto",
+    "de": "Geheimgang",
+    "es": "Pasadizo secreto",
+    "ko": "숨겨진 통로",
+    "zht": "隱藏通道",
+    "zhc": "隐藏通道",
+    "ru": "Тайный ход",
+    "th": "ทางลับ",
+    "pt": "Passagem Secreta"
   },
   "隠し通路の蓋": {
     "en": "Hidden Passage Lid",

@@ -695,6 +695,11 @@ namespace FFII_ScreenReader.Field
                 "ミシディアA",
                 "ミシディアB",
                 "ミシディアC",
+
+                // Collision/event objects (dev triggers, not real interactables).
+                // Filtered for now; may be needed later for the ship-to-tower event.
+                // Translation is kept in translation.json in case it's reinstated.
+                "ミシディアの塔上部コリジョン",  // Mysidia Tower upper collision
             };
 
             foreach (var filter in exactFilters)
