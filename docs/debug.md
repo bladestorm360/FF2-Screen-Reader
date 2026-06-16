@@ -1,5 +1,35 @@
 # Implementation Details
 
+## FF1-parity pass (2026-06-16)
+
+- **Unreachable directions → "No path"** (`AnnounceCurrentEntity`): speaks `pathInfo.Description` or
+  bare `T("No path")` (no entity-name repeat); no-player-position → `T("Cannot determine directions")`.
+  Mirrors FF1. Beacon-vs-announce lives in the `\`/`P` key lambdas + `ControllerRouter`
+  (`RestartEntityBeacon` re-speaks the destination only when AnnounceOnBeaconRestart is on).
+- **Pathfinding filter "No reachable entities"**: `EntityScanner.NoReachableEntities()` (port of FF1)
+  + `CycleNext`/`CyclePrevious` announce `T("No reachable entities")` when the filter is on and
+  nothing in the category is reachable — instead of staying on/announcing an unreachable entity
+  (Castle Fynn Treasure Chests). Root cause: `MapRouteSearcher` only reads the static tile-collision
+  grid, not object colliders (a fence is a `FieldMapObjectDefault` BoxCollider2D), so fence-blocked
+  chests are correctly No-path; the cycle skip's "stay-put when none reachable" fallback was the bug.
+- **Keybinding FF1 parity** (`InputManager`): beacon toggle `Alpha9`→`F6` (field-gated; removed the
+  `9` toggle); added `P`+Ctrl = layer filter; `\`/`P` are beacon-aware (re-ping when beacon on, else
+  announce); removed the Status-screen `R` override (R = global repeat-dialogue); removed the `Alpha0`
+  debug dump + `EntityTranslator.DumpUntranslatedNames` + its JSON helpers (dead code).
+- **Manual rescan ` key** (`BackQuote`): `ForceEntityRescan()` rescans + speaks "Entity scan
+  complete" (or "Entity scanner not available"); map transitions use the new silent
+  `RescanEntitiesSilent()`.
+- **Escape dedup**: removed hardcoded `StartEscape_Postfix` ("Party escaped!"); the game's on-screen
+  escape text is read once via `SetMessage_Postfix`.
+- **Fence translation generalized**: `TrailingDigitsRegex` now matches full-width digits
+  (`[0-9０-９]+$`) and `StripTrailingDigits` normalizes the suffix to ASCII, so a single `柵`→"Fence"
+  entry yields "Fence N" for every `柵N` (per-fence `柵３`/`柵５` entries removed).
+- **Entity scanning parity (audited, already aligned)**: live delta scan (remove-gone, prune-dead via
+  `IsAlive`, convert-new every cycle), event-driven map-transition rescan (`ChangeState_Postfix`), no
+  OnEventEnd/chest/dialogue rescan hooks. FF1's `IsEntityOnCurrentMap` map-asset filter intentionally
+  NOT ported — FF2's `GetAllFieldEntities` reads the current `FieldController.entityList` (already
+  current-map-scoped), so the extra per-scan check would be redundant.
+
 ## Architecture
 
 ```
@@ -677,14 +707,13 @@ Ported from FF1 screen reader. Translates Japanese entity names to English using
 ```
 EntityTranslator.cs (Utils/)
 ├── Initialize() - loads FF2_translations.json from UserData/FFII_ScreenReader/
-├── Translate(name) - exact match → prefix-stripped match → track untranslated
-└── DumpUntranslatedNames() - writes EntityNames.json grouped by map
+└── Translate(name) - exact match → prefix-stripped match → original
 ```
 
 ### Translation Lookup
 1. Exact match in translations dictionary (includes circled number prefixes like ①②③)
 2. Strip numeric/SC prefix (e.g., "6:" or "SC01:"), lookup base name
-3. No match → track as untranslated for current map (if contains Japanese characters)
+3. No match → return original Japanese
 
 ### Circled Number Prefixes (2026-02-05)
 The game uses circled Unicode numbers (①②③...⑫) to distinguish multiple instances of the same NPC type. These are NOT stripped by `EntityPrefixRegex` (which only matches `^((?:SC)?\d+:)` patterns).
@@ -701,12 +730,10 @@ All prefixed entries map to the same English translation as the base name.
 ### Integration Points
 - `EntityScanner.GetEntityNameFromProperty()` - 2 return points wrapped with `Translate()`
 - `EntityScanner.GetNpcDisplayName()` - 2 return points wrapped with `Translate()`
-- `InputManager.HandleGlobalInput()` - `0` key triggers `DumpUntranslatedNames()`
 
 ### Files
 - `FFII_translations.json` (project root) - translation dictionary source (version controlled)
 - `UserData/FFII_ScreenReader/FF2_translations.json` - runtime copy (~209 translations including prefixed variants)
-- `UserData/FFII_ScreenReader/EntityNames.json` - dumped untranslated names by map
 
 ### Hotkey
 | Key | Action |

@@ -57,7 +57,6 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.Status, StatusNavigationReader.JumpToBottom, "Jump to last stat");
             registry.Register(KeyCode.DownArrow, KeyModifier.Shift, KeyContext.Status, StatusNavigationReader.JumpToNextGroup, "Jump to next stat group");
             registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.Status, StatusNavigationReader.NavigateNext, "Next stat");
-            registry.Register(KeyCode.R, KeyContext.Status, StatusNavigationReader.ReadCurrentStat, "Repeat current stat");
 
             // --- Field: entity navigation (brackets + backslash) -- with battle feedback ---
             RegisterFieldWithBattleFeedback(KeyCode.LeftBracket, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category");
@@ -66,7 +65,15 @@ namespace FFII_ScreenReader.Core
             RegisterFieldWithBattleFeedback(KeyCode.RightBracket, KeyModifier.None, mod.CycleNext, "Next entity");
             RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter");
             RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter");
-            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.None, mod.AnnounceCurrentEntity, "Announce current entity");
+            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.None, () =>
+            {
+                NavigationTargetTracker.MarkEntity();
+                if (PreferencesManager.AudioBeaconsEnabled) mod.RestartEntityBeacon();
+                else mod.AnnounceCurrentEntity();
+            }, "Announce current entity / restart beacon");
+
+            // --- Field: manual entity rescan (backtick) ---
+            RegisterFieldWithBattleFeedback(KeyCode.BackQuote, KeyModifier.None, mod.ForceEntityRescan, "Force entity rescan");
 
             // --- Field: alternate keys (J/K/L/P) -- with battle feedback ---
             RegisterFieldWithBattleFeedback(KeyCode.J, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category (alt)");
@@ -74,8 +81,14 @@ namespace FFII_ScreenReader.Core
             RegisterFieldWithBattleFeedback(KeyCode.K, KeyModifier.None, mod.AnnounceEntityOnly, "Announce entity name (alt)");
             RegisterFieldWithBattleFeedback(KeyCode.L, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category (alt)");
             RegisterFieldWithBattleFeedback(KeyCode.L, KeyModifier.None, mod.CycleNext, "Next entity (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter (alt)");
             RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.None, mod.AnnounceCurrentEntity, "Announce current entity (alt)");
+            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.None, () =>
+            {
+                NavigationTargetTracker.MarkEntity();
+                if (PreferencesManager.AudioBeaconsEnabled) mod.RestartEntityBeacon();
+                else mod.AnnounceCurrentEntity();
+            }, "Announce current entity / restart beacon (alt)");
 
             // --- Field: waypoint keys ---
             registry.Register(KeyCode.Comma, KeyModifier.Shift, KeyContext.Field, mod.WaypointCyclePreviousCategory, "Previous waypoint category");
@@ -102,8 +115,6 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, KeyHelpReader.AnnounceKeyHelp, "Announce visible controls");
             registry.Register(KeyCode.I, KeyModifier.None, KeyContext.Global, HandleItemDetailsKey, "Item details / config tooltip");
             // R repeats the current dialogue page (silent when no message window is open).
-            // The Status context registers its own R (repeat current stat) above; the
-            // registry prefers the more-specific Status binding on the status screen.
             registry.Register(KeyCode.R, KeyModifier.None, KeyContext.Global, HandleRepeatDialogueKey, "Repeat dialogue");
 
             // --- Battle-only: character status ---
@@ -112,15 +123,12 @@ namespace FFII_ScreenReader.Core
             // --- Field-only toggles (blocked in battle with feedback) ---
             RegisterFieldWithBattleFeedback(KeyCode.Quote, KeyModifier.None, mod.ToggleFootsteps, "Toggle footsteps");
             RegisterFieldWithBattleFeedback(KeyCode.Semicolon, KeyModifier.None, mod.ToggleWallTones, "Toggle wall tones");
-            RegisterFieldWithBattleFeedback(KeyCode.Alpha9, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
+            RegisterFieldWithBattleFeedback(KeyCode.F6, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
 
             // --- Field-only category shortcuts ---
             RegisterFieldWithBattleFeedback(KeyCode.K, KeyModifier.Shift, mod.ResetToAllCategory, "Reset to All category");
             RegisterFieldWithBattleFeedback(KeyCode.Equals, KeyModifier.None, mod.CycleNextCategory, "Next entity category (global)");
             RegisterFieldWithBattleFeedback(KeyCode.Minus, KeyModifier.None, mod.CyclePreviousCategory, "Previous entity category (global)");
-
-            // --- Debug: dump untranslated entity names ---
-            registry.Register(KeyCode.Alpha0, KeyContext.Global, DumpUntranslatedEntityNames, "Dump untranslated entity names");
 
             // Sort for correct modifier precedence
             registry.FinalizeRegistration();
@@ -484,19 +492,6 @@ namespace FFII_ScreenReader.Core
             catch { }
 
             return null;
-        }
-
-        private void DumpUntranslatedEntityNames()
-        {
-            try
-            {
-                string result = EntityTranslator.DumpUntranslatedNames();
-                FFII_ScreenReaderMod.SpeakText(result, true);
-            }
-            catch
-            {
-                FFII_ScreenReaderMod.SpeakText(T("Failed to dump entity names"), true);
-            }
         }
 
         /// <summary>

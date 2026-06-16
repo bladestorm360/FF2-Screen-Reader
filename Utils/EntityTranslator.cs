@@ -28,11 +28,6 @@ namespace FFII_ScreenReader.Utils
         private static string cachedLanguageCode = "en";
         private static bool hasLoggedLanguage = false;
 
-        private static string translationsPath; // Needed for dump functionality
-
-        // Track untranslated names by map for dumping
-        private static Dictionary<string, HashSet<string>> untranslatedNamesByMap = new Dictionary<string, HashSet<string>>();
-
         private static readonly Dictionary<int, string> LanguageCodeMap = new()
         {
             {1,"ja"},{2,"en"},{3,"fr"},{4,"it"},{5,"de"},{6,"es"},
@@ -44,9 +39,10 @@ namespace FFII_ScreenReader.Utils
             @"^((?:SC\s*E?\s*)?\d+:)",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-        // Matches trailing ASCII digits (not circled numbers like ①②③)
+        // Matches trailing ASCII or full-width digits (not circled numbers like ①②③).
+        // Full-width (U+FF10–FF19) is normalized to ASCII in StripTrailingDigits.
         private static readonly Regex TrailingDigitsRegex = new Regex(
-            @"([0-9]+)$",
+            @"([0-9０-９]+)$",
             RegexOptions.Compiled);
 
         // Matches a single leading circled number ①-⑨ (U+2460..U+2468). The game uses
@@ -125,7 +121,7 @@ namespace FFII_ScreenReader.Utils
         /// <summary>
         /// Translates a Japanese entity name to the current game language.
         /// Returns original name if no translation found.
-        /// Handles prefixes and trailing ASCII number suffixes.
+        /// Handles prefixes and trailing ASCII and full-width number suffixes.
         /// Skips translation entirely when the game language is Japanese.
         /// </summary>
         public static string Translate(string japaneseName)
@@ -214,19 +210,6 @@ namespace FFII_ScreenReader.Utils
                 }
             }
 
-            // 7. Track untranslated name by current map (use base name to deduplicate)
-            string trackingName = baseName ?? japaneseName;
-            if (ContainsJapanese(trackingName))
-            {
-                string mapName = MapNameResolver.GetCurrentMapName();
-                if (!string.IsNullOrEmpty(mapName))
-                {
-                    if (!untranslatedNamesByMap.ContainsKey(mapName))
-                        untranslatedNamesByMap[mapName] = new HashSet<string>();
-                    untranslatedNamesByMap[mapName].Add(trackingName);
-                }
-            }
-
             // Return original if no translation
             return japaneseName;
         }
@@ -307,90 +290,18 @@ namespace FFII_ScreenReader.Utils
             Match match = TrailingDigitsRegex.Match(name);
             if (match.Success)
             {
-                suffix = match.Groups[1].Value;
-                baseName = name.Substring(0, name.Length - suffix.Length);
+                string raw = match.Groups[1].Value;
+                baseName = name.Substring(0, name.Length - raw.Length);
+                // Normalize full-width digits (U+FF10–FF19) to ASCII so "柵３" reads "Fence 3".
+                var norm = new StringBuilder(raw.Length);
+                foreach (char ch in raw)
+                    norm.Append(ch >= '０' && ch <= '９' ? (char)('0' + (ch - '０')) : ch);
+                suffix = norm.ToString();
             }
             else
             {
                 suffix = null;
                 baseName = name;
-            }
-        }
-
-        /// <summary>
-        /// Dumps untranslated entity names for the current map to EntityNames.json.
-        /// Appends by map name with duplicate detection.
-        /// Returns a status string for TTS feedback.
-        /// </summary>
-        public static string DumpUntranslatedNames()
-        {
-            try
-            {
-                string currentMap = MapNameResolver.GetCurrentMapName();
-                if (string.IsNullOrEmpty(currentMap))
-                    return "Could not determine current map.";
-
-                // Build path for dump file
-                EnsureTranslationsPath();
-                string dumpPath = Path.Combine(
-                    Path.GetDirectoryName(translationsPath),
-                    "EntityNames.json"
-                );
-
-                // Load existing data from file
-                var existingData = new Dictionary<string, Dictionary<string, string>>();
-                if (File.Exists(dumpPath))
-                {
-                    string existingJson = File.ReadAllText(dumpPath);
-                    existingData = ParseNestedJsonDump(existingJson);
-                }
-
-                // Check if map already exists in file
-                if (existingData.ContainsKey(currentMap))
-                    return "Entity data already exists for this map.";
-
-                // Check if we have untranslated names for this map
-                if (!untranslatedNamesByMap.ContainsKey(currentMap) || untranslatedNamesByMap[currentMap].Count == 0)
-                    return "No untranslated names for this map.";
-
-                // Add current map's names to data
-                var mapNames = new Dictionary<string, string>();
-                foreach (string name in untranslatedNamesByMap[currentMap])
-                {
-                    mapNames[name] = "";
-                }
-                existingData[currentMap] = mapNames;
-
-                // Write nested JSON
-                WriteNestedJson(dumpPath, existingData);
-
-                int count = mapNames.Count;
-                return $"Dumped {count} names for {currentMap}";
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[EntityTranslator] Failed to save EntityNames.json: {ex.Message}");
-                return "Failed to dump entity names.";
-            }
-        }
-
-        /// <summary>
-        /// Ensures the translations path is set for dump functionality.
-        /// </summary>
-        private static void EnsureTranslationsPath()
-        {
-            if (!string.IsNullOrEmpty(translationsPath))
-                return;
-
-            string gameDataPath = Application.dataPath;
-            string gameRoot = Path.GetDirectoryName(gameDataPath);
-            string userDataPath = Path.Combine(gameRoot, "UserData", "FFII_ScreenReader");
-            translationsPath = Path.Combine(userDataPath, "FF2_translations.json");
-
-            // Create directory if needed
-            if (!Directory.Exists(userDataPath))
-            {
-                Directory.CreateDirectory(userDataPath);
             }
         }
 
@@ -516,85 +427,6 @@ namespace FFII_ScreenReader.Utils
                 }
             }
             return sb.ToString();
-        }
-
-        // ─────────────────────────────────────────────
-        //  Dump-specific JSON parsing (flat nested for EntityNames.json)
-        // ─────────────────────────────────────────────
-
-        /// <summary>
-        /// Parses nested JSON for dump files: { "MapName": { "Japanese": "", ... }, ... }
-        /// </summary>
-        private static Dictionary<string, Dictionary<string, string>> ParseNestedJsonDump(string json)
-        {
-            var result = new Dictionary<string, Dictionary<string, string>>();
-
-            if (string.IsNullOrWhiteSpace(json))
-                return result;
-
-            json = json.Trim();
-            if (!json.StartsWith("{") || !json.EndsWith("}"))
-                return result;
-
-            string inner = json.Substring(1, json.Length - 2).Trim();
-            if (string.IsNullOrEmpty(inner))
-                return result;
-
-            int pos = 0;
-            while (pos < inner.Length)
-            {
-                int keyStart = inner.IndexOf('"', pos);
-                if (keyStart < 0) break;
-
-                int keyEnd = FindClosingQuote(inner, keyStart + 1);
-                if (keyEnd < 0) break;
-
-                string mapKey = UnescapeJsonString(inner.Substring(keyStart + 1, keyEnd - keyStart - 1));
-
-                int braceStart = inner.IndexOf('{', keyEnd);
-                if (braceStart < 0) break;
-
-                int braceEnd = FindMatchingBrace(inner, braceStart);
-                if (braceEnd < 0) break;
-
-                string mapJson = inner.Substring(braceStart + 1, braceEnd - braceStart - 1);
-                result[mapKey] = ParseStringDictionary(mapJson);
-
-                pos = braceEnd + 1;
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Writes a nested dictionary as formatted JSON to a file.
-        /// </summary>
-        private static void WriteNestedJson(string path, Dictionary<string, Dictionary<string, string>> data)
-        {
-            using (var writer = new StreamWriter(path, false, System.Text.Encoding.UTF8))
-            {
-                writer.WriteLine("{");
-                var mapKeys = new List<string>(data.Keys);
-                for (int m = 0; m < mapKeys.Count; m++)
-                {
-                    string mapKey = mapKeys[m];
-                    string escapedMapKey = mapKey.Replace("\\", "\\\\").Replace("\"", "\\\"");
-                    writer.WriteLine($"  \"{escapedMapKey}\": {{");
-
-                    var names = new List<string>(data[mapKey].Keys);
-                    for (int n = 0; n < names.Count; n++)
-                    {
-                        string escapedName = names[n].Replace("\\", "\\\\").Replace("\"", "\\\"");
-                        string escapedValue = data[mapKey][names[n]].Replace("\\", "\\\\").Replace("\"", "\\\"");
-                        string comma = (n < names.Count - 1) ? "," : "";
-                        writer.WriteLine($"    \"{escapedName}\": \"{escapedValue}\"{comma}");
-                    }
-
-                    string mapComma = (m < mapKeys.Count - 1) ? "," : "";
-                    writer.WriteLine($"  }}{mapComma}");
-                }
-                writer.WriteLine("}");
-            }
         }
 
         /// <summary>

@@ -1,4 +1,30 @@
 {
+  "柵": {
+    "en": "Fence",
+    "fr": "Clôture",
+    "it": "Recinto",
+    "de": "Zaun",
+    "es": "Valla",
+    "ko": "울타리",
+    "zht": "柵欄",
+    "zhc": "栅栏",
+    "ru": "Забор",
+    "th": "รั้ว",
+    "pt": "Cerca"
+  },
+  "ワールドマップ": {
+    "en": "World Map",
+    "fr": "Carte du monde",
+    "it": "Mappa del mondo",
+    "de": "Weltkarte",
+    "es": "Mapamundi",
+    "ko": "월드맵",
+    "zht": "世界地圖",
+    "zhc": "世界地图",
+    "ru": "Карта мира",
+    "th": "แผนที่โลก",
+    "pt": "Mapa-múndi"
+  },
   "ワールドマップへ": {
     "en": "To the World Map",
     "fr": "Vers la carte du monde",

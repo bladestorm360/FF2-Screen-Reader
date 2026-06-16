@@ -157,18 +157,6 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("[BattleMessage] Could not find StartPreeMptiveMes method");
                 }
 
-                // Patch BattleController.StartEscape for escape announcements
-                var startEscapeMethod = AccessTools.Method(typeof(BattleController), "StartEscape");
-                if (startEscapeMethod != null)
-                {
-                    var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(StartEscape_Postfix));
-                    harmony.Patch(startEscapeMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Error("[BattleMessage] Could not find StartEscape method");
-                }
-
                 // Patch PoisonConditionFunction.GeneratePoisonDamage for poison damage source tracking
                 var poisonType = AccessTools.TypeByName("Il2CppLast.Battle.PoisonConditionFunction");
                 if (poisonType != null)
@@ -811,23 +799,6 @@ namespace FFII_ScreenReader.Patches
                 {
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
-            }
-            catch { }
-        }
-
-        #endregion
-
-        #region StartEscape - Escape Announcements
-
-        /// <summary>
-        /// Postfix for BattleController.StartEscape - announces party escape.
-        /// </summary>
-        public static void StartEscape_Postfix()
-        {
-            try
-            {
-                string announcement = "Party escaped!";
-                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch { }
         }

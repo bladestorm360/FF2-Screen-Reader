@@ -422,9 +422,23 @@ namespace FFII_ScreenReader.Core
         }
 
         /// <summary>
-        /// Forces an entity rescan. Called from GameStatePatches on map transitions.
+        /// Manual entity rescan (backtick key) — rescans and announces, mirroring FF1.
         /// </summary>
         public void ForceEntityRescan()
+        {
+            if (entityScanner == null)
+            {
+                SpeakText(T("Entity scanner not available"), interrupt: true);
+                return;
+            }
+            entityScanner.ForceRescan();
+            SpeakText(T("Entity scan complete"), interrupt: true);
+        }
+
+        /// <summary>
+        /// Silent entity rescan for map transitions (no announcement). Called from GameStatePatches.
+        /// </summary>
+        public void RescanEntitiesSilent()
         {
             entityScanner?.ForceRescan();
         }
@@ -471,32 +485,22 @@ namespace FFII_ScreenReader.Core
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
-                    SpeakText(T("No entities found"));
+                    SpeakText(T("No entity selected"));
                     return;
                 }
 
                 var playerPos = GetPlayerPosition();
                 if (!playerPos.HasValue)
                 {
-                    SpeakText(entity.Name);
+                    SpeakText(T("Cannot determine directions"));
                     return;
                 }
 
-                // Get pathfinding info using dedicated method (like FF3)
+                // Directions when reachable, otherwise "No path" (matches FF1). Destination-repeat
+                // only happens via the beacon path (the \/P key lambda and ControllerRouter call
+                // RestartEntityBeacon when beacon nav is on), never here.
                 string pathDescription = GetPathToEntity(entity, playerPos.Value);
-
-                string announcement;
-                if (!string.IsNullOrEmpty(pathDescription))
-                {
-                    // Only announce directions, not entity name
-                    announcement = pathDescription;
-                }
-                else
-                {
-                    announcement = entity.FormatDescription(playerPos.Value);
-                }
-
-                SpeakText(announcement);
+                SpeakText(!string.IsNullOrEmpty(pathDescription) ? pathDescription : T("No path"));
             }
             catch (Exception ex)
             {
@@ -583,6 +587,12 @@ namespace FFII_ScreenReader.Core
                 entityScanner.FilterByPathfinding = filterByPathfinding;
                 entityScanner.NextEntity();
 
+                if (entityScanner.NoReachableEntities())
+                {
+                    SpeakText(T("No reachable entities"));
+                    return;
+                }
+
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
@@ -614,6 +624,12 @@ namespace FFII_ScreenReader.Core
                 entityScanner.CurrentCategory = currentCategory;
                 entityScanner.FilterByPathfinding = filterByPathfinding;
                 entityScanner.PreviousEntity();
+
+                if (entityScanner.NoReachableEntities())
+                {
+                    SpeakText(T("No reachable entities"));
+                    return;
+                }
 
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
@@ -853,16 +869,25 @@ namespace FFII_ScreenReader.Core
         {
             string categoryText = string.Format(T("Category: {0}"), GetCategoryName(currentCategory));
             RefreshEntitiesIfNeeded();
+            entityScanner.FilterByPathfinding = filterByPathfinding;
 
-            var entity = entityScanner.CurrentEntity;
-            if (entity == null)
+            // Obey the pathfinding filter: select the nearest reachable entity. If none are reachable
+            // (or the category is empty), treat the category as empty — announce only its name (the
+            // "No reachable entities" message is reserved for []-cycling).
+            if (!entityScanner.SelectFirstReachable())
             {
-                // No entity selected — just the category name (no "No entities found" here).
                 SpeakText(categoryText);
                 return;
             }
 
-            // Entity selected — announce it the same as [] cycling, after the category name.
+            var entity = entityScanner.CurrentEntity;
+            if (entity == null)
+            {
+                SpeakText(categoryText);
+                return;
+            }
+
+            // Announce the (reachable) entity the same as [] cycling, after the category name.
             SpeakText($"{categoryText}, {FormatEntityListAnnouncement(entity)}");
         }
 

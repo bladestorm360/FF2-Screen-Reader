@@ -449,6 +449,52 @@ namespace FFII_ScreenReader.Field
         }
 
         /// <summary>
+        /// Returns true if the pathfinding filter is enabled and no entity in the current list has a
+        /// valid path. Lets cycling announce "No reachable entities" instead of an unreachable one
+        /// (matches FF1). Early-exits as soon as one reachable entity is found.
+        /// </summary>
+        public bool NoReachableEntities()
+        {
+            if (!pathfindingFilter.IsEnabled || filteredEntities.Count == 0)
+                return false;
+
+            var context = new FilterContext();
+            foreach (var entity in filteredEntities)
+            {
+                if (pathfindingFilter.PassesFilter(entity, context))
+                    return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// When the pathfinding filter is on, advances the selection to the first reachable entity,
+        /// searching from the current index (inclusive) and wrapping; returns false if none are
+        /// reachable. When the filter is off, leaves the selection unchanged and returns whether the
+        /// list is non-empty. Used by category-change so it lands on / announces a reachable entity.
+        /// </summary>
+        public bool SelectFirstReachable()
+        {
+            if (filteredEntities.Count == 0)
+                return false;
+            if (!pathfindingFilter.IsEnabled)
+                return true;
+
+            var context = new FilterContext();
+            for (int i = 0; i < filteredEntities.Count; i++)
+            {
+                int idx = (currentIndex + i) % filteredEntities.Count;
+                if (pathfindingFilter.PassesFilter(filteredEntities[idx], context))
+                {
+                    currentIndex = idx;
+                    SaveSelectedEntityIdentifier();
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Converts a FieldEntity to a NavigableEntity.
         /// Order matters - check specific types before generic ones.
         /// </summary>

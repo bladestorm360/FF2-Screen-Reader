@@ -21,7 +21,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 | Field Navigation | ✓ | Entity scan, pathfinding, wall bump, vehicles, wall tones, footsteps, audio beacons |
 | Waypoint System | ✓ | Add/rename/delete waypoints, category filtering, single-confirm clear all (FF1 model) |
 | Mod Menu | ✓ | Windowless (no focus stealing); field-only gating; FF1 layout; Beacon Destination Announcement toggle |
-| Entity Translation | ✓ | Japanese→English name translation, circled number prefixes (①②③...), untranslated name dumping (`0` key) |
+| Entity Translation | ✓ | Japanese→English name translation, circled number prefixes (①②③...), full-width trailing-digit strip/append (柵N→"Fence N") |
 | Title Menu | ✓ | New Game, Continue, Options |
 | Popup Dialogs | ✓ | All types: confirmations, game over, title screen |
 | Save/Load | ✓ | Slot info, confirmations, quicksave |

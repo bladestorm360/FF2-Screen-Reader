@@ -130,8 +130,9 @@ namespace FFII_ScreenReader.Patches
                     // Clear vehicle type map so it gets repopulated with new map's vehicles
                     FieldNavigationHelper.ResetTransportationDebug();
 
-                    // Force entity rescan to clear stale entities from previous map
-                    FFII_ScreenReaderMod.Instance?.ForceEntityRescan();
+                    // Force entity rescan to clear stale entities from previous map (silent —
+                    // ForceEntityRescan now announces and is reserved for the manual ` key).
+                    FFII_ScreenReaderMod.Instance?.RescanEntitiesSilent();
                 }
                 else if (lastAnnouncedMapId == -1)
                 {
