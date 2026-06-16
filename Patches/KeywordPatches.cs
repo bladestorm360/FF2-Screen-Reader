@@ -564,6 +564,20 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
+        /// Standard AutoDetail behavior for keyword/item entries: cache the description for
+        /// the I key, and only append it inline when AutoDetail is on (mirrors Magic/Item menus).
+        /// </summary>
+        private static string ComposeKeywordAnnouncement(string name, string description)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            description = string.IsNullOrWhiteSpace(description) ? null : description;
+            MenuDetailCache.Set(description);
+            if (PreferencesManager.AutoDetailEnabled && description != null)
+                return $"{name}: {description}";
+            return name;
+        }
+
+        /// <summary>
         /// Formats keyword data as "keyword: description" or just "keyword".
         /// </summary>
         private static string FormatKeywordAnnouncement(SelectFieldContentData data)
@@ -591,14 +605,7 @@ namespace FFII_ScreenReader.Patches
                     description = TextUtils.StripIconMarkup(messageManager.GetMessage(descMessageId, false));
                 }
 
-                if (!string.IsNullOrEmpty(name))
-                {
-                    if (!string.IsNullOrEmpty(description))
-                    {
-                        return $"{name}: {description}";
-                    }
-                    return name;
-                }
+                return ComposeKeywordAnnouncement(name, description);
             }
             catch { }
 
@@ -665,13 +672,9 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrEmpty(name))
                 {
                     name = TextUtils.StripIconMarkup(name);
-
                     if (!string.IsNullOrEmpty(description))
-                    {
                         description = TextUtils.StripIconMarkup(description);
-                        return $"{name}: {description}";
-                    }
-                    return name;
+                    return ComposeKeywordAnnouncement(name, description);
                 }
             }
             catch { }
@@ -757,7 +760,7 @@ namespace FFII_ScreenReader.Patches
                         // Fallback to just the name from the UI if dictionary lookup fails
                         string fallbackName = contentItem.Name;
                         if (!string.IsNullOrEmpty(fallbackName))
-                            return TextUtils.StripIconMarkup(fallbackName);
+                            return ComposeKeywordAnnouncement(TextUtils.StripIconMarkup(fallbackName), null);
                         return null;
                     }
 
@@ -781,14 +784,7 @@ namespace FFII_ScreenReader.Patches
                         description = TextUtils.StripIconMarkup(messageManager.GetMessage(descMessageId, false));
                     }
 
-                    if (!string.IsNullOrEmpty(name))
-                    {
-                        if (!string.IsNullOrEmpty(description))
-                        {
-                            return $"{name}: {description}";
-                        }
-                        return name;
-                    }
+                    return ComposeKeywordAnnouncement(name, description);
                 }
             }
             catch { }
@@ -836,12 +832,7 @@ namespace FFII_ScreenReader.Patches
 
                     // Try to get description from the view's descriptionText
                     string description = GetWordsTouchDescription(controller);
-                    if (!string.IsNullOrEmpty(description))
-                    {
-                        return $"{name}: {description}";
-                    }
-
-                    return name;
+                    return ComposeKeywordAnnouncement(name, description);
                 }
             }
             catch { }

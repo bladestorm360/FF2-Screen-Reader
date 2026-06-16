@@ -921,11 +921,17 @@ item/magic/equip/shop focus announcements include the description/stats inline.
   - Equip select (`EquipMenuPatches.EquipmentSelectWindowController_SelectContent_Postfix`):
     base "Name"; detail = parameter change ("ATK +15") + description.
   - Shop (`ShopPatches.AnnounceShopItem`): base "Name, Price"; detail = stats + description.
+  - Keyword menus (`KeywordPatches`): NPC Ask/Learn/Key Items and the main-menu Words browser
+    (KeyInput + Touch). All four formatters (`FormatKeywordAnnouncement`,
+    `FormatItemAnnouncement`, `GetWordsKeywordFromDictionary`, `GetWordsTouchKeywordAtIndex`)
+    funnel through one helper `ComposeKeywordAnnouncement(name, description)` that caches the
+    description and appends it inline only when AutoDetail is on. Base "Name"; detail = description.
 - **On-demand (I key)**: `Core/MenuDetailCache` holds the focused item's detail string
-  (written by item/magic/equip handlers); `InputManager.HandleItemDetailsKey` announces it
-  when an item/magic/equip menu is active (else "No details"). Shop keeps its existing
-  `ShopDetailsAnnouncer` (reads `ShopMenuTracker.LastItemStats/Description`). So detail is
-  always reachable via I even with AutoDetail off.
+  (written by item/magic/equip/keyword handlers); `InputManager.HandleItemDetailsKey` announces it
+  when an item/magic/equip/keyword (`KeywordMenuState`/`WordsMenuState`) menu is active (else
+  "No details"). Shop keeps its existing `ShopDetailsAnnouncer` (reads
+  `ShopMenuTracker.LastItemStats/Description`). So detail is always reachable via I even with
+  AutoDetail off.
 - **No U key**: FF1's U key announces "which classes can equip" — FF2 has no equip
   restrictions (every character can equip everything), so it was intentionally not ported.
 

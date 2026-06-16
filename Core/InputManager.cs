@@ -381,6 +381,14 @@ namespace FFII_ScreenReader.Core
                     string.IsNullOrWhiteSpace(detail) ? T("No details") : detail,
                     interrupt: true);
             }
+            else if (KeywordMenuState.IsActive || WordsMenuState.IsActive)
+            {
+                // Keyword/Words entries have no live stats panel — the cached description is the detail.
+                string detail = MenuDetailCache.LastDetail;
+                FFII_ScreenReaderMod.SpeakText(
+                    string.IsNullOrWhiteSpace(detail) ? T("No details") : detail,
+                    interrupt: true);
+            }
         }
 
         /// <summary>
