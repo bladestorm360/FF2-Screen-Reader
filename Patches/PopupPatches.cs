@@ -48,6 +48,8 @@ namespace FFII_ScreenReader.Patches
                 CurrentPopupType = null;
                 ActivePopupPtr = IntPtr.Zero;
                 CommandListOffset = -1;
+                SelectCursorOffset = -1;
+                LastButtonIndex = -1;
             });
         }
 
@@ -59,12 +61,22 @@ namespace FFII_ScreenReader.Patches
 
         public static int CommandListOffset { get; private set; }
 
-        public static void SetActive(string typeName, IntPtr ptr, int cmdListOffset)
+        // Offset of the popup's selectCursor (per type; -1 for button-less popups). Lets the
+        // on-open read (DelayedPopupRead) announce the initially-focused choice.
+        public static int SelectCursorOffset { get; private set; } = -1;
+
+        // Last button index announced for this popup. Reset on open; set by the on-open read and
+        // by ReadCurrentButton so a stray cursor event for the same focus can't double-announce.
+        public static int LastButtonIndex { get; set; } = -1;
+
+        public static void SetActive(string typeName, IntPtr ptr, int cmdListOffset, int selectCursorOffset = -1)
         {
             _helper.SetActiveExclusive();
             CurrentPopupType = typeName;
             ActivePopupPtr = ptr;
             CommandListOffset = cmdListOffset;
+            SelectCursorOffset = selectCursorOffset;
+            LastButtonIndex = -1;
         }
 
         public static void Clear() => _helper.IsActive = false;
@@ -458,13 +470,23 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
+                int index = cursor.Index;
+
+                // Skip if this index was already announced (e.g. the initial-focus read done by
+                // DelayedPopupRead on open, or a repeated cursor event for the same focus).
+                if (index == PopupState.LastButtonIndex)
+                {
+                    return;
+                }
+
                 string buttonText = ReadButtonFromCommandList(
                     PopupState.ActivePopupPtr,
                     PopupState.CommandListOffset,
-                    cursor.Index);
+                    index);
 
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
+                    PopupState.LastButtonIndex = index;
                     buttonText = TextUtils.StripIconMarkup(buttonText);
                     FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
                 }
@@ -528,7 +550,7 @@ namespace FFII_ScreenReader.Patches
                 if (commonPopup != null)
                 {
                     HandlePopupDetected("CommonPopup", commonPopup.Pointer, IL2CppOffsets.Popup.COMMON_CMDLIST_OFFSET,
-                        () => ReadCommonPopup(commonPopup.Pointer));
+                        () => ReadCommonPopup(commonPopup.Pointer), IL2CppOffsets.Popup.COMMON_SELECT_CURSOR_OFFSET);
                     return;
                 }
 
@@ -537,7 +559,7 @@ namespace FFII_ScreenReader.Patches
                 if (magicStone != null)
                 {
                     HandlePopupDetected("ChangeMagicStonePopup", magicStone.Pointer, IL2CppOffsets.Popup.MAGICSTONE_CMDLIST_OFFSET,
-                        () => ReadChangeMagicStonePopup(magicStone.Pointer));
+                        () => ReadChangeMagicStonePopup(magicStone.Pointer), IL2CppOffsets.Popup.MAGICSTONE_SELECT_CURSOR_OFFSET);
                     return;
                 }
 
@@ -599,9 +621,9 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Handle a detected popup - set state and start delayed read.
         /// </summary>
-        private static void HandlePopupDetected(string typeName, IntPtr ptr, int cmdListOffset, Func<string> readFunc)
+        private static void HandlePopupDetected(string typeName, IntPtr ptr, int cmdListOffset, Func<string> readFunc, int selectCursorOffset = -1)
         {
-            PopupState.SetActive(typeName, ptr, cmdListOffset);
+            PopupState.SetActive(typeName, ptr, cmdListOffset, selectCursorOffset);
 
             // Reset button tracking to prevent stale state from previous popups
             BattlePausePatches.Reset();
@@ -624,6 +646,28 @@ namespace FFII_ScreenReader.Patches
                 string announcement = readFunc();
                 if (!string.IsNullOrEmpty(announcement))
                 {
+                    // Append the initially-focused choice so the default button (Yes/No) is
+                    // announced on open, not just on the first arrow. Read the LIVE cursor index
+                    // (not a hard 0) so a "No"-default popup correctly announces "No".
+                    if (PopupState.CommandListOffset >= 0 && PopupState.SelectCursorOffset >= 0)
+                    {
+                        try
+                        {
+                            IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + PopupState.SelectCursorOffset);
+                            if (cursorPtr != IntPtr.Zero)
+                            {
+                                int idx = new GameCursor(cursorPtr).Index;
+                                string choice = ReadButtonFromCommandList(popupPtr, PopupState.CommandListOffset, idx);
+                                if (!string.IsNullOrWhiteSpace(choice))
+                                {
+                                    announcement += ". " + TextUtils.StripIconMarkup(choice);
+                                    PopupState.LastButtonIndex = idx;
+                                }
+                            }
+                        }
+                        catch { }
+                    }
+
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }

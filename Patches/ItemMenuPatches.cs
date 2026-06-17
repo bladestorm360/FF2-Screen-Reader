@@ -315,6 +315,19 @@ namespace FFII_ScreenReader.Patches
                 if (targetCursor == null || targetContents == null)
                     return;
 
+                // Context gate on the ItemUseController's OWN state machine. Entry/navigation
+                // happen in the Single/All target-select states; confirming a target transitions
+                // to a Learning* state (which opens the learn popup) and re-fires SelectContent
+                // with the cursor reset to index 0 — the spurious top-of-list re-read. The OUTER
+                // ItemWindowController state stays TARGET_SELECT throughout, so gating on it never
+                // caught the confirm. nextState (set synchronously on confirm, before the re-read)
+                // covers the transition frame where the current state is still Single.
+                int useState = StateReaderHelper.ReadStateTag(__instance.Pointer, IL2CppOffsets.ItemUse.OFFSET_STATE_MACHINE);
+                int nextState = Marshal.ReadInt32(__instance.Pointer + IL2CppOffsets.ItemUse.OFFSET_NEXT_STATE);
+                if ((useState != IL2CppOffsets.ItemUse.STATE_SINGLE && useState != IL2CppOffsets.ItemUse.STATE_ALL)
+                    || nextState >= IL2CppOffsets.ItemUse.STATE_LEARNING_VERIFICATION)
+                    return;
+
                 int index = targetCursor.Index;
 
                 // Convert to list for indexed access

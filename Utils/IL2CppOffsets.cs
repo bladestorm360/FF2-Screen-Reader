@@ -119,6 +119,25 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
+        /// KeyInput.ItemUseController offsets and state values (dump.cs:451796).
+        /// The inner controller that drives the "use item on a character" target list;
+        /// its own state machine distinguishes target-selection from confirm/learning.
+        /// </summary>
+        internal static class ItemUse
+        {
+            public const int OFFSET_STATE_MACHINE = 0x70; // StateMachine<ItemUseController.State>
+            public const int OFFSET_NEXT_STATE = 0x78;    // ItemUseController.State nextState (enum int)
+
+            // ItemUseController.State enum values
+            public const int STATE_NON = 0;
+            public const int STATE_SINGLE = 1;                    // selecting a single target
+            public const int STATE_ALL = 2;                       // selecting all targets
+            public const int STATE_LEARNING_VERIFICATION = 3;     // confirm popup (Tome learn)
+            public const int STATE_LEARNING_AND_SET_VERIFICATION = 4;
+            public const int STATE_LEARNING_ERROR_POPUP = 5;
+        }
+
+        /// <summary>
         /// SecretWordController / WordsWindowController offsets.
         /// </summary>
         internal static class Keyword
@@ -163,6 +182,9 @@ namespace FFII_ScreenReader.Utils
             public const int OFFSET_USE_CONTENT_LIST = 0x40;
             public const int OFFSET_USE_SELECT_CURSOR = 0x48;
             public const int OFFSET_GAUGE_IMAGE = 0x18;
+            // AbilityContentListController.selectCursor (KeyInput, dump.cs:278749) — used to
+            // announce the initially-focused spell when the Use/Forget list activates.
+            public const int OFFSET_LIST_SELECT_CURSOR = 0x38;
         }
 
         /// <summary>
@@ -199,11 +221,13 @@ namespace FFII_ScreenReader.Utils
             public const int COMMON_TITLE_OFFSET = 0x38;
             public const int COMMON_MESSAGE_OFFSET = 0x40;
             public const int COMMON_CMDLIST_OFFSET = 0x70;
+            public const int COMMON_SELECT_CURSOR_OFFSET = 0x68;   // CommonPopup.selectCursor (dump.cs:457709)
 
             // MagicStonePopupView
             public const int MAGICSTONE_NAME_OFFSET = 0x28;
             public const int MAGICSTONE_DESC_OFFSET = 0x30;
             public const int MAGICSTONE_CMDLIST_OFFSET = 0x58;
+            public const int MAGICSTONE_SELECT_CURSOR_OFFSET = 0x50; // ChangeMagicStonePopup.selectCursor (dump.cs:457506)
 
             // GameOverPopupView
             public const int GAMEOVER_SELECT_CURSOR_OFFSET = 0x38;

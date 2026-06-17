@@ -263,6 +263,79 @@ KeyInput and Touch often have different method names:
 
 ## Bug Fixes Reference
 
+### Confirmation popup announces focused choice on open (2026-06-16)
+**Change**: When a `CommonPopup` (generic confirm) or `ChangeMagicStonePopup` (spell learn) opens,
+the initially-focused button (Yes/No) is now announced together with the message, e.g. "Would you
+like to learn this spell? Yes" — previously only the message read on open and the choice read only
+on the first arrow.
+**How**: `PopupState` gained `SelectCursorOffset` (per-type select-cursor offset, set in `SetActive`)
+and `LastButtonIndex`. `PopupOpen_Postfix` passes the cursor offset (CommonPopup 0x68 /
+ChangeMagicStonePopup 0x50; −1 for button-less and GameOver popups, which are unaffected).
+`DelayedPopupRead` reads the LIVE `selectCursor.Index` (not a hard 0, so a "No"-default popup says
+"No") and appends that button via the existing `ReadButtonFromCommandList`. `ReadCurrentButton`
+gained a `LastButtonIndex` guard so a stray cursor event for the same focus right after open cannot
+double the choice (preserves fix #3's single-read behavior). Offsets: `CommonPopup`/`ChangeMagicStonePopup`
+both extend `Popup` (dump.cs:457709 / 457506).
+
+### Item-use target list re-reads top character on confirm (2026-06-16)
+**Problem**: When using an item on a character (incl. the Tome → learn-spell flow), confirming a
+target re-announced the TOP character (index 0, e.g. "Firion") right before the learn popup —
+"Firion" (entry) → "Maria" (navigate) → confirm → "Firion" again.
+**Cause**: `ItemUseController_SelectContent_Postfix` (patches
+`KeyInput.ItemUseController.SelectContent`) reads the character at the cursor index. It fires on
+entry, on every cursor move (navigation), AND re-fires on confirm with the cursor reset to index 0.
+This re-read always happened but was previously MASKED by the learn popup's `CommonPopup.UpdateFocus`
+reader speaking "Yes" (interrupt:true) on confirm — it became audible only after that reader was
+made to defer (see "Spell-learn popup choices read twice"). A value-dedup can't help — the re-read
+is a *different* character (index 0) than the confirmed one.
+**Failed first attempt**: gated on the OUTER `ItemWindowController` state via `ItemMenuState.GetState()`
++ `PopupState.IsConfirmationPopupActive`. No-op: the outer state stays `TARGET_SELECT` for the whole
+flow (confirm included) and the popup opens a frame *after* the re-read, so the gate never fired.
+**Fix**: Gate on the INNER `ItemUseController`'s OWN state machine (`IL2CppOffsets.ItemUse`,
+stateMachine @ 0x70 / nextState @ 0x78). Announce only when `useState` is `Single`(1)/`All`(2) and
+`nextState < LearningVerification`(3). Confirming a target transitions to a `Learning*` state and/or
+sets `nextState` to `LearningVerification` synchronously before the re-read, so the spurious index-0
+read is suppressed; entry/navigation stay in Single/All and are unaffected. The outer-vs-inner state
+distinction is the key — only the inner state changes on confirm.
+
+### Spell list initial focus silent on open (2026-06-16)
+**Problem**: Opening the Magic Use/Forget list did not speak the initially-focused spell; the
+list only read once the user arrowed.
+**Cause**: `MagicMenuState.OnSpellListFocused()` (called from `UpdateController_Postfix`) sets the
+active flag but never announces. `SetCursor_Postfix` is the only announcer, and it early-returns
+while `IsSpellListActive` is false — which is set true only inside `UpdateController_Postfix`. The
+game sets the cursor before the state reaches `USE_LIST`/`FORGET`, so the initial `SetCursor` is
+gated out and no later one fires until navigation.
+**Fix**: In `UpdateController_Postfix`, on first activation (after `OnSpellListFocused()`), read the
+controller's `selectCursor` (`IL2CppOffsets.Magic.OFFSET_LIST_SELECT_CURSOR` = 0x38) and call the
+existing `AnnounceSpellAtIndex`. Deduped by `ShouldAnnounceSpell(spellId)` so the follow-up
+`SetCursor` for the same focus stays silent.
+
+### Shop command bar "Buy" spoken then cut off on buy-list entry (2026-06-16)
+**Problem**: Entering a shop / opening straight into the buy list spoke "Buy", then immediately
+interrupted it with the focused item.
+**Cause**: `ShopCommandMenuController.SetCursor` fires during shop init (cursor 0 = Buy) regardless
+of where focus lands. On open into the buy list (state `SELECT_PRODUCT`), `CommandSetCursor_Postfix`
+announced "Buy", then `SetDescription_Postfix` announced the item and cut it off. The item reader is
+state-gated; the command reader was not.
+**Fix**: Gate `CommandSetCursor_Postfix` on the `ShopController` state machine — only announce when
+`ShopMenuTracker.GetState() == STATE_SELECT_COMMAND`. This is FF1's 1b6b1cf state-gate pattern (FF1
+gates the item reader on states 2/3) applied to the command reader (the symmetric inverse).
+
+### Spell-learn popup choices read twice (2026-06-16)
+**Problem**: The spell-learn confirmation (`ChangeMagicStonePopup`) read "yes." before the message
+on open, and each choice twice ("ye-yes"/"n-no") when arrowing.
+**Cause**: Two readers fired out of battle — the global `CursorNavigation_Postfix` →
+`ReadCurrentButton` (now that `PopupOpen_Postfix` registers `ChangeMagicStonePopup` in `PopupState`)
+AND `BattlePausePatches.CommonPopup_UpdateFocus_Postfix` (patches `CommonPopup.UpdateFocus`, which
+also catches the `CommonPopup` subclass). The battle guard removed on 2026-01-23 (see below) left
+`UpdateFocus` reading everything; the global popup detection has since been built out, so both now
+fire. Supersedes the 2026-01-23 "CommonPopup Buttons Not Reading" decision.
+**Fix**: In `CommonPopup_UpdateFocus_Postfix`, defer to the global reader only when it is live for
+this popup: `if (!IsInBattleUIContext() && PopupState.ShouldSuppress()) return;`. Safer than the
+reverted 2026-01-23 battle guard — if `PopupState` isn't set, `UpdateFocus` still reads (preserves
+that fallback); in battle (where cursor-nav exits early) it always reads.
+
 ### Controller field context poisoned by stale KEYWORD_MENU (2026-06-13)
 **Problem**: On the field, after opening the NPC keyword menu (Ask/Learn), right-stick-down
 announced the on-screen game controls instead of cycling field entities/pathfinding targets.

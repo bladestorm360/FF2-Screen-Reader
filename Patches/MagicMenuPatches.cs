@@ -649,6 +649,30 @@ namespace FFII_ScreenReader.Patches
                 if (!MagicMenuState.IsSpellListActive)
                 {
                     MagicMenuState.OnSpellListFocused();
+
+                    // Announce the initially-focused spell on open. The game sets the cursor
+                    // before the state reaches USE_LIST/FORGET, so SetCursor_Postfix (gated on
+                    // IsSpellListActive) never fires for the initial focus — read the controller's
+                    // selectCursor and announce it once here. Subsequent SetCursor fires for the
+                    // same focus are deduped by ShouldAnnounceSpell(spellId).
+                    try
+                    {
+                        IntPtr controllerPtr = controller.Pointer;
+                        if (controllerPtr != IntPtr.Zero)
+                        {
+                            unsafe
+                            {
+                                IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_LIST_SELECT_CURSOR);
+                                if (cursorPtr != IntPtr.Zero)
+                                {
+                                    int index = new GameCursor(cursorPtr).Index;
+                                    if (index >= 0)
+                                        AnnounceSpellAtIndex(controller, index);
+                                }
+                            }
+                        }
+                    }
+                    catch { }
                 }
 
                 // Cache character data for MP display

@@ -457,6 +457,14 @@ namespace FFII_ScreenReader.Patches
                 if (__instance == null)
                     return;
 
+                // Gate on the ShopController state machine (FF1 1b6b1cf pattern, applied to the
+                // command reader). The command bar's SetCursor still fires during init on shops
+                // that open straight into the buy list (state SELECT_PRODUCT); speaking "Buy"
+                // there only gets cut off by the focused item (SetDescription_Postfix). Only
+                // announce when the command bar genuinely has focus.
+                if (ShopMenuTracker.GetState() != IL2CppOffsets.Shop.STATE_SELECT_COMMAND)
+                    return;
+
                 ShopMenuTracker.SetActive();
                 // In the command bar — re-arm the item-list announcement for the trip back.
                 _lastAnnouncedListIndex = -1;

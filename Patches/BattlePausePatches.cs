@@ -95,6 +95,16 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
+                // Outside battle, the global cursor-nav reader (PopupPatches.ReadCurrentButton,
+                // driven by PopupState) already announces this popup's buttons — defer to it to
+                // avoid double-reads (e.g. the spell-learn ChangeMagicStonePopup, a CommonPopup
+                // subclass this patch also catches). During battle the cursor-nav path exits early
+                // (IsInBattleUIContext), so this patch stays the sole reader and must NOT defer.
+                // Deferring only when PopupState is live preserves the 2026-01-23 fallback for any
+                // popup the global path didn't register.
+                if (!FFII_ScreenReaderMod.IsInBattleUIContext() && PopupState.ShouldSuppress())
+                    return;
+
                 IntPtr popupPtr = popup.Pointer;
                 if (popupPtr == IntPtr.Zero) return;
 
