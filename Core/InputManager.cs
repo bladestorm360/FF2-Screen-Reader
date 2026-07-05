@@ -37,15 +37,11 @@ namespace FFII_ScreenReader.Core
         {
         }
 
-        private void RegisterFieldWithBattleFeedback(KeyCode key, KeyModifier modifier, Action action, string description)
+        private void RegisterFieldOnly(KeyCode key, KeyModifier modifier, Action action, string description)
         {
+            // Field-only action. Off-field (menu/battle/title) the active context is never
+            // Field, so this binding has no match and dispatch silently does nothing.
             registry.Register(key, modifier, KeyContext.Field, action, description);
-            registry.Register(key, modifier, KeyContext.Battle, NotAvailableInBattle, description + " (battle blocked)");
-        }
-
-        private static void NotAvailableInBattle()
-        {
-            FFII_ScreenReaderMod.SpeakText(T("Not available in battle"), interrupt: true);
         }
 
         private void InitializeBindings()
@@ -59,13 +55,13 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.Status, StatusNavigationReader.NavigateNext, "Next stat");
 
             // --- Field: entity navigation (brackets + backslash) -- with battle feedback ---
-            RegisterFieldWithBattleFeedback(KeyCode.LeftBracket, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category");
-            RegisterFieldWithBattleFeedback(KeyCode.LeftBracket, KeyModifier.None, mod.CyclePrevious, "Previous entity");
-            RegisterFieldWithBattleFeedback(KeyCode.RightBracket, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category");
-            RegisterFieldWithBattleFeedback(KeyCode.RightBracket, KeyModifier.None, mod.CycleNext, "Next entity");
-            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter");
-            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter");
-            RegisterFieldWithBattleFeedback(KeyCode.Backslash, KeyModifier.None, () =>
+            RegisterFieldOnly(KeyCode.LeftBracket, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category");
+            RegisterFieldOnly(KeyCode.LeftBracket, KeyModifier.None, mod.CyclePrevious, "Previous entity");
+            RegisterFieldOnly(KeyCode.RightBracket, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category");
+            RegisterFieldOnly(KeyCode.RightBracket, KeyModifier.None, mod.CycleNext, "Next entity");
+            RegisterFieldOnly(KeyCode.Backslash, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter");
+            RegisterFieldOnly(KeyCode.Backslash, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter");
+            RegisterFieldOnly(KeyCode.Backslash, KeyModifier.None, () =>
             {
                 NavigationTargetTracker.MarkEntity();
                 if (PreferencesManager.AudioBeaconsEnabled) mod.RestartEntityBeacon();
@@ -73,17 +69,17 @@ namespace FFII_ScreenReader.Core
             }, "Announce current entity / restart beacon");
 
             // --- Field: manual entity rescan (backtick) ---
-            RegisterFieldWithBattleFeedback(KeyCode.BackQuote, KeyModifier.None, mod.ForceEntityRescan, "Force entity rescan");
+            RegisterFieldOnly(KeyCode.BackQuote, KeyModifier.None, mod.ForceEntityRescan, "Force entity rescan");
 
             // --- Field: alternate keys (J/K/L/P) -- with battle feedback ---
-            RegisterFieldWithBattleFeedback(KeyCode.J, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.J, KeyModifier.None, mod.CyclePrevious, "Previous entity (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.K, KeyModifier.None, mod.AnnounceEntityOnly, "Announce entity name (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.L, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.L, KeyModifier.None, mod.CycleNext, "Next entity (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter (alt)");
-            RegisterFieldWithBattleFeedback(KeyCode.P, KeyModifier.None, () =>
+            RegisterFieldOnly(KeyCode.J, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category (alt)");
+            RegisterFieldOnly(KeyCode.J, KeyModifier.None, mod.CyclePrevious, "Previous entity (alt)");
+            RegisterFieldOnly(KeyCode.K, KeyModifier.None, mod.AnnounceEntityOnly, "Announce entity name (alt)");
+            RegisterFieldOnly(KeyCode.L, KeyModifier.Shift, mod.CycleNextCategory, "Next entity category (alt)");
+            RegisterFieldOnly(KeyCode.L, KeyModifier.None, mod.CycleNext, "Next entity (alt)");
+            RegisterFieldOnly(KeyCode.P, KeyModifier.Ctrl, mod.ToggleToLayerFilter, "Toggle layer filter (alt)");
+            RegisterFieldOnly(KeyCode.P, KeyModifier.Shift, mod.TogglePathfindingFilter, "Toggle pathfinding filter (alt)");
+            RegisterFieldOnly(KeyCode.P, KeyModifier.None, () =>
             {
                 NavigationTargetTracker.MarkEntity();
                 if (PreferencesManager.AudioBeaconsEnabled) mod.RestartEntityBeacon();
@@ -121,14 +117,14 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.H, KeyContext.Battle, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
 
             // --- Field-only toggles (blocked in battle with feedback) ---
-            RegisterFieldWithBattleFeedback(KeyCode.Quote, KeyModifier.None, mod.ToggleFootsteps, "Toggle footsteps");
-            RegisterFieldWithBattleFeedback(KeyCode.Semicolon, KeyModifier.None, mod.ToggleWallTones, "Toggle wall tones");
-            RegisterFieldWithBattleFeedback(KeyCode.F6, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
+            RegisterFieldOnly(KeyCode.Quote, KeyModifier.None, mod.ToggleFootsteps, "Toggle footsteps");
+            RegisterFieldOnly(KeyCode.Semicolon, KeyModifier.None, mod.ToggleWallTones, "Toggle wall tones");
+            RegisterFieldOnly(KeyCode.F6, KeyModifier.None, mod.ToggleAudioBeacons, "Toggle audio beacons");
 
             // --- Field-only category shortcuts ---
-            RegisterFieldWithBattleFeedback(KeyCode.K, KeyModifier.Shift, mod.ResetToAllCategory, "Reset to All category");
-            RegisterFieldWithBattleFeedback(KeyCode.Equals, KeyModifier.None, mod.CycleNextCategory, "Next entity category (global)");
-            RegisterFieldWithBattleFeedback(KeyCode.Minus, KeyModifier.None, mod.CyclePreviousCategory, "Previous entity category (global)");
+            RegisterFieldOnly(KeyCode.K, KeyModifier.Shift, mod.ResetToAllCategory, "Reset to All category");
+            RegisterFieldOnly(KeyCode.Equals, KeyModifier.None, mod.CycleNextCategory, "Next entity category (global)");
+            RegisterFieldOnly(KeyCode.Minus, KeyModifier.None, mod.CyclePreviousCategory, "Previous entity category (global)");
 
             // Sort for correct modifier precedence
             registry.FinalizeRegistration();
@@ -138,7 +134,7 @@ namespace FFII_ScreenReader.Core
         /// Called each frame to check for mod hotkey input.
         /// Uses early exit when no key is pressed to minimize overhead.
         /// </summary>
-        public void CheckInput()
+        public void Update()
         {
             // Poll SDL3 gamepad + GetAsyncKeyState keyboard once per frame.
             // Must come before any mod input handling so edge-detection state is fresh.
@@ -254,20 +250,22 @@ namespace FFII_ScreenReader.Core
             if (FFII_ScreenReaderMod.IsInBattle)
                 return KeyContext.Battle;
 
-            // Only return Field if a field player actually exists (matches FF1). Prevents the
-            // Field context — and thus mod-menu/F5 opening, which gate on IsFieldActive — from
-            // being reported on the title screen, boot screen, or during map transitions, where
-            // no FieldPlayerController is present. Everything else is Global (Global bindings
-            // still fire; Field-only bindings correctly don't).
-            try
-            {
-                var pc = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>();
-                if (pc?.fieldPlayer != null)
-                    return KeyContext.Field;
-            }
-            catch { }
+            // Field keys only fire while actively on a field map with no menu open.
+            // Otherwise fall through to Global so field/entity/waypoint/toggle hotkeys
+            // are silent no-ops off-field, while Global info keys still work everywhere.
+            if (IsOnValidMap() && !MenuStateRegistry.AnyActive())
+                return KeyContext.Field;
 
             return KeyContext.Global;
+        }
+
+        private static bool IsOnValidMap()
+        {
+            try
+            {
+                return GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>()?.fieldPlayer != null;
+            }
+            catch { return false; }
         }
 
         private KeyModifier GetCurrentModifiers()

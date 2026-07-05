@@ -7,6 +7,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using FFII_ScreenReader.Menus;
 using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // FF2 Shop UI types
@@ -335,7 +336,7 @@ namespace FFII_ScreenReader.Patches
                 if (list == null || index >= list.Count)
                     return;
 
-                AnnounceShopItem(list[index]);
+                AnnounceShopItem(list[index], index, list.Count);
             }
             catch { }
         }
@@ -385,7 +386,7 @@ namespace FFII_ScreenReader.Patches
         /// consumables) and caches it for the I key. Empty sell slots announce "Empty"
         /// without overwriting the cached I-key target.
         /// </summary>
-        private static void AnnounceShopItem(ShopListItemContentController content)
+        private static void AnnounceShopItem(ShopListItemContentController content, int index, int count)
         {
             if (content == null)
                 return;
@@ -411,7 +412,7 @@ namespace FFII_ScreenReader.Patches
             if (string.IsNullOrEmpty(itemName))
             {
                 // Empty sell slot — announce but keep the last real item for the I key.
-                FFII_ScreenReaderMod.SpeakText("Empty");
+                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format("Empty", index, count));
                 return;
             }
 
@@ -443,6 +444,7 @@ namespace FFII_ScreenReader.Patches
                 announcement = $"{baseAnnouncement}: {detail}";
 
             // Caller (SetDescription) already gated on the list-index guard, so announce.
+            announcement = MenuPosition.Format(announcement, index, count);
             FFII_ScreenReaderMod.SpeakText(announcement);
         }
 
@@ -477,7 +479,7 @@ namespace FFII_ScreenReader.Patches
                 if (commandContent == null)
                     return;
 
-                string commandName = GetShopCommandName(commandContent.CommandId);
+                string commandName = CommandBarReader.GetShopCommandName(commandContent.CommandId);
                 if (string.IsNullOrEmpty(commandName))
                     return;
 
@@ -487,21 +489,9 @@ namespace FFII_ScreenReader.Patches
                     return;
                 _lastCommandIndex = index;
 
-                FFII_ScreenReaderMod.SpeakText(commandName, interrupt: true);
+                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
             }
             catch { }
-        }
-
-        private static string GetShopCommandName(ShopCommandId commandId)
-        {
-            return commandId switch
-            {
-                ShopCommandId.Buy => "Buy",
-                ShopCommandId.Sell => "Sell",
-                ShopCommandId.Equipment => "Equipment",
-                ShopCommandId.Back => "Back",
-                _ => null
-            };
         }
 
         private static string GetItemStats(int contentId)

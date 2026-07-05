@@ -75,13 +75,6 @@ namespace FFII_ScreenReader.Core
         private bool filterMapExits = false;
         private bool filterToLayer = false;
 
-        // Audio feedback toggles (backed by PreferencesManager)
-        private bool enableWallTones = false;
-        private bool enableFootsteps = false;
-        private bool enableAudioBeacons = false;
-
-
-
         public override void OnInitializeMelon()
         {
             Instance = this;
@@ -99,9 +92,6 @@ namespace FFII_ScreenReader.Core
             filterByPathfinding = PreferencesManager.PathfindingFilterEnabled;
             filterMapExits = PreferencesManager.MapExitFilterEnabled;
             filterToLayer = PreferencesManager.ToLayerFilterEnabled;
-            enableWallTones = PreferencesManager.WallTonesEnabled;
-            enableFootsteps = PreferencesManager.FootstepsEnabled;
-            enableAudioBeacons = PreferencesManager.AudioBeaconsEnabled;
 
             // Initialize Tolk for screen reader support
             tolk = new TolkWrapper();
@@ -206,6 +196,9 @@ namespace FFII_ScreenReader.Core
 
             // Patch main field menu for initial-focus announcement
             MainMenuPatches.ApplyPatches(harmony);
+
+            // Centralized command-bar initial-focus readers (field / item / equip command bars)
+            CommandBarPatches.ApplyPatches(harmony);
 
             // Patch popup dialogs (Yes/No confirmations)
             PopupPatches.ApplyPatches(harmony);
@@ -320,7 +313,7 @@ namespace FFII_ScreenReader.Core
             // Shutdown SDL3 gamepad/keyboard subsystem
             GamepadManager.Shutdown();
 
-            // Shutdown sound player (closes waveOut handles, frees unmanaged memory)
+            // Shutdown sound player (destroys SDL audio streams + device, frees scratch buffer)
             SoundPlayer.Shutdown();
 
             // Dispose input manager (unsubscribes from events)
@@ -405,8 +398,8 @@ namespace FFII_ScreenReader.Core
                 }
 
                 // Restart audio loops after scene has settled
-                if (enableWallTones) audioLoopManager.StartWallToneLoop();
-                if (enableAudioBeacons) audioLoopManager.StartBeaconLoop();
+                if (PreferencesManager.WallTonesEnabled) audioLoopManager.StartWallToneLoop();
+                if (PreferencesManager.AudioBeaconsEnabled) audioLoopManager.StartBeaconLoop();
             }
             catch (Exception ex)
             {
@@ -418,7 +411,7 @@ namespace FFII_ScreenReader.Core
         {
             // Check for mod hotkey input using optimized Input System approach
             // Uses wasPressedThisFrame with early exit on anyKey check - minimal overhead
-            inputManager?.CheckInput();
+            inputManager?.Update();
         }
 
         /// <summary>
@@ -754,7 +747,7 @@ namespace FFII_ScreenReader.Core
         {
             filterByPathfinding = !filterByPathfinding;
             entityScanner.FilterByPathfinding = filterByPathfinding;
-            PreferencesManager.SaveToggle("PathfindingFilter", filterByPathfinding);
+            PreferencesManager.SavePathfindingFilter(filterByPathfinding);
 
             string status = filterByPathfinding ? T("on") : T("off");
             SpeakText(string.Format(T("Pathfinding filter {0}"), status));
@@ -763,7 +756,7 @@ namespace FFII_ScreenReader.Core
         internal void ToggleMapExitFilter()
         {
             filterMapExits = !filterMapExits;
-            PreferencesManager.SaveToggle("MapExitFilter", filterMapExits);
+            PreferencesManager.SaveMapExitFilter(filterMapExits);
 
             // Rebuild the navigation list so the change takes effect without re-entering the map.
             entityScanner?.ReapplyFilter();
@@ -779,7 +772,7 @@ namespace FFII_ScreenReader.Core
             if (entityScanner != null)
                 entityScanner.FilterToLayer = filterToLayer;
 
-            PreferencesManager.SaveToggle("ToLayerFilter", filterToLayer);
+            PreferencesManager.SaveToLayerFilter(filterToLayer);
 
             string status = filterToLayer ? T("on") : T("off");
             SpeakText(string.Format(T("Layer transition filter {0}"), status));
@@ -787,47 +780,50 @@ namespace FFII_ScreenReader.Core
 
         internal void ToggleWallTones()
         {
-            enableWallTones = !enableWallTones;
+            // Save the pref FIRST so the loop's `while (PreferencesManager.WallTonesEnabled)`
+            // gate sees the new value before StartWallToneLoop spins it up (FF3 ordering —
+            // avoids the start-before-save race the old runtime mirror worked around).
+            bool newValue = !PreferencesManager.WallTonesEnabled;
+            PreferencesManager.SaveWallTones(newValue);
 
-            if (enableWallTones)
+            if (newValue)
                 audioLoopManager.StartWallToneLoop();
             else
                 audioLoopManager.StopWallToneLoop();
 
-            PreferencesManager.SaveToggle("WallTones", enableWallTones);
-
-            string status = enableWallTones ? T("on") : T("off");
+            string status = newValue ? T("on") : T("off");
             SpeakText(string.Format(T("Wall tones {0}"), status));
         }
 
         internal void ToggleFootsteps()
         {
-            enableFootsteps = !enableFootsteps;
-            PreferencesManager.SaveToggle("Footsteps", enableFootsteps);
+            bool newValue = !PreferencesManager.FootstepsEnabled;
+            PreferencesManager.SaveFootsteps(newValue);
 
-            string status = enableFootsteps ? T("on") : T("off");
+            string status = newValue ? T("on") : T("off");
             SpeakText(string.Format(T("Footsteps {0}"), status));
         }
 
         internal void ToggleAudioBeacons()
         {
-            enableAudioBeacons = !enableAudioBeacons;
+            // Save the pref FIRST so the loop's `while (PreferencesManager.AudioBeaconsEnabled)`
+            // gate sees the new value before StartBeaconLoop spins it up (FF3 ordering).
+            bool newValue = !PreferencesManager.AudioBeaconsEnabled;
+            PreferencesManager.SaveAudioBeacons(newValue);
 
-            if (enableAudioBeacons)
+            if (newValue)
                 audioLoopManager.StartBeaconLoop();
             else
                 audioLoopManager.StopBeaconLoop();
 
-            PreferencesManager.SaveToggle("AudioBeacons", enableAudioBeacons);
-
-            string status = enableAudioBeacons ? T("on") : T("off");
+            string status = newValue ? T("on") : T("off");
             SpeakText(string.Format(T("Audio beacons {0}"), status));
         }
 
         internal void ToggleAutoDetail()
         {
             bool newValue = !PreferencesManager.AutoDetailEnabled;
-            PreferencesManager.SaveToggle("AutoDetail", newValue);
+            PreferencesManager.SaveAutoDetail(newValue);
 
             string status = newValue ? T("on") : T("off");
             SpeakText(string.Format(T("Auto detail {0}"), status));
@@ -836,18 +832,11 @@ namespace FFII_ScreenReader.Core
         internal void ToggleAnnounceOnBeaconRestart()
         {
             bool newValue = !PreferencesManager.AnnounceOnBeaconRestartEnabled;
-            PreferencesManager.SaveToggle("AnnounceOnBeaconRestart", newValue);
+            PreferencesManager.SaveAnnounceOnBeaconRestart(newValue);
 
             string status = newValue ? T("on") : T("off");
             SpeakText(string.Format(T("Beacon destination announcement {0}"), status));
         }
-
-        // Accessors for audio feedback state (used by MovementSoundPatches)
-        internal bool IsFootstepsEnabled() => enableFootsteps;
-        // Audio loops gate on these local flags (set before Start is called) rather than the
-        // saved preference, avoiding a start-before-save race that left the loops silent.
-        internal bool IsWallTonesEnabled() => enableWallTones;
-        internal bool IsAudioBeaconsEnabled() => enableAudioBeacons;
 
         /// <summary>
         /// Formats an entity exactly the way []-cycling announces it: description + "X of Y"
@@ -1125,6 +1114,9 @@ namespace FFII_ScreenReader.Core
                     MenuStateRegistry.BESTIARY_FORMATION,
                     MenuStateRegistry.BESTIARY_MAP,
                     MenuStateRegistry.POPUP);
+
+                // Clear the command-bar open-read arm flags too (leak safety).
+                CommandBarPatches.ClearAll();
             }
             catch (Exception ex)
             {

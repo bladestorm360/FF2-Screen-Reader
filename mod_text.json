@@ -321,6 +321,48 @@
     "th": "ซ่อน",
     "pt": "Oculto"
   },
+  "Multi-hit Damage": {
+    "en": "Multi-hit Damage",
+    "ja": "連続ヒットダメージ",
+    "fr": "Dégâts multi-coups",
+    "it": "Danni multi-colpo",
+    "de": "Mehrfachtreffer-Schaden",
+    "es": "Daño de golpes múltiples",
+    "ko": "다단 히트 대미지",
+    "zht": "多段攻擊傷害",
+    "zhc": "多段攻击伤害",
+    "ru": "Урон многоударных атак",
+    "th": "ความเสียหายโจมตีหลายครั้ง",
+    "pt": "Dano de golpes múltiplos"
+  },
+  "Total only": {
+    "en": "Total only",
+    "ja": "合計のみ",
+    "fr": "Total uniquement",
+    "it": "Solo totale",
+    "de": "Nur Gesamt",
+    "es": "Solo total",
+    "ko": "합계만",
+    "zht": "僅總計",
+    "zhc": "仅总计",
+    "ru": "Только итог",
+    "th": "เฉพาะยอดรวม",
+    "pt": "Apenas total"
+  },
+  "With hit count": {
+    "en": "With hit count",
+    "ja": "ヒット数つき",
+    "fr": "Avec nombre de coups",
+    "it": "Con numero di colpi",
+    "de": "Mit Trefferzahl",
+    "es": "Con número de golpes",
+    "ko": "히트 수 포함",
+    "zht": "含攻擊次數",
+    "zhc": "含攻击次数",
+    "ru": "С числом ударов",
+    "th": "พร้อมจำนวนครั้งที่โจมตี",
+    "pt": "Com número de golpes"
+  },
   "Close Menu": {
     "en": "Close Menu",
     "ja": "メニューを閉じる",
@@ -684,6 +726,48 @@
     "ru": "{0} из {1}",
     "th": "{0} จาก {1}",
     "pt": "{0} de {1}"
+  },
+  "Menu Position Announcements": {
+    "en": "Menu Position Announcements",
+    "ja": "メニュー位置の読み上げ",
+    "fr": "Annonce de position dans les menus",
+    "it": "Annuncio posizione nei menu",
+    "de": "Menüpositionsansagen",
+    "es": "Anuncio de posición en menús",
+    "ko": "메뉴 위치 안내",
+    "zht": "選單位置提示",
+    "zhc": "菜单位置提示",
+    "ru": "Объявление позиции в меню",
+    "th": "การประกาศตำแหน่งในเมนู",
+    "pt": "Anúncio de posição no menu"
+  },
+  "On. List entries announce their position, for example, 3 of 12.": {
+    "en": "On. List entries announce their position, for example, 3 of 12.",
+    "ja": "オン。リスト項目が位置を読み上げます。例：12個中3個目。",
+    "fr": "Activé. Les entrées de liste annoncent leur position, par exemple 3 sur 12.",
+    "it": "Attivato. Le voci dell'elenco annunciano la loro posizione, ad esempio 3 di 12.",
+    "de": "Ein. Listeneinträge geben ihre Position an, zum Beispiel 3 von 12.",
+    "es": "Activado. Las entradas de la lista anuncian su posición, por ejemplo 3 de 12.",
+    "ko": "켜짐. 목록 항목이 위치를 안내합니다. 예: 12개 중 3개.",
+    "zht": "開啟。清單項目會提示其位置，例如：12個中的第3個。",
+    "zhc": "开启。列表项目会提示其位置，例如：12个中的第3个。",
+    "ru": "Вкл. Элементы списка объявляют свою позицию, например 3 из 12.",
+    "th": "เปิด รายการในลิสต์จะประกาศตำแหน่ง เช่น 3 จาก 12",
+    "pt": "Ligado. As entradas da lista anunciam sua posição, por exemplo 3 de 12."
+  },
+  "Off. List entries do not announce position.": {
+    "en": "Off. List entries do not announce position.",
+    "ja": "オフ。リスト項目は位置を読み上げません。",
+    "fr": "Désactivé. Les entrées de liste n'annoncent pas leur position.",
+    "it": "Disattivato. Le voci dell'elenco non annunciano la posizione.",
+    "de": "Aus. Listeneinträge geben ihre Position nicht an.",
+    "es": "Desactivado. Las entradas de la lista no anuncian su posición.",
+    "ko": "꺼짐. 목록 항목이 위치를 안내하지 않습니다.",
+    "zht": "關閉。清單項目不會提示位置。",
+    "zhc": "关闭。列表项目不会提示位置。",
+    "ru": "Выкл. Элементы списка не объявляют позицию.",
+    "th": "ปิด รายการในลิสต์จะไม่ประกาศตำแหน่ง",
+    "pt": "Desligado. As entradas da lista não anunciam a posição."
   },
   "north": {
     "en": "north",
@@ -3274,6 +3358,20 @@
     "ru": "Определяет, как HP врага отображается в бою: числом, процентом от максимума или скрыто.",
     "th": "ควบคุมการแสดง HP ของศัตรูในการต่อสู้: ค่าตัวเลข เปอร์เซ็นต์ของค่าสูงสุด หรือซ่อน",
     "pt": "Controla como os PV inimigos aparecem em batalha: valor numérico, porcentagem do máximo ou ocultos."
+  },
+  "On multi-hit physical attacks, optionally prepend the number of hits, e.g. '14x1552 damage'.": {
+    "en": "On multi-hit physical attacks, optionally prepend the number of hits, e.g. '14x1552 damage'.",
+    "ja": "連続ヒットの物理攻撃で、ヒット数を先頭に付けて読み上げます。例：「14x1552 ダメージ」。",
+    "fr": "Sur les attaques physiques multi-coups, ajoute éventuellement le nombre de coups au début, par ex. « 14x1552 dégâts ».",
+    "it": "Negli attacchi fisici multi-colpo, antepone facoltativamente il numero di colpi, ad es. '14x1552 danni'.",
+    "de": "Bei Mehrfachtreffer-Angriffen wird optional die Trefferzahl vorangestellt, z. B. „14x1552 Schaden“.",
+    "es": "En ataques físicos de golpes múltiples, antepone opcionalmente el número de golpes, p. ej. «14x1552 de daño».",
+    "ko": "다단 히트 물리 공격에서 타격 횟수를 앞에 붙여 읽습니다. 예: '14x1552 대미지'.",
+    "zht": "在多段物理攻擊時，可選擇在前面加上攻擊次數，例如「14x1552 傷害」。",
+    "zhc": "在多段物理攻击时，可选择在前面加上攻击次数，例如「14x1552 伤害」。",
+    "ru": "При многоударных физических атаках по желанию добавляет число ударов в начало, напр. «14x1552 урона».",
+    "th": "ในการโจมตีกายภาพแบบหลายครั้ง จะเลือกใส่จำนวนครั้งที่โจมตีไว้ข้างหน้า เช่น '14x1552 ความเสียหาย'",
+    "pt": "Em ataques físicos de golpes múltiplos, opcionalmente adiciona o número de golpes no início, por ex. '14x1552 de dano'."
   },
   "Closes the mod menu and returns to the game.": {
     "en": "Closes the mod menu and returns to the game.",

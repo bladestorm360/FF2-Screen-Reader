@@ -8,6 +8,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using FFII_ScreenReader.Menus;
 using Il2CppLast.Management;
 using static FFII_ScreenReader.Utils.ModTextTranslator;
 
@@ -293,6 +294,7 @@ namespace FFII_ScreenReader.Patches
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 ItemMenuState.SetActive();
 
+                announcement = MenuPosition.Format(announcement, index, targetList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch
@@ -406,6 +408,7 @@ namespace FFII_ScreenReader.Patches
                 // Set active state AFTER validation
                 ItemMenuState.SetActive();
 
+                announcement = MenuPosition.Format(announcement, index, contentList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch
@@ -451,6 +454,13 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                // Arm the command-bar open-read when entering the command bar (menu open or return
+                // from a list); clear it otherwise so a later return to the bar re-announces.
+                if (state == IL2CppOffsets.Item.STATE_COMMAND_SELECT)
+                    CommandBarPatches.ArmItem();
+                else
+                    CommandBarPatches.ClearItem();
+
                 // STATE_NONE = 0 (menu closing), STATE_COMMAND_SELECT = 1 (command bar)
                 if ((state == 0 || state == 1) && ItemMenuState.IsActive)
                 {

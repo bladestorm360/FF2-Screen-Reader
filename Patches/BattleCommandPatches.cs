@@ -159,6 +159,8 @@ namespace FFII_ScreenReader.Patches
                 string commandName = messageManager.GetMessage(mesIdName);
                 if (string.IsNullOrWhiteSpace(commandName)) return;
 
+                commandName = MenuPosition.Format(commandName, index, contentList.Count);
+
                 // Use delayed speech - allows target selection to activate before speaking
                 CoroutineManager.StartManaged(DelayedCommandSpeech(commandName));
             }
@@ -419,6 +421,7 @@ namespace FFII_ScreenReader.Patches
 
                 // FF2 uses MP (unlike FF3 which uses spell charges)
                 string announcement = $"{name}: HP {currentHp}/{maxHp}, MP {currentMp}/{maxMp}";
+                announcement = MenuPosition.Format(announcement, index, playerList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch { }
@@ -506,6 +509,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 announcement += $": HP {currentHp}/{maxHp}";
 
+                announcement = MenuPosition.Format(announcement, index, enemyList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch { }

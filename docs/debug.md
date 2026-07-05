@@ -263,6 +263,40 @@ KeyInput and Touch often have different method names:
 
 ## Bug Fixes Reference
 
+### Initial focus announced on command-bar open — UpdateController + enum read (2026-06-18)
+**Change**: The field menu and the Item / Equipment / Magic command bars now speak their focused
+command on OPEN, not only after the user navigates. Purely additive — navigation is unchanged.
+**Two prior failures this avoids**: (1) Patching `Cursor.SetFocus(bool)` to route the generic
+`MenuTextDiscovery` read fired at cursor-construction and read the prefab's pre-localization
+**Japanese placeholder** (async `Initialize()`) — garbage. (2) Patching `SetFocus`/`SetCommandFocus`
++ an announce-once gate failed because the focus method fired BEFORE the gate was armed (race) →
+silence. The fix uses each controller's per-frame `UpdateController` (runs after localization) gated
+by an arm flag, and reads the command's **ID enum/data** (set instantly), never UI text.
+**How**: `Patches/CommandBarPatches.cs` patches `MainMenuController`/`ItemCommandController`/
+`EquipmentCommandController` `UpdateController()`. Each postfix reads only while its arm flag is set,
+and clears the flag ONLY after a successful (non-empty) read — so it polls harmlessly until the
+focused command's id is set, then announces once via `CommandBarReader.Announce`. Reads:
+field `focusId @ 0x90` (MenuCommandId); item `<CommandIdCash> @ 0x18` (ItemCommandId, read by offset
+— the wrapper doesn't expose the property); equip `contents[selectCursor.Index].Data.Id`
+(EquipmentCommandId). Arm/clear (flag-sets only, no nav logic): field `MainMenuPatches.Show_Prefix`/
+`Close_Postfix`; item/equip `SetNextState_Postfix` on entering/leaving the COMMAND state;
+`ClearMenuFlagsForMapTransition` clears all. `Menus/CommandBarReader.cs` now holds just the four
+name maps + a plain `Announce` (the arm flag guarantees once-per-open, so no dedup/gate). Offsets in
+`IL2CppOffsets.CommandBar`.
+**Magic** (special — its own nav reader, generic reader suppressed for it): a NEW additive
+`AbilityCommandController.UpdateController` postfix (`CommandController_UpdateController_Postfix`)
+self-gated on first `STATE_COMMAND` entry (`MagicMenuState._cmdBarOpenRead`, reset on leave) reads
+`Data.Name` and announces via the existing `ShouldAnnounceCommand` dedup. `CommandController_UpdateFocus_Postfix`
+(nav), `ShouldSuppress`, and the use/forget menus are untouched.
+**Shop** unchanged — `ShopPatches`/`ShopCommandReader` keep using `CommandBarReader.GetShopCommandName`.
+
+### East wall tone raised to B3 (FF1 parity) (2026-06-17)
+**Change**: `SoundConstants.WallToneFrequencies.EAST` 220 (A3) → 247 (B3). The four wall tones now
+form an E-minor-7th chord (E3-G3-B3-D4): NORTH=D4/SOUTH=E3 outer voices, WEST=G3 (left)/EAST=B3
+(right) spread symmetrically so east/west are clearly distinguishable (was only a whole tone apart).
+Volume/pan unchanged; both one-shot and sustain east tones derive from the constant. Ports FF1's
+east-tone pitch fix.
+
 ### Confirmation popup announces focused choice on open (2026-06-16)
 **Change**: When a `CommonPopup` (generic confirm) or `ChangeMagicStonePopup` (spell learn) opens,
 the initially-focused button (Yes/No) is now announced together with the message, e.g. "Would you

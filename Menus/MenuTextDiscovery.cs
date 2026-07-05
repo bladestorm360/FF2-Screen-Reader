@@ -30,11 +30,14 @@ namespace FFII_ScreenReader.Menus
 
                 int cursorIndex = cursor.Index;
 
-                // Try multiple strategies to find menu text
-                string menuText = TryAllStrategies(cursor);
+                // Try multiple strategies to find menu text. Strategies that read an indexed list
+                // (save slots, content list) report the list size via listCount; the others leave
+                // it -1 so MenuPosition.Format emits no position suffix.
+                string menuText = TryAllStrategies(cursor, out int listCount);
 
                 if (!string.IsNullOrEmpty(menuText))
                 {
+                    menuText = MenuPosition.Format(menuText, cursorIndex, listCount);
                     FFII_ScreenReaderMod.SpeakText(menuText);
                 }
             }
@@ -47,12 +50,13 @@ namespace FFII_ScreenReader.Menus
         /// <summary>
         /// Try all text discovery strategies in sequence until one succeeds.
         /// </summary>
-        private static string TryAllStrategies(GameCursor cursor)
+        private static string TryAllStrategies(GameCursor cursor, out int count)
         {
+            count = -1;
             string menuText = null;
 
             // Strategy 0: Check for save/load menu (priority for debugging location names)
-            menuText = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index);
+            menuText = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index, out count);
             if (menuText != null) return menuText;
 
             // Strategy 1: Shop command menu (Buy/Sell/Equipment/Back)
@@ -64,7 +68,7 @@ namespace FFII_ScreenReader.Menus
             if (menuText != null) return menuText;
 
             // Strategy 2: Try to find text in Content list by cursor index
-            menuText = TryContentListSearch(cursor);
+            menuText = TryContentListSearch(cursor, out count);
             if (menuText != null) return menuText;
 
             // Strategy 3: Fallback with GetComponentInChildren
@@ -116,8 +120,9 @@ namespace FFII_ScreenReader.Menus
         /// <summary>
         /// Strategy 2: Try to find text in Content list by cursor index.
         /// </summary>
-        private static string TryContentListSearch(GameCursor cursor)
+        private static string TryContentListSearch(GameCursor cursor, out int count)
         {
+            count = -1;
             try
             {
                 Transform current = cursor.transform;
@@ -140,6 +145,7 @@ namespace FFII_ScreenReader.Menus
                                 string menuText = TextUtils.StripIconMarkup(text.text.Trim());
                                 if (!string.IsNullOrEmpty(menuText))
                                 {
+                                    count = contentList.childCount;
                                     return menuText;
                                 }
                             }

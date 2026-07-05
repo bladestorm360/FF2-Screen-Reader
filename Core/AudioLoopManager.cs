@@ -68,7 +68,6 @@ namespace FFII_ScreenReader.Core
 
         public void StartWallToneLoop()
         {
-            if (!mod.IsWallTonesEnabled()) return;
             if (wallToneCoroutine != null) return;
             wallToneCoroutine = WallToneLoop();
             CoroutineManager.StartManaged(wallToneCoroutine);
@@ -87,7 +86,6 @@ namespace FFII_ScreenReader.Core
 
         public void StartBeaconLoop()
         {
-            if (!mod.IsAudioBeaconsEnabled()) return;
             if (beaconCoroutine != null) return;
             beaconCoroutine = BeaconLoop();
             CoroutineManager.StartManaged(beaconCoroutine);
@@ -136,7 +134,7 @@ namespace FFII_ScreenReader.Core
         {
             float nextCheckTime = Time.time + 0.3f;  // Delay first check by 300ms for scene stability
 
-            while (mod.IsWallTonesEnabled())
+            while (PreferencesManager.WallTonesEnabled)
             {
                 if (Time.time < nextCheckTime)
                 {
@@ -174,8 +172,10 @@ namespace FFII_ScreenReader.Core
                         continue;
                     }
 
-                    // Silence when the field is not active or mod is suppressing input
-                    if (!ControllerRouter.IsFieldActive || ControllerRouter.SuppressGameInput)
+                    // Silence when the field is not active, mod is suppressing input, or
+                    // an NPC message box is displaying dialogue.
+                    if (!ControllerRouter.IsFieldActive || ControllerRouter.SuppressGameInput
+                        || DialogueTracker.IsInDialogue)
                     {
                         if (SoundPlayer.IsWallTonePlaying())
                             SoundPlayer.StopWallTone();
@@ -238,7 +238,7 @@ namespace FFII_ScreenReader.Core
         {
             nextBeaconTime = Time.time + 0.3f;  // Delay first beacon by 300ms for scene stability
 
-            while (mod.IsAudioBeaconsEnabled())
+            while (PreferencesManager.AudioBeaconsEnabled)
             {
                 if (Time.time < nextBeaconTime)
                 {
@@ -253,8 +253,10 @@ namespace FFII_ScreenReader.Core
                     continue;
                 }
 
-                // Silence when the field is not active or mod is suppressing input
-                if (!ControllerRouter.IsFieldActive || ControllerRouter.SuppressGameInput)
+                // Silence when the field is not active, mod is suppressing input, or
+                // an NPC message box is displaying dialogue.
+                if (!ControllerRouter.IsFieldActive || ControllerRouter.SuppressGameInput
+                    || DialogueTracker.IsInDialogue)
                 {
                     nextBeaconTime = Time.time + 0.1f;
                     continue;

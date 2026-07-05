@@ -131,13 +131,14 @@ namespace FFII_ScreenReader.Patches
 
                 int cursorIndex = targetCursor.Index;
 
-                string announcement = TryGetItemFromContentList(controller, cursorIndex);
+                string announcement = TryGetItemFromContentList(controller, cursorIndex, out int count);
 
                 if (string.IsNullOrEmpty(announcement))
                     return;
 
                 BattleItemMenuState.SetActive();
 
+                announcement = MenuPosition.Format(announcement, cursorIndex, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -147,8 +148,9 @@ namespace FFII_ScreenReader.Patches
         }
 
 
-        private static string TryGetItemFromContentList(BattleItemInfomationController controller, int cursorIndex)
+        private static string TryGetItemFromContentList(BattleItemInfomationController controller, int cursorIndex, out int count)
         {
+            count = -1;
             try
             {
                 // Access displayDataList via pointer offset (List<ItemListContentData> at 0xE0)
@@ -160,6 +162,7 @@ namespace FFII_ScreenReader.Patches
                         var data = displayDataList[cursorIndex];
                         if (data != null)
                         {
+                            count = displayDataList.Count;
                             return FormatItemAnnouncement(data);
                         }
                     }

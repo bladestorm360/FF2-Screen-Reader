@@ -21,8 +21,9 @@ namespace FFII_ScreenReader.Menus
         /// Try to read save slot information from the current cursor position.
         /// Returns a formatted string with all relevant save information, or null if not a save slot.
         /// </summary>
-        public static string TryReadSaveSlot(Transform cursorTransform, int cursorIndex)
+        public static string TryReadSaveSlot(Transform cursorTransform, int cursorIndex, out int count)
         {
+            count = -1;
             if (cursorTransform == null)
                 return null;
 
@@ -50,6 +51,7 @@ namespace FFII_ScreenReader.Menus
                             string slotInfo = ReadSlotFromTransform(saveSlot, cursorIndex);
                             if (slotInfo != null)
                             {
+                                count = contentList.childCount;
                                 return slotInfo;
                             }
                         }

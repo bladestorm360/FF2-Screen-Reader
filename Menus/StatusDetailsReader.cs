@@ -843,6 +843,7 @@ namespace FFII_ScreenReader.Menus
             {
                 var stat = statList[index];
                 string value = stat.Reader(tracker.CurrentCharacterData);
+                value = MenuPosition.Format(value, index, statList.Count);
                 FFII_ScreenReaderMod.SpeakText(value, true);
             }
             catch (Exception ex)

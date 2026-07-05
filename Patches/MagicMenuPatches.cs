@@ -40,6 +40,7 @@ namespace FFII_ScreenReader.Patches
         private static bool _isSpellListFocused = false;
         private static bool _isTargetSelectionActive = false;
         private static bool _isCommandMenuActive = false;
+        private static bool _cmdBarOpenRead = false;   // initial Use/Forget announced this COMMAND entry
         private static int lastSpellId = -1;
         private static string lastTargetAnnouncement = "";
         private static string lastCommandAnnouncement = "";
@@ -52,6 +53,7 @@ namespace FFII_ScreenReader.Patches
                 _isSpellListFocused = false;
                 _isTargetSelectionActive = false;
                 _isCommandMenuActive = false;
+                _cmdBarOpenRead = false;
                 lastSpellId = -1;
                 lastTargetAnnouncement = "";
                 lastCommandAnnouncement = "";
@@ -77,6 +79,7 @@ namespace FFII_ScreenReader.Patches
         public static bool IsSpellListActive => _isSpellListFocused;
         public static bool IsTargetSelectionActive => _isTargetSelectionActive;
         public static bool IsCommandMenuActive => _isCommandMenuActive;
+        public static bool CmdBarOpenRead { get => _cmdBarOpenRead; set => _cmdBarOpenRead = value; }
 
         public static bool IsActive => _helper.IsActive;
 
@@ -450,6 +453,25 @@ namespace FFII_ScreenReader.Patches
                         BindingFlags.Public | BindingFlags.Static);
                     harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
                 }
+
+                // Patch UpdateController to announce the INITIAL command on open (UpdateFocus only
+                // fires on nav, so the bar was silent on entry). Additive — separate postfix.
+                MethodInfo updateControllerMethod = null;
+                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                {
+                    if (method.Name == "UpdateController")
+                    {
+                        updateControllerMethod = method;
+                        break;
+                    }
+                }
+
+                if (updateControllerMethod != null)
+                {
+                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(CommandController_UpdateController_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(updateControllerMethod, postfix: new HarmonyMethod(postfix));
+                }
             }
             catch
             {
@@ -603,7 +625,83 @@ namespace FFII_ScreenReader.Patches
                     if (!MagicMenuState.ShouldAnnounceCommand(commandName))
                         return;
 
-                    FFII_ScreenReaderMod.SpeakText(commandName, interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
+        /// Postfix for AbilityCommandController.UpdateController — announces the INITIALLY-focused
+        /// Use/Forget command on OPEN. UpdateFocus (the nav reader) doesn't fire for the initial
+        /// focus, so the bar was silent on entry. Self-gated: reads once per COMMAND-state entry via
+        /// _cmdBarOpenRead (reset on leave). Additive only — does not modify UpdateFocus, suppression,
+        /// or the use/forget menus. Dedup is shared with the nav reader via ShouldAnnounceCommand.
+        /// </summary>
+        public static void CommandController_UpdateController_Postfix(object __instance)
+        {
+            try
+            {
+                if (__instance == null)
+                    return;
+
+                var controller = __instance as AbilityCommandController;
+                if (controller == null || !controller.gameObject.activeInHierarchy)
+                    return;
+
+                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
+                if (windowController == null)
+                    return;
+
+                int currentState = MagicMenuState.GetCurrentState(windowController);
+                if (currentState != MagicMenuState.STATE_COMMAND)
+                {
+                    MagicMenuState.CmdBarOpenRead = false;   // re-arm for the next COMMAND entry
+                    return;
+                }
+                if (MagicMenuState.CmdBarOpenRead)
+                    return;   // already announced this entry; nav is handled by UpdateFocus
+
+                // Same read as CommandController_UpdateFocus_Postfix (duplicated to keep that reader
+                // untouched): selectCursor -> contentList[index].Data.Name.
+                IntPtr controllerPtr = controller.Pointer;
+                if (controllerPtr == IntPtr.Zero)
+                    return;
+
+                unsafe
+                {
+                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_SELECT_CURSOR);
+                    if (cursorPtr == IntPtr.Zero)
+                        return;
+
+                    var cursor = new GameCursor(cursorPtr);
+                    int index = cursor.Index;
+
+                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_CONTENT_LIST);
+                    if (contentListPtr == IntPtr.Zero)
+                        return;
+
+                    var contentList = new Il2CppSystem.Collections.Generic.List<AbilityCommandContentView>(contentListPtr);
+                    if (index < 0 || index >= contentList.Count)
+                        return;
+
+                    var contentView = contentList[index];
+                    if (contentView == null)
+                        return;
+
+                    var data = contentView.Data;
+                    if (data == null)
+                        return;
+
+                    string commandName = data.Name;
+                    if (string.IsNullOrEmpty(commandName))
+                        return;
+
+                    MagicMenuState.CmdBarOpenRead = true;   // success — don't re-read this entry
+                    if (MagicMenuState.ShouldAnnounceCommand(commandName))
+                        FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
                 }
             }
             catch
@@ -844,6 +942,7 @@ namespace FFII_ScreenReader.Patches
 
                     MagicMenuState.OnTargetSelectionActive();
 
+                    announcement = MenuPosition.Format(announcement, index, contentList.Count);
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
                 }
             }
@@ -875,37 +974,38 @@ namespace FFII_ScreenReader.Patches
                 if (index < 0 || index >= contentList.Count)
                     return;
 
+                int count = contentList.Count;
                 var contentController = contentList[index];
                 if (contentController == null)
                 {
-                    AnnounceEmpty();
+                    AnnounceEmpty(index, count);
                     return;
                 }
 
                 var ability = contentController.Data;
                 if (ability == null)
                 {
-                    AnnounceEmpty();
+                    AnnounceEmpty(index, count);
                     return;
                 }
 
                 // Pass contentController to read gauge for percentage
-                AnnounceSpell(ability, contentController);
+                AnnounceSpell(ability, contentController, index, count);
             }
             catch
             {
             }
         }
 
-        private static void AnnounceEmpty()
+        private static void AnnounceEmpty(int index, int count)
         {
             if (MagicMenuState.ShouldAnnounceSpell(-1))
             {
-                FFII_ScreenReaderMod.SpeakText(T("Empty"), interrupt: true);
+                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count), interrupt: true);
             }
         }
 
-        private static void AnnounceSpell(OwnedAbility ability, BattleAbilityInfomationContentController contentController = null)
+        private static void AnnounceSpell(OwnedAbility ability, BattleAbilityInfomationContentController contentController, int index, int count)
         {
             try
             {
@@ -998,6 +1098,7 @@ namespace FFII_ScreenReader.Patches
                     announcement += $": {description}";
                 }
 
+                announcement = MenuPosition.Format(announcement, index, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch

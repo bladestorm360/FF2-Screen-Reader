@@ -11,18 +11,21 @@ namespace FFII_ScreenReader.Utils
         /// <summary>WAV file header size in bytes.</summary>
         public const int WAV_HEADER_SIZE = 44;
 
-        /// <summary>Pre-allocated buffer size per channel (bytes).</summary>
+        /// <summary>Cap (bytes) for the reusable beacon scratch buffer in AudioEngine.</summary>
         public const int CHANNEL_BUFFER_SIZE = 32768;
 
         /// <summary>
         /// Wall tone frequencies per direction (Hz).
-        /// Higher frequencies for vertical, lower for horizontal.
+        /// The four tones form an E minor 7th chord: E3-G3-B3-D4.
+        /// NORTH=D4 (highest) and SOUTH=E3 (lowest) are the outer voices;
+        /// WEST=G3 (left) and EAST=B3 (right) are spread symmetrically
+        /// around the center so left/right are clearly distinguishable.
         /// </summary>
         public static class WallToneFrequencies
         {
             public const int NORTH = 294;
             public const int SOUTH = 165;
-            public const int EAST = 220;
+            public const int EAST = 247;
             public const int WEST = 196;
         }
 
@@ -88,21 +91,7 @@ namespace FFII_ScreenReader.Utils
         /// </summary>
         public static class WallToneTiming
         {
-            public const int ONE_SHOT_DURATION_MS = 150;
             public const int SUSTAIN_DURATION_MS = 200;
-        }
-
-        /// <summary>
-        /// waveOut API flag constants.
-        /// </summary>
-        public static class WaveFlags
-        {
-            public const uint WHDR_DONE = 0x01;
-            public const uint WHDR_PREPARED = 0x02;
-            public const uint WHDR_BEGINLOOP = 0x04;
-            public const uint WHDR_ENDLOOP = 0x08;
-            public const int WAVE_MAPPER = -1;
-            public const int CALLBACK_NULL = 0;
         }
     }
 }

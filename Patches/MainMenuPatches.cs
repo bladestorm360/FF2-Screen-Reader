@@ -1,19 +1,19 @@
 using System;
-using System.Collections;
 using HarmonyLib;
 using MelonLoader;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
-using static FFII_ScreenReader.Utils.ModTextTranslator;
+using FFII_ScreenReader.Menus;
 
 using MainMenuController_KeyInput = Il2CppLast.UI.KeyInput.MainMenuController;
 
 namespace FFII_ScreenReader.Patches
 {
     /// <summary>
-    /// Announces the default-focused command (Item / Magic / Status / Equip / Save…)
-    /// when the main field menu opens. Without this, the menu's initial focus is silent —
-    /// the user only hears subsequent navigation via CommandMenuController.SetFocus.
+    /// Manages the MAIN_MENU container state (controller routing) and arms the field command-bar
+    /// open-read on field-menu open (CommandBarPatches.ArmField) so its UpdateController postfix
+    /// announces the initially-focused command (Item / Magic / Status / …). Navigation is read by
+    /// the generic cursor reader.
     /// </summary>
     public static class MainMenuPatches
     {
@@ -33,8 +33,9 @@ namespace FFII_ScreenReader.Patches
 
                 if (showMethod != null)
                 {
+                    var prefix = AccessTools.Method(typeof(MainMenuPatches), nameof(Show_Prefix));
                     var postfix = AccessTools.Method(typeof(MainMenuPatches), nameof(Show_Postfix));
-                    harmony.Patch(showMethod, postfix: new HarmonyMethod(postfix));
+                    harmony.Patch(showMethod, prefix: new HarmonyMethod(prefix), postfix: new HarmonyMethod(postfix));
                 }
                 else
                 {
@@ -61,6 +62,17 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        /// <summary>
+        /// Runs before Show() so the field command-bar open-read is armed. The armed
+        /// UpdateController postfix (CommandBarPatches) then reads focusId once the menu has set it.
+        /// Fires on open and on returning to the command bar from a submenu, so it re-announces.
+        /// </summary>
+        public static void Show_Prefix()
+        {
+            try { CommandBarPatches.ArmField(); }
+            catch { }
+        }
+
         public static void Show_Postfix(MainMenuController_KeyInput __instance)
         {
             try
@@ -73,9 +85,9 @@ namespace FFII_ScreenReader.Patches
                 // waypoints inside the menu). Re-asserted here because Show re-fires when
                 // returning from a submenu to the command bar. Preserved across submenu
                 // switches by MenuStateRegistry.SetActiveExclusive; cleared by Close_Postfix.
+                // Initial focus is announced by the armed UpdateController open-read (Show_Prefix →
+                // CommandBarPatches.Field_UpdateController_Postfix); navigation by the generic reader.
                 MenuStateRegistry.SetActive(MenuStateRegistry.MAIN_MENU, true);
-
-                CoroutineManager.StartManaged(AnnounceInitialFocus(__instance));
             }
             catch { }
         }
@@ -90,64 +102,9 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 MenuStateRegistry.SetActive(MenuStateRegistry.MAIN_MENU, false);
+                CommandBarPatches.ClearField();
             }
             catch { }
-        }
-
-        private static IEnumerator AnnounceInitialFocus(MainMenuController_KeyInput controller)
-        {
-            // Yield a few frames so focusId is settled after Show() completes.
-            yield return null;
-            yield return null;
-            yield return null;
-
-            string commandName = null;
-            try
-            {
-                if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
-                    yield break;
-
-                int focusId = ReadFocusId(controller);
-                commandName = GetCommandName(focusId);
-            }
-            catch { }
-
-            if (!string.IsNullOrEmpty(commandName))
-                FFII_ScreenReaderMod.SpeakText(commandName, interrupt: true);
-        }
-
-        private static unsafe int ReadFocusId(MainMenuController_KeyInput controller)
-        {
-            IntPtr ptr = controller.Pointer;
-            if (ptr == IntPtr.Zero)
-                return 0;
-
-            return *(int*)((byte*)ptr.ToPointer() + IL2CppOffsets.MainMenu.OFFSET_FOCUS_ID);
-        }
-
-        /// <summary>
-        /// MenuCommandId values from dump.cs:303134.
-        /// Strings are wrapped by T() at speak time via SpeakText / ModTextTranslator.
-        /// </summary>
-        private static string GetCommandName(int commandId)
-        {
-            switch (commandId)
-            {
-                case 1: return T("Item");
-                case 2: return T("Magic");
-                case 3: return T("Equipment");
-                case 4: return T("Status");
-                case 5: return T("Sort");
-                case 6: return T("Words");
-                case 7: return T("Config");
-                case 8: return T("Interruption");
-                case 9: return T("Save");
-                case 10: return T("Back");
-                case 11: return T("Job");
-                case 12: return T("Ability");
-                case 13: return T("Load");
-                default: return null;
-            }
         }
     }
 }

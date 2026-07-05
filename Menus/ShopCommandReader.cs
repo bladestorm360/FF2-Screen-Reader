@@ -163,22 +163,9 @@ namespace FFII_ScreenReader.Menus
 
         private static string GetCommandName(ShopCommandMenuContentController content)
         {
-            try
-            {
-                var commandId = content.CommandId;
-                return commandId switch
-                {
-                    Il2CppLast.Defaine.ShopCommandId.Buy => "Buy",
-                    Il2CppLast.Defaine.ShopCommandId.Sell => "Sell",
-                    Il2CppLast.Defaine.ShopCommandId.Equipment => "Equipment",
-                    Il2CppLast.Defaine.ShopCommandId.Back => "Back",
-                    _ => null
-                };
-            }
-            catch
-            {
-                return null;
-            }
+            // Centralized map (see CommandBarReader).
+            try { return CommandBarReader.GetShopCommandName(content.CommandId); }
+            catch { return null; }
         }
     }
 }

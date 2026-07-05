@@ -164,7 +164,7 @@ namespace FFII_ScreenReader.Patches
                 int cursorIndex = targetCursor.Index;
 
                 // Get the announcement with proper character data lookup
-                string announcement = TryGetAbilityAnnouncement(__instance, cursorIndex);
+                string announcement = TryGetAbilityAnnouncement(__instance, cursorIndex, out int count);
 
                 if (string.IsNullOrEmpty(announcement))
                     return;
@@ -172,6 +172,7 @@ namespace FFII_ScreenReader.Patches
                 // Set active state and clear other menus
                 BattleMagicMenuState.SetActive();
 
+                announcement = MenuPosition.Format(announcement, cursorIndex, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch (Exception ex)
@@ -183,8 +184,9 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Try to get the ability at the cursor index, using character's OwnedAbilityList for accurate proficiency.
         /// </summary>
-        private static string TryGetAbilityAnnouncement(object controller, int cursorIndex)
+        private static string TryGetAbilityAnnouncement(object controller, int cursorIndex, out int count)
         {
+            count = -1;
             try
             {
                 IntPtr ptr = IntPtr.Zero;
@@ -209,6 +211,8 @@ namespace FFII_ScreenReader.Patches
                     var dataList = new Il2CppSystem.Collections.Generic.List<OwnedAbility>(dataListPtr);
                     if (dataList == null || cursorIndex < 0 || cursorIndex >= dataList.Count)
                         return null;
+
+                    count = dataList.Count;
 
                     var ability = dataList[cursorIndex];
                     if (ability == null)

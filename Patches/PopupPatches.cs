@@ -482,20 +482,22 @@ namespace FFII_ScreenReader.Patches
                 string buttonText = ReadButtonFromCommandList(
                     PopupState.ActivePopupPtr,
                     PopupState.CommandListOffset,
-                    index);
+                    index,
+                    out int count);
 
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     PopupState.LastButtonIndex = index;
                     buttonText = TextUtils.StripIconMarkup(buttonText);
-                    FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, index, count), interrupt: true);
                 }
             }
             catch { }
         }
 
-        private static string ReadButtonFromCommandList(IntPtr popupPtr, int cmdListOffset, int index)
+        private static string ReadButtonFromCommandList(IntPtr popupPtr, int cmdListOffset, int index, out int count)
         {
+            count = -1;
             try
             {
                 IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + cmdListOffset);
@@ -503,6 +505,7 @@ namespace FFII_ScreenReader.Patches
 
                 // IL2CPP List: _size at 0x18, _items at 0x10
                 int size = Marshal.ReadInt32(listPtr + 0x18);
+                count = size;
                 if (index < 0 || index >= size) return null;
 
                 IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
@@ -657,7 +660,7 @@ namespace FFII_ScreenReader.Patches
                             if (cursorPtr != IntPtr.Zero)
                             {
                                 int idx = new GameCursor(cursorPtr).Index;
-                                string choice = ReadButtonFromCommandList(popupPtr, PopupState.CommandListOffset, idx);
+                                string choice = ReadButtonFromCommandList(popupPtr, PopupState.CommandListOffset, idx, out _);
                                 if (!string.IsNullOrWhiteSpace(choice))
                                 {
                                     announcement += ". " + TextUtils.StripIconMarkup(choice);
@@ -759,7 +762,7 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
                 }
             }
             catch { }
@@ -827,7 +830,7 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
                 }
             }
             catch { }

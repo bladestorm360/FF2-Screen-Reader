@@ -17,6 +17,18 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
+        /// Command-bar controllers — private fields read by the initial-focus-on-open reader
+        /// (CommandBarPatches). Item uses its public CommandIdCash property, so it needs no offset.
+        /// </summary>
+        internal static class CommandBar
+        {
+            public const int FIELD_FOCUS_ID = 0x90;       // KeyInput.MainMenuController.focusId (MenuCommandId)
+            public const int ITEM_COMMAND_ID_CACHE = 0x18; // KeyInput.ItemCommandController.<CommandIdCash> (ItemCommandId)
+            public const int EQUIP_SELECT_CURSOR = 0x38;  // KeyInput.EquipmentCommandController.selectCursor
+            public const int EQUIP_CONTENTS = 0x30;       // KeyInput.EquipmentCommandController.contents (List<EquipmentCommandView>)
+        }
+
+        /// <summary>
         /// BattleCommandSelectController state values.
         /// Used by BattleItemPatches and BattleMagicPatches for sub-state detection.
         /// </summary>

@@ -230,6 +230,11 @@ namespace FFII_ScreenReader.Core
                     () => PreferencesManager.EnemyHPDisplay,
                     PreferencesManager.SetEnemyHPDisplay,
                     () => T("Controls how enemy HP appears in battle: numeric value, percentage of max, or hidden.")),
+                new EnumItem(T("Multi-hit Damage"),
+                    new[] { "Total only", "With hit count" },
+                    () => PreferencesManager.DamageDisplay,
+                    PreferencesManager.SetDamageDisplay,
+                    () => T("On multi-hit physical attacks, optionally prepend the number of hits, e.g. '14x1552 damage'.")),
 
                 // Announcements section
                 new SectionHeader(T("Announcements")),
@@ -245,6 +250,12 @@ namespace FFII_ScreenReader.Core
                     () => FFII_ScreenReaderMod.AnnounceOnBeaconRestartEnabled
                         ? T("On. Restarting the beacon also re-speaks the current destination.")
                         : T("Off. Restarting the beacon only re-pings, without speaking.")),
+                new ToggleItem(T("Menu Position Announcements"),
+                    () => PreferencesManager.MenuPositionAnnouncementsEnabled,
+                    ToggleMenuPositionAnnouncements,
+                    () => PreferencesManager.MenuPositionAnnouncementsEnabled
+                        ? T("On. List entries announce their position, for example, 3 of 12.")
+                        : T("Off. List entries do not announce position.")),
 
                 // Close Menu action
                 new ActionItem(T("Close Menu"), Close,
@@ -441,7 +452,17 @@ namespace FFII_ScreenReader.Core
         private static void ToggleStickClickNormalization()
         {
             bool newValue = !PreferencesManager.StickClickNormalization;
-            PreferencesManager.SaveToggle("StickClickNormalization", newValue);
+            PreferencesManager.SaveStickClickNormalization(newValue);
+        }
+
+        /// <summary>
+        /// Toggles the MenuPositionAnnouncements preference. The re-announce of the current item
+        /// (AnnounceCurrentItem) provides the audible feedback, so no separate speech here.
+        /// </summary>
+        private static void ToggleMenuPositionAnnouncements()
+        {
+            bool newValue = !PreferencesManager.MenuPositionAnnouncementsEnabled;
+            PreferencesManager.SaveMenuPositionAnnouncements(newValue);
         }
 
         // --- Controller-accessible navigation hooks ---
@@ -469,7 +490,27 @@ namespace FFII_ScreenReader.Core
                 announcement = $"{item.Name}: {value}";
             }
 
+            var (index, count) = NavigablePosition();
+            announcement = MenuPosition.Format(announcement, index, count);
+
             FFII_ScreenReaderMod.SpeakText(announcement, interrupt: interrupt);
+        }
+
+        /// <summary>
+        /// Position of the current item among the navigable (non-header) items. Section headers are
+        /// silently skipped during navigation, so the user hears "(N of total settings)" — not counting
+        /// the invisible headers.
+        /// </summary>
+        private static (int index, int count) NavigablePosition()
+        {
+            int count = 0, index = -1;
+            for (int i = 0; i < items.Count; i++)
+            {
+                if (items[i] is SectionHeader) continue;
+                if (i == currentIndex) index = count;
+                count++;
+            }
+            return (index, count);
         }
     }
 }

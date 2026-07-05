@@ -13,9 +13,9 @@ namespace FFII_ScreenReader.Patches
     /// <summary>
     /// Patches for playing sound effects during player movement (wall bumps, footsteps).
     /// Wall bumps use a coroutine: captures position before movement, checks after 0.08s,
-    /// plays SoundPlayer.PlayWallBump() (procedural tone via waveOut API) on a confirmed bump.
+    /// plays SoundPlayer.PlayWallBump() (procedural tone via SDL3 audio) on a confirmed bump.
     /// Footsteps use a per-frame tile-crossing poll (PollFootsteps, wired into
-    /// InputManager.CheckInput) so cadence naturally tracks actual movement speed (walk vs.
+    /// InputManager.Update) so cadence naturally tracks actual movement speed (walk vs.
     /// dash) instead of a fixed cooldown.
     /// </summary>
     [HarmonyPatch]
@@ -188,7 +188,7 @@ namespace FFII_ScreenReader.Patches
         /// Per-frame footstep poll. Reads the live player tile and plays a footstep when it
         /// changes — so cadence naturally tracks actual movement speed (walk vs. dash). Silent
         /// in vehicles, in menus/battle, and on the same frame as a wall-bump tick.
-        /// Wire-up: called from InputManager.CheckInput after ControllerRouter.Update.
+        /// Wire-up: called from InputManager.Update after ControllerRouter.Update.
         /// </summary>
         public static void PollFootsteps()
         {
@@ -196,7 +196,7 @@ namespace FFII_ScreenReader.Patches
             {
                 if (!ControllerRouter.IsFieldActive) return;
                 if (FFII_ScreenReaderMod.Instance == null
-                    || !FFII_ScreenReaderMod.Instance.IsFootstepsEnabled()) return;
+                    || !PreferencesManager.FootstepsEnabled) return;
                 if (!MoveStateHelper.IsOnFoot()) return;
 
                 var player = FFII_ScreenReaderMod.Instance.GetFieldPlayer();

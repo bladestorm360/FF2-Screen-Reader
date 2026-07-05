@@ -137,6 +137,10 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(basicFunctionDamageViewMethod, postfix: new HarmonyMethod(postfix));
                 }
 
+                // Capture the on-screen "xN" multi-hit multiplier so the damage announce can
+                // prepend it (Multi-hit Damage setting), e.g. "14x1552 damage".
+                PatchHitCount(harmony);
+
                 // Patch BattleConditionController.Add for status effect announcements
                 var addConditionMethod = AccessTools.Method(typeof(BattleConditionController), "Add");
                 if (addConditionMethod != null)
@@ -207,6 +211,57 @@ namespace FFII_ScreenReader.Patches
                 catch { }
             }
             return null;
+        }
+
+        /// <summary>
+        /// Postfix on Last.UI.DamageViewUIManager.CreateHitCount(int hitCountValue, ...) to capture the
+        /// on-screen "xN" multi-hit multiplier so the damage announce can prepend it (e.g. "14x1552 damage").
+        /// The multiplier fires just before the matching CreateDamageView; consumed by the damage postfix.
+        /// </summary>
+        private static void PatchHitCount(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var type = FindType("Il2CppLast.UI.DamageViewUIManager");
+                if (type == null)
+                {
+                    MelonLogger.Warning("[BattleMessage] DamageViewUIManager type not found");
+                    return;
+                }
+
+                MethodInfo method = null;
+                foreach (var m in type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    if (m.Name == "CreateHitCount")
+                    {
+                        var ps = m.GetParameters();
+                        if (ps.Length >= 1 && ps[0].ParameterType == typeof(int)) { method = m; break; }
+                    }
+                }
+                if (method == null)
+                {
+                    MelonLogger.Warning("[BattleMessage] CreateHitCount(int,...) not found");
+                    return;
+                }
+
+                var postfix = typeof(BattleMessagePatches).GetMethod(
+                    nameof(CreateHitCount_Postfix), BindingFlags.Public | BindingFlags.Static);
+                harmony.Patch(method, postfix: new HarmonyMethod(postfix));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[BattleMessage] Error patching CreateHitCount: {ex.Message}");
+            }
+        }
+
+        // Multi-hit multiplier captured from DamageViewUIManager.CreateHitCount, which fires just before
+        // the matching CreateDamageView. Consumed (and reset to 1) by CreateDamageViewUtility_Postfix.
+        private static int _pendingHitCount = 1;
+
+        /// <summary>Captures the hit-count multiplier (__0 = hitCountValue) for the next damage view.</summary>
+        public static void CreateHitCount_Postfix(int __0)
+        {
+            _pendingHitCount = __0;
         }
 
         /// <summary>
@@ -582,6 +637,13 @@ namespace FFII_ScreenReader.Patches
                 // since it has the HitType parameter for HP/MP distinction
                 if (isRecovery) return;
 
+                // Consume the multi-hit count captured by CreateHitCount (fires just before this view).
+                // Reset to 1 unconditionally so a later damage with no fresh hit count defaults to single
+                // (also clears a stale count if the multi-hit ended in a miss). This is the authoritative
+                // HP-damage path, so CreateDamageViewWithHitType_Postfix deliberately leaves it untouched.
+                int hitCount = _pendingHitCount;
+                _pendingHitCount = 1;
+
                 string targetName = GetTargetName(targetUnitData);
 
                 // Check for damage source (e.g., "Poison" from status effects)
@@ -601,7 +663,12 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    message = $"{targetName}: {damage} damage";
+                    // HP DAMAGE — optionally prepend the multi-hit "{N}x" multiplier (kept terse; the
+                    // " damage" suffix stays so damage/recovery/drain remain distinguishable). The
+                    // dedupe key still uses the raw value so cross-postfix dedup is unaffected.
+                    message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
+                        ? $"{targetName}: {hitCount}x{damage} damage"
+                        : $"{targetName}: {damage} damage";
                     dedupeKey = $"{targetName}:{damage}:damage";
                 }
 

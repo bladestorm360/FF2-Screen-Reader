@@ -226,6 +226,7 @@ namespace FFII_ScreenReader.Patches
                 {
                 }
 
+                announcement = MenuPosition.Format(announcement, index, contents.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch

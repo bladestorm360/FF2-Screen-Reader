@@ -203,9 +203,12 @@ namespace FFII_ScreenReader.Core
         {
             try
             {
-                if (!SDL3.SDL_Init(SDL3.SDL_INIT_GAMEPAD))
+                // Subsystem-scoped init (not SDL_Init) so the gamepad and audio subsystems are
+                // reference-counted independently — AudioEngine inits SDL_INIT_AUDIO separately
+                // and neither teardown tears down the other.
+                if (!SDL3.SDL_InitSubSystem(SDL3.SDL_INIT_GAMEPAD))
                 {
-                    MelonLogger.Error("[GamepadManager] SDL_Init failed");
+                    MelonLogger.Error("[GamepadManager] SDL_InitSubSystem(GAMEPAD) failed");
                     return;
                 }
                 sdlInitialized = true;
@@ -239,7 +242,10 @@ namespace FFII_ScreenReader.Core
 
             if (sdlInitialized)
             {
-                try { SDL3.SDL_Quit(); } catch { }
+                // Quit ONLY the gamepad subsystem — never blanket SDL_Quit(), which would also
+                // kill the audio device AudioEngine owns. SDL fully cleans up when its last
+                // subsystem quits.
+                try { SDL3.SDL_QuitSubSystem(SDL3.SDL_INIT_GAMEPAD); } catch { }
                 sdlInitialized = false;
             }
 

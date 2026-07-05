@@ -6,33 +6,8 @@ using MelonLoader;
 namespace FFII_ScreenReader.Utils
 {
     /// <summary>
-    /// Sound channels for concurrent playback.
-    /// Each channel has its own waveOut handle and plays completely independently.
-    /// </summary>
-    public enum SoundChannel
-    {
-        Movement,    // Footsteps only
-        WallBump,    // Wall bump sounds (separate from footsteps to avoid timing conflicts)
-        WallTone,    // Wall proximity tones (loopable)
-        Beacon       // Audio beacon pings
-    }
-
-    /// <summary>
-    /// Request for a wall tone in a specific direction (adjacent only).
-    /// </summary>
-    public struct WallToneRequest
-    {
-        public SoundPlayer.Direction Direction;
-
-        public WallToneRequest(SoundPlayer.Direction dir)
-        {
-            Direction = dir;
-        }
-    }
-
-    /// <summary>
     /// High-level sound playback facade.
-    /// Delegates channel management to AudioChannel and tone synthesis to ToneGenerator.
+    /// Delegates output/mixing to AudioEngine (SDL3) and tone synthesis to ToneGenerator.
     /// </summary>
     public static class SoundPlayer
     {
@@ -41,13 +16,10 @@ namespace FFII_ScreenReader.Utils
         private static byte[] wallBumpWav;
         private static byte[] footstepWav;
 
-        // One-shot wall tones (with decay)
-        private static byte[] wallToneNorth;
-        private static byte[] wallToneSouth;
-        private static byte[] wallToneEast;
-        private static byte[] wallToneWest;
-
-        // Sustain wall tones (for looping)
+        // Sustain wall tones (one per direction, for looping). Generated at REFERENCE
+        // amplitude (BASE_VOLUME × direction multiplier, pan baked in). User volume and
+        // clipping headroom are applied at play time via per-stream gain; SDL sums the
+        // active direction streams (no manual pre-mix).
         private static byte[] wallToneNorthSustain;
         private static byte[] wallToneSouthSustain;
         private static byte[] wallToneEastSustain;
@@ -55,7 +27,8 @@ namespace FFII_ScreenReader.Utils
 
         #endregion
 
-        // Track current wall tone directions as a bitmask to avoid unnecessary loop restarts
+        // Track current wall tone directions as a bitmask to detect newly-on / newly-off
+        // directions across the ~100ms audio loop ticks.
         private static int currentWallDirectionsMask = 0;
         private static int lastWallToneVolume = 50;
 
@@ -71,12 +44,12 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Initializes audio channels and pre-generates all cached tones.
+        /// Initializes the audio engine and pre-generates all cached tones.
         /// Call this once during mod initialization.
         /// </summary>
         public static void Initialize()
         {
-            AudioChannel.Initialize();
+            AudioEngine.Initialize();
 
             // Wall bump: deep thud with soft attack
             wallBumpWav = ToneGenerator.MonoToStereo(
@@ -93,16 +66,9 @@ namespace FFII_ScreenReader.Utils
                     SoundConstants.Footstep.VOLUME));
 
             float bv = SoundConstants.WallToneVolumeMultipliers.BASE_VOLUME;
-            int oneShot = SoundConstants.WallToneTiming.ONE_SHOT_DURATION_MS;
             int sustain = SoundConstants.WallToneTiming.SUSTAIN_DURATION_MS;
 
-            // One-shot tones (with decay) for single-direction pings
-            wallToneNorth = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.NORTH, oneShot, bv * SoundConstants.WallToneVolumeMultipliers.NORTH, SoundConstants.WallTonePan.NORTH);
-            wallToneSouth = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.SOUTH, oneShot, bv * SoundConstants.WallToneVolumeMultipliers.SOUTH, SoundConstants.WallTonePan.SOUTH);
-            wallToneEast  = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.EAST,  oneShot, bv * SoundConstants.WallToneVolumeMultipliers.EAST,  SoundConstants.WallTonePan.EAST);
-            wallToneWest  = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.WEST,  oneShot, bv * SoundConstants.WallToneVolumeMultipliers.WEST,  SoundConstants.WallTonePan.WEST);
-
-            // Sustain tones (no decay, cycle-aligned for seamless looping)
+            // Sustain tones (no decay, cycle-aligned for seamless looping) at reference amplitude.
             wallToneNorthSustain = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.NORTH, sustain, bv * SoundConstants.WallToneVolumeMultipliers.NORTH, SoundConstants.WallTonePan.NORTH, sustain: true);
             wallToneSouthSustain = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.SOUTH, sustain, bv * SoundConstants.WallToneVolumeMultipliers.SOUTH, SoundConstants.WallTonePan.SOUTH, sustain: true);
             wallToneEastSustain  = ToneGenerator.GenerateStereoTone(SoundConstants.WallToneFrequencies.EAST,  sustain, bv * SoundConstants.WallToneVolumeMultipliers.EAST,  SoundConstants.WallTonePan.EAST,  sustain: true);
@@ -110,11 +76,11 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Shuts down all audio channels and clears cached sounds.
+        /// Shuts down the audio engine and clears cached state.
         /// </summary>
         public static void Shutdown()
         {
-            AudioChannel.Shutdown();
+            AudioEngine.Shutdown();
             currentWallDirectionsMask = 0;
             lastWallToneVolume = 50;
         }
@@ -122,137 +88,92 @@ namespace FFII_ScreenReader.Utils
         #region Public Playback Methods
 
         /// <summary>
-        /// Plays the wall bump sound effect on the WallBump channel.
+        /// Plays the wall bump sound effect on the WallBump stream.
         /// </summary>
         public static void PlayWallBump()
         {
             if (wallBumpWav == null) return;
-            AudioChannel.Play(wallBumpWav, SoundChannel.WallBump, false,
-                FFII_ScreenReader.Core.PreferencesManager.WallBumpVolume);
+            int len = wallBumpWav.Length - SoundConstants.WAV_HEADER_SIZE;
+            if (len <= 0) return;
+            float gain = FFII_ScreenReader.Core.PreferencesManager.WallBumpVolume / 50.0f;
+            AudioEngine.PlayOneShot(AudioEngine.Stream.WallBump, wallBumpWav, SoundConstants.WAV_HEADER_SIZE, len, gain);
         }
 
         /// <summary>
-        /// Plays the footstep click sound on the Movement channel.
+        /// Plays the footstep click sound on the Footstep stream.
         /// </summary>
         public static void PlayFootstep()
         {
             if (footstepWav == null) return;
-            AudioChannel.Play(footstepWav, SoundChannel.Movement, false,
-                FFII_ScreenReader.Core.PreferencesManager.FootstepVolume);
+            int len = footstepWav.Length - SoundConstants.WAV_HEADER_SIZE;
+            if (len <= 0) return;
+            float gain = FFII_ScreenReader.Core.PreferencesManager.FootstepVolume / 50.0f;
+            AudioEngine.PlayOneShot(AudioEngine.Stream.Footstep, footstepWav, SoundConstants.WAV_HEADER_SIZE, len, gain);
         }
 
         /// <summary>
-        /// Plays a one-shot wall proximity tone for the given direction.
-        /// </summary>
-        public static void PlayWallTone(Direction dir)
-        {
-            byte[] tone = GetOneShotTone(dir);
-            if (tone == null) return;
-            AudioChannel.Play(tone, SoundChannel.WallTone, false,
-                FFII_ScreenReader.Core.PreferencesManager.WallToneVolume);
-        }
-
-        /// <summary>
-        /// Plays one-shot wall tones (multiple directions mixed).
-        /// </summary>
-        public static void PlayWallTones(WallToneRequest[] requests)
-        {
-            if (requests == null || requests.Length == 0) return;
-
-            var tonesToMix = new List<byte[]>();
-            foreach (var req in requests)
-            {
-                byte[] tone = GetOneShotTone(req.Direction);
-                if (tone != null)
-                    tonesToMix.Add(tone);
-            }
-
-            if (tonesToMix.Count == 0) return;
-
-            int volume = FFII_ScreenReader.Core.PreferencesManager.WallToneVolume;
-
-            if (tonesToMix.Count == 1)
-            {
-                AudioChannel.Play(tonesToMix[0], SoundChannel.WallTone, false, volume);
-                return;
-            }
-
-            byte[] mixed = ToneGenerator.MixWavFiles(tonesToMix);
-            if (mixed != null)
-                AudioChannel.Play(mixed, SoundChannel.WallTone, false, volume);
-        }
-
-        /// <summary>
-        /// Plays wall tones as a continuous looping sound.
-        /// Volume is baked into tone generation to preserve dynamic range at low volumes.
-        /// Only restarts the loop if directions or volume changed.
+        /// Plays wall tones as continuous looping sound — one SDL stream per active direction,
+        /// summed by SDL. Called every ~100ms by the audio loop; each call reconciles which
+        /// direction streams are active and tops up their queues so the loop never drains.
         /// </summary>
         public static void PlayWallTonesLooped(IList<Direction> directions)
         {
-            if (directions == null || directions.Count == 0)
+            if (!AudioEngine.IsInitialized) return;
+
+            int newMask = (directions == null || directions.Count == 0) ? 0 : DirectionsToBitmask(directions);
+            if (newMask == 0)
             {
-                StopWallTone();
+                if (currentWallDirectionsMask != 0)
+                    StopWallTone();
                 return;
             }
 
             int volume = FFII_ScreenReader.Core.PreferencesManager.WallToneVolume;
-            int newMask = DirectionsToBitmask(directions);
-            if (newMask == currentWallDirectionsMask && volume == lastWallToneVolume)
-                return;
+            int activeCount = CountBits(newMask);
+
+            // User volume × clipping headroom — replaces the 1/sqrt(n) the old code baked into
+            // the pre-mixed buffer. Applied uniformly as stream gain (pan stays baked in samples).
+            float gain = (volume / 50.0f) * (activeCount > 1 ? (float)(1.0 / Math.Sqrt(activeCount)) : 1.0f);
+
+            // Reconcile each of the four streams against the OLD mask (currentWallDirectionsMask),
+            // then commit the new mask.
+            UpdateDirectionStream(Direction.North, newMask, gain);
+            UpdateDirectionStream(Direction.South, newMask, gain);
+            UpdateDirectionStream(Direction.East,  newMask, gain);
+            UpdateDirectionStream(Direction.West,  newMask, gain);
 
             currentWallDirectionsMask = newMask;
             lastWallToneVolume = volume;
-
-            float bv = SoundConstants.WallToneVolumeMultipliers.BASE_VOLUME;
-            float scaledVol = volume / 50.0f;
-            int dur = SoundConstants.WallToneTiming.SUSTAIN_DURATION_MS;
-
-            // Build (freq, volume, pan) specs and generate ONE seamless loop buffer. Generating a
-            // single periodic mix (rather than mixing independently length-aligned tones) keeps the
-            // loop click-free when multiple walls are adjacent. Volume is baked in here.
-            var toneSpecs = new List<(int frequency, float volume, float pan)>(directions.Count);
-            foreach (var dir in directions)
-            {
-                float dirVol = bv * GetDirectionVolumeMultiplier(dir) * scaledVol;
-                toneSpecs.Add((GetDirectionFrequency(dir), dirVol, GetDirectionPan(dir)));
-            }
-
-            byte[] loopBuffer = ToneGenerator.GenerateMixedLoopTone(toneSpecs, dur);
-
-            if (loopBuffer != null)
-            {
-                // Volume already baked in during generation - use 50 (no scaling)
-                AudioChannel.Play(loopBuffer, SoundChannel.WallTone, loop: true, volumePercent: 50);
-            }
-            else
-            {
-                StopWallTone();
-            }
         }
 
         /// <summary>
-        /// Stops the continuous wall tone loop.
+        /// Stops the continuous wall tone loop (clears all four direction streams).
         /// </summary>
         public static void StopWallTone()
         {
             currentWallDirectionsMask = 0;
             lastWallToneVolume = 50;
-            AudioChannel.Stop(SoundChannel.WallTone);
+            AudioEngine.Clear(AudioEngine.Stream.WallNorth);
+            AudioEngine.Clear(AudioEngine.Stream.WallSouth);
+            AudioEngine.Clear(AudioEngine.Stream.WallEast);
+            AudioEngine.Clear(AudioEngine.Stream.WallWest);
         }
 
         /// <summary>
-        /// Returns true if the wall tone channel is currently playing.
+        /// Returns true if any wall tone direction is currently active.
         /// </summary>
-        public static bool IsWallTonePlaying() => AudioChannel.IsPlaying(SoundChannel.WallTone);
+        public static bool IsWallTonePlaying() => currentWallDirectionsMask != 0;
 
         /// <summary>
-        /// Plays an audio beacon ping with directional panning.
-        /// Writes PCM directly to the channel's unmanaged buffer for zero-allocation playback.
+        /// Plays an audio beacon ping with directional panning. Synthesizes PCM straight into
+        /// the engine's reusable scratch buffer (zero per-ping managed allocation).
         /// </summary>
         public static void PlayBeacon(bool isSouth, float pan, float volumeScale, bool lowPitch = false)
         {
             try
             {
+                if (!AudioEngine.IsInitialized) return;
+
                 int frequency = isSouth ? SoundConstants.Beacon.FREQUENCY_SOUTH : SoundConstants.Beacon.FREQUENCY_NORTH;
                 if (lowPitch) frequency /= 2;
                 int beaconVolumePref = FFII_ScreenReader.Core.PreferencesManager.BeaconVolume;
@@ -267,7 +188,7 @@ namespace FFII_ScreenReader.Utils
                 float leftVol = volume * (float)Math.Cos(panAngle);
                 float rightVol = volume * (float)Math.Sin(panAngle);
 
-                AudioChannel.PlayDirect(SoundChannel.Beacon, dataLength, bufferPtr =>
+                AudioEngine.PlayBeaconDirect(dataLength, bufferPtr =>
                 {
                     int attackSamples = samples / 10;
                     for (int i = 0; i < samples; i++)
@@ -289,60 +210,71 @@ namespace FFII_ScreenReader.Utils
             }
         }
 
-        /// <summary>
-        /// Stops playback on a specific channel. Delegates to AudioChannel.
-        /// </summary>
-        public static void StopChannel(SoundChannel channel) => AudioChannel.Stop(channel);
-
         #endregion
 
         #region Direction Helpers
 
-        private static byte[] GetOneShotTone(Direction dir)
+        /// <summary>
+        /// Activates / refreshes / deactivates a single direction's stream for this tick.
+        /// Reads the OLD mask to tell newly-on from already-on.
+        /// </summary>
+        private static void UpdateDirectionStream(Direction dir, int newMask, float gain)
+        {
+            int bit = 1 << (int)dir;
+            bool nowActive = (newMask & bit) != 0;
+            bool wasActive = (currentWallDirectionsMask & bit) != 0;
+
+            var stream = GetDirectionStream(dir);
+
+            if (!nowActive)
+            {
+                if (wasActive)
+                    AudioEngine.Clear(stream);
+                return;
+            }
+
+            byte[] buf = GetSustainTone(dir);
+            if (buf == null) return;
+            int len = buf.Length - SoundConstants.WAV_HEADER_SIZE;
+            if (len <= 0) return;
+
+            AudioEngine.SetGain(stream, gain);
+
+            if (!wasActive)
+            {
+                // Newly active: prime ~2 loops ahead so the queue can't drain before the next tick.
+                AudioEngine.Clear(stream);
+                AudioEngine.Submit(stream, buf, SoundConstants.WAV_HEADER_SIZE, len);
+                AudioEngine.Submit(stream, buf, SoundConstants.WAV_HEADER_SIZE, len);
+            }
+            else if (AudioEngine.QueuedBytes(stream) < len * 2)
+            {
+                // Keep ~2 buffers queued (≈2 ticks) so back-to-back loops stay seamless.
+                AudioEngine.Submit(stream, buf, SoundConstants.WAV_HEADER_SIZE, len);
+            }
+        }
+
+        private static byte[] GetSustainTone(Direction dir)
         {
             switch (dir)
             {
-                case Direction.North: return wallToneNorth;
-                case Direction.South: return wallToneSouth;
-                case Direction.East:  return wallToneEast;
-                case Direction.West:  return wallToneWest;
+                case Direction.North: return wallToneNorthSustain;
+                case Direction.South: return wallToneSouthSustain;
+                case Direction.East:  return wallToneEastSustain;
+                case Direction.West:  return wallToneWestSustain;
                 default: return null;
             }
         }
 
-        private static int GetDirectionFrequency(Direction dir)
+        private static AudioEngine.Stream GetDirectionStream(Direction dir)
         {
             switch (dir)
             {
-                case Direction.North: return SoundConstants.WallToneFrequencies.NORTH;
-                case Direction.South: return SoundConstants.WallToneFrequencies.SOUTH;
-                case Direction.East:  return SoundConstants.WallToneFrequencies.EAST;
-                case Direction.West:  return SoundConstants.WallToneFrequencies.WEST;
-                default: return SoundConstants.WallToneFrequencies.NORTH;
-            }
-        }
-
-        private static float GetDirectionVolumeMultiplier(Direction dir)
-        {
-            switch (dir)
-            {
-                case Direction.North: return SoundConstants.WallToneVolumeMultipliers.NORTH;
-                case Direction.South: return SoundConstants.WallToneVolumeMultipliers.SOUTH;
-                case Direction.East:  return SoundConstants.WallToneVolumeMultipliers.EAST;
-                case Direction.West:  return SoundConstants.WallToneVolumeMultipliers.WEST;
-                default: return 1.0f;
-            }
-        }
-
-        private static float GetDirectionPan(Direction dir)
-        {
-            switch (dir)
-            {
-                case Direction.North: return SoundConstants.WallTonePan.NORTH;
-                case Direction.South: return SoundConstants.WallTonePan.SOUTH;
-                case Direction.East:  return SoundConstants.WallTonePan.EAST;
-                case Direction.West:  return SoundConstants.WallTonePan.WEST;
-                default: return 0.5f;
+                case Direction.North: return AudioEngine.Stream.WallNorth;
+                case Direction.South: return AudioEngine.Stream.WallSouth;
+                case Direction.East:  return AudioEngine.Stream.WallEast;
+                case Direction.West:  return AudioEngine.Stream.WallWest;
+                default: return AudioEngine.Stream.WallNorth;
             }
         }
 
@@ -356,6 +288,17 @@ namespace FFII_ScreenReader.Utils
             for (int i = 0; i < count; i++)
                 mask |= (1 << (int)dirs[i]);
             return mask;
+        }
+
+        private static int CountBits(int mask)
+        {
+            int count = 0;
+            while (mask != 0)
+            {
+                count += mask & 1;
+                mask >>= 1;
+            }
+            return count;
         }
 
         #endregion

@@ -6,6 +6,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using FFII_ScreenReader.Menus;
 using Il2CppLast.Management;
 using static FFII_ScreenReader.Utils.ModTextTranslator;
 
@@ -240,6 +241,13 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                // Arm the command-bar open-read when entering the command bar (menu open or return
+                // from the slot list); clear it otherwise so a later return to the bar re-announces.
+                if (state == IL2CppOffsets.Equipment.STATE_COMMAND)
+                    CommandBarPatches.ArmEquip();
+                else
+                    CommandBarPatches.ClearEquip();
+
                 // STATE_NONE = 0 (menu closing), STATE_COMMAND = 1 (command bar)
                 if ((state == 0 || state == 1) && EquipMenuState.IsActive)
                 {
@@ -351,6 +359,7 @@ namespace FFII_ScreenReader.Patches
                 // Strip icon markup
                 announcement = TextUtils.StripIconMarkup(announcement);
 
+                announcement = MenuPosition.Format(announcement, index, contentList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch
@@ -432,6 +441,7 @@ namespace FFII_ScreenReader.Patches
                 if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(detail))
                     announcement += $": {detail}";
 
+                announcement = MenuPosition.Format(announcement, index, contentDataList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
             catch

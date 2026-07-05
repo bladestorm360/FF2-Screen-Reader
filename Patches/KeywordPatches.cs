@@ -318,11 +318,12 @@ namespace FFII_ScreenReader.Patches
                 if (index < 0)
                     return;
 
-                string keywordAnnouncement = GetKeywordAtIndex(__instance, index);
+                string keywordAnnouncement = GetKeywordAtIndex(__instance, index, out int count);
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
                 KeywordMenuState.SetActive();
+                keywordAnnouncement = MenuPosition.Format(keywordAnnouncement, index, count);
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch { }
@@ -338,11 +339,12 @@ namespace FFII_ScreenReader.Patches
                 if (index < 0)
                     return;
 
-                string itemAnnouncement = GetItemAtIndex(__instance, index);
+                string itemAnnouncement = GetItemAtIndex(__instance, index, out int count);
                 if (string.IsNullOrEmpty(itemAnnouncement))
                     return;
 
                 KeywordMenuState.SetActive();
+                itemAnnouncement = MenuPosition.Format(itemAnnouncement, index, count);
                 FFII_ScreenReaderMod.SpeakText(itemAnnouncement, interrupt: true);
             }
             catch { }
@@ -369,11 +371,12 @@ namespace FFII_ScreenReader.Patches
 
                 // Get keyword name and description from keyWordContentDictionary
                 // This uses the same data source as the Ask menu
-                string keywordAnnouncement = GetWordsKeywordFromDictionary(__instance, index);
+                string keywordAnnouncement = GetWordsKeywordFromDictionary(__instance, index, out int count);
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
                 WordsMenuState.SetActive();
+                keywordAnnouncement = MenuPosition.Format(keywordAnnouncement, index, count);
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch { }
@@ -402,6 +405,7 @@ namespace FFII_ScreenReader.Patches
             yield return null;
 
             string announcement = null;
+            int count = -1;
             try
             {
                 if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
@@ -411,13 +415,14 @@ namespace FFII_ScreenReader.Patches
                 if (!WordsMenuState.IsNewIndex(0))
                     yield break;
 
-                announcement = GetWordsKeywordFromDictionary(controller, 0);
+                announcement = GetWordsKeywordFromDictionary(controller, 0, out count);
             }
             catch { }
 
             if (!string.IsNullOrEmpty(announcement))
             {
                 WordsMenuState.SetActive();
+                announcement = MenuPosition.Format(announcement, 0, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
         }
@@ -444,6 +449,7 @@ namespace FFII_ScreenReader.Patches
             yield return null;
 
             string announcement = null;
+            int count = -1;
             try
             {
                 if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
@@ -453,13 +459,14 @@ namespace FFII_ScreenReader.Patches
                 if (!WordsMenuState.IsNewIndex(0))
                     yield break;
 
-                announcement = GetWordsTouchKeywordAtIndex(controller, 0);
+                announcement = GetWordsTouchKeywordAtIndex(controller, 0, out count);
             }
             catch { }
 
             if (!string.IsNullOrEmpty(announcement))
             {
                 WordsMenuState.SetActive();
+                announcement = MenuPosition.Format(announcement, 0, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
         }
@@ -480,11 +487,12 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 // Get keyword name from Touch controller
-                string keywordAnnouncement = GetWordsTouchKeywordAtIndex(__instance, id);
+                string keywordAnnouncement = GetWordsTouchKeywordAtIndex(__instance, id, out int count);
                 if (string.IsNullOrEmpty(keywordAnnouncement))
                     return;
 
                 WordsMenuState.SetActive();
+                keywordAnnouncement = MenuPosition.Format(keywordAnnouncement, id, count);
                 FFII_ScreenReaderMod.SpeakText(keywordAnnouncement, interrupt: true);
             }
             catch { }
@@ -521,8 +529,9 @@ namespace FFII_ScreenReader.Patches
         /// Uses pointer offsets to access IL2CPP data directly.
         /// Format: "keyword: description" or just "keyword" if no description.
         /// </summary>
-        private static string GetKeywordAtIndex(KeyInputSecretWordController controller, int index)
+        private static string GetKeywordAtIndex(KeyInputSecretWordController controller, int index, out int count)
         {
+            count = -1;
             try
             {
                 IntPtr controllerPtr = controller.Pointer;
@@ -548,6 +557,7 @@ namespace FFII_ScreenReader.Patches
                             var data = list[index];
                             if (data != null)
                             {
+                                count = list.Count;
                                 return FormatKeywordAnnouncement(data);
                             }
                         }
@@ -617,8 +627,9 @@ namespace FFII_ScreenReader.Patches
         /// Uses pointer offsets to access IL2CPP data directly.
         /// Format: "item name: description" or just "item name" if no description.
         /// </summary>
-        private static string GetItemAtIndex(KeyInputSecretWordController controller, int index)
+        private static string GetItemAtIndex(KeyInputSecretWordController controller, int index, out int count)
         {
+            count = -1;
             try
             {
                 IntPtr controllerPtr = controller.Pointer;
@@ -643,6 +654,7 @@ namespace FFII_ScreenReader.Patches
                             var data = list[index];
                             if (data != null)
                             {
+                                count = list.Count;
                                 return FormatItemAnnouncement(data);
                             }
                         }
@@ -715,8 +727,9 @@ namespace FFII_ScreenReader.Patches
         /// This matches how the Ask menu accesses keyword data.
         /// Format: "keyword: description" or just "keyword" if no description.
         /// </summary>
-        private static string GetWordsKeywordFromDictionary(KeyInputWordsContentListController controller, int index)
+        private static string GetWordsKeywordFromDictionary(KeyInputWordsContentListController controller, int index, out int count)
         {
+            count = -1;
             try
             {
                 IntPtr controllerPtr = controller.Pointer;
@@ -733,6 +746,8 @@ namespace FFII_ScreenReader.Patches
                     var contentList = new Il2CppSystem.Collections.Generic.List<CommonCommandContentController>(contentListPtr);
                     if (contentList == null || index < 0 || index >= contentList.Count)
                         return null;
+
+                    count = contentList.Count;
 
                     var contentItem = contentList[index];
                     if (contentItem == null)
@@ -795,8 +810,9 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Gets keyword name and description from Touch WordsContentListController.
         /// </summary>
-        private static string GetWordsTouchKeywordAtIndex(TouchWordsContentListController controller, int index)
+        private static string GetWordsTouchKeywordAtIndex(TouchWordsContentListController controller, int index, out int count)
         {
+            count = -1;
             try
             {
                 IntPtr controllerPtr = controller.Pointer;
@@ -814,6 +830,8 @@ namespace FFII_ScreenReader.Patches
                     var contentList = new Il2CppSystem.Collections.Generic.List<TouchWordsContentController>(contentListPtr);
                     if (contentList == null || index < 0 || index >= contentList.Count)
                         return null;
+
+                    count = contentList.Count;
 
                     var content = contentList[index];
                     if (content == null)

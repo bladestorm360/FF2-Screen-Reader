@@ -279,7 +279,7 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
                 }
             }
             catch { }
@@ -503,7 +503,7 @@ namespace FFII_ScreenReader.Patches
                 if (!string.IsNullOrWhiteSpace(buttonText))
                 {
                     buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(buttonText, interrupt: true);
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
                 }
             }
             catch { }

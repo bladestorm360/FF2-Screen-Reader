@@ -248,5 +248,76 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern IntPtr SDL_GetKeyboardState(out int numkeys);
+
+        // =====================================================================
+        // Audio — subsystem flag, device/stream API (SDL3 audio backend).
+        // The mod feeds raw S16LE / stereo / 22050 Hz PCM, so src == dst spec
+        // means SDL does no resampling — just mixing of all bound streams.
+        // =====================================================================
+
+        public const uint SDL_INIT_AUDIO = 0x00000010;
+
+        /// <summary>Default playback device id (SDL_AudioDeviceID)0xFFFFFFFF.</summary>
+        public const uint SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK = 0xFFFFFFFF;
+
+        /// <summary>SDL_AUDIO_S16LE: signed (0x8000) | 16-bit (0x10) little-endian PCM.</summary>
+        public const int SDL_AUDIO_S16LE = 0x8010;
+
+        /// <summary>
+        /// SDL_AudioSpec — 12 bytes. SDL_AudioFormat is a 4-byte enum.
+        /// </summary>
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SDL_AudioSpec
+        {
+            public int format;    // SDL_AudioFormat
+            public int channels;
+            public int freq;
+        }
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool SDL_InitSubSystem(uint flags);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void SDL_QuitSubSystem(uint flags);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern uint SDL_OpenAudioDevice(uint devid, ref SDL_AudioSpec spec);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void SDL_CloseAudioDevice(uint devid);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool SDL_ResumeAudioDevice(uint devid);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr SDL_CreateAudioStream(ref SDL_AudioSpec srcSpec, ref SDL_AudioSpec dstSpec);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void SDL_DestroyAudioStream(IntPtr stream);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool SDL_BindAudioStream(uint devid, IntPtr stream);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool SDL_PutAudioStreamData(IntPtr stream, IntPtr buf, int len);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int SDL_GetAudioStreamQueued(IntPtr stream);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool SDL_ClearAudioStream(IntPtr stream);
+
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool SDL_SetAudioStreamGain(IntPtr stream, float gain);
+
+        /// <summary>Last SDL error message (UTF-8 const char*, "" if none). Used by the audio failure logs.</summary>
+        [DllImport(SDL3_DLL, CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr SDL_GetError();
     }
 }
