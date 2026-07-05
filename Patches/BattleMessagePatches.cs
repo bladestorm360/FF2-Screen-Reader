@@ -257,11 +257,16 @@ namespace FFII_ScreenReader.Patches
         // Multi-hit multiplier captured from DamageViewUIManager.CreateHitCount, which fires just before
         // the matching CreateDamageView. Consumed (and reset to 1) by CreateDamageViewUtility_Postfix.
         private static int _pendingHitCount = 1;
+        // Frame the multiplier was captured on. Used to reject a stale count that was never
+        // consumed by a CreateDamageView (e.g. a fully-evaded multi-hit) so it can't leak into
+        // an unrelated later attack's damage announcement.
+        private static int _pendingHitCountFrame = -1;
 
         /// <summary>Captures the hit-count multiplier (__0 = hitCountValue) for the next damage view.</summary>
         public static void CreateHitCount_Postfix(int __0)
         {
             _pendingHitCount = __0;
+            _pendingHitCountFrame = UnityEngine.Time.frameCount;
         }
 
         /// <summary>
@@ -638,10 +643,12 @@ namespace FFII_ScreenReader.Patches
                 if (isRecovery) return;
 
                 // Consume the multi-hit count captured by CreateHitCount (fires just before this view).
-                // Reset to 1 unconditionally so a later damage with no fresh hit count defaults to single
-                // (also clears a stale count if the multi-hit ended in a miss). This is the authoritative
-                // HP-damage path, so CreateDamageViewWithHitType_Postfix deliberately leaves it untouched.
-                int hitCount = _pendingHitCount;
+                // Reject a stale count from an earlier action that never produced a damage view (e.g. a
+                // fully-evaded multi-hit), then reset to 1 unconditionally so a later damage with no fresh
+                // hit count defaults to single. This is the authoritative HP-damage path, so
+                // CreateDamageViewWithHitType_Postfix deliberately leaves it untouched.
+                bool fresh = UnityEngine.Time.frameCount - _pendingHitCountFrame <= 1;
+                int hitCount = fresh ? _pendingHitCount : 1;
                 _pendingHitCount = 1;
 
                 string targetName = GetTargetName(targetUnitData);

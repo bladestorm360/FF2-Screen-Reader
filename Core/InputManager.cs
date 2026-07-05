@@ -185,6 +185,10 @@ namespace FFII_ScreenReader.Core
             if (!GamepadManager.AnyKeyboardKeyDown())
                 return;
 
+            // Skip ALL mod hotkeys (including F8 and the function keys) while the player is
+            // typing in the game's own text field, so naming/input screens aren't disrupted.
+            if (IsInputFieldFocused()) return;
+
             // Bare F-keys only fire with no modifier held, so OS shortcuts like Alt+F4
             // (close window), Ctrl+F-keys and Shift+F-keys don't trigger the screen
             // reader. Explicit Shift/Ctrl bindings still match via GetCurrentModifiers.
@@ -206,10 +210,6 @@ namespace FFII_ScreenReader.Core
             // Handle function keys (F1/F3/F5 -- special coroutine/toggle logic) — bare keypress only
             if (!anyModifierHeld)
                 HandleFunctionKeyInput();
-
-            // Skip hotkeys when player is typing in a text field
-            if (IsInputFieldFocused())
-                return;
 
             // Determine active context and modifiers
             KeyContext activeContext = DetermineContext();
@@ -306,11 +306,11 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
-            // F5 cycles enemy HP display (field-only via ControllerRouter.IsFieldActive,
-            // which now excludes battle, menus, and non-field screens — matches FF1).
+            // F5 cycles enemy HP display. Enemy HP Display is a battle feature, so gate on
+            // in-battle (not IsFieldActive, which is false during battle).
             if (GamepadManager.IsKeyCodePressed(KeyCode.F5))
             {
-                if (ControllerRouter.IsFieldActive)
+                if (FFII_ScreenReaderMod.IsInBattle)
                 {
                     int current = PreferencesManager.EnemyHPDisplay;
                     int next = (current + 1) % 3;
