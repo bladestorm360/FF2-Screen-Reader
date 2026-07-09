@@ -291,28 +291,6 @@ namespace FFII_ScreenReader.Patches
 
             return 1;
         }
-
-        /// <summary>
-        /// Gets MP cost for a spell.
-        /// FF2 specific: spells cost MP to cast.
-        /// </summary>
-        public static int GetMPCost(OwnedAbility ability)
-        {
-            if (ability == null)
-                return 0;
-
-            try
-            {
-                var abilityData = ability.Ability;
-                if (abilityData != null)
-                {
-                    return abilityData.UseValue;
-                }
-            }
-            catch { }
-
-            return 0;
-        }
     }
 
     /// <summary>
@@ -1083,12 +1061,8 @@ namespace FFII_ScreenReader.Patches
                     announcement += $", {percentage} percent";
                 }
 
-                // Add MP cost (FF2 specific)
-                int mpCost = MagicMenuState.GetMPCost(ability);
-                if (mpCost > 0)
-                {
-                    announcement += $", MP {mpCost}";
-                }
+                // Spell list reads name + level + percentage only; the level already conveys the
+                // MP cost (cost = spell level), so no separate MP-cost line.
 
                 // Description appended only when AutoDetail is on; cached for the I key.
                 string description = MagicMenuState.GetSpellDescription(ability);

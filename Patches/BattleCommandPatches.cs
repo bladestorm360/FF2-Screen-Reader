@@ -507,7 +507,21 @@ namespace FFII_ScreenReader.Patches
                     char letter = (char)('A' + positionInGroup);
                     announcement += $" {letter}";
                 }
-                announcement += $": HP {currentHp}/{maxHp}";
+
+                // Enemy HP display mode (0=Numbers, 1=Percentage, 2=Hidden)
+                switch (PreferencesManager.EnemyHPDisplay)
+                {
+                    case 1:
+                        int pct = maxHp > 0 ? currentHp * 100 / maxHp : 0;
+                        announcement += $": HP {pct} percent";
+                        break;
+                    case 2:
+                        // Hidden — announce name only
+                        break;
+                    default:
+                        announcement += $": HP {currentHp}/{maxHp}";
+                        break;
+                }
 
                 announcement = MenuPosition.Format(announcement, index, enemyList.Count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);

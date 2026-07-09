@@ -23,6 +23,10 @@ namespace FFII_ScreenReader.Utils
         public const int MOVE_STATE_CHOCOBO = 5;
         public const int MOVE_STATE_GIMMICK = 6;
         public const int MOVE_STATE_UNIQUE = 7;
+        // FF2's game MoveState enum has no canoe (slot 5 is Chocobo), so the canoe rides a
+        // mod-internal state, entered by boarding TRANSPORT_CONTENT (FF1 parity). Value chosen
+        // outside the game's 0-6 range so the backup ChangeMoveState hook never produces it.
+        public const int MOVE_STATE_CANOE = 8;
 
         // Cached state tracking (event-driven, no timeouts)
         private static int cachedMoveState = MOVE_STATE_WALK;
@@ -71,6 +75,7 @@ namespace FFII_ScreenReader.Utils
             switch (transportationType)
             {
                 case IL2CppOffsets.Transport.TRANSPORT_SHIP: return MOVE_STATE_SHIP;
+                case IL2CppOffsets.Transport.TRANSPORT_CONTENT: return MOVE_STATE_CANOE;  // FF1 parity: canoe = Content slot
                 case IL2CppOffsets.Transport.TRANSPORT_PLANE: return MOVE_STATE_AIRSHIP;
                 case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return MOVE_STATE_SHIP;  // Treat submarine like ship
                 case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING: return MOVE_STATE_LOWFLYING;
@@ -88,13 +93,14 @@ namespace FFII_ScreenReader.Utils
         private static bool IsVehicleState(int state)
         {
             return state == MOVE_STATE_SHIP || state == MOVE_STATE_CHOCOBO ||
-                   state == MOVE_STATE_AIRSHIP || state == MOVE_STATE_LOWFLYING;
+                   state == MOVE_STATE_AIRSHIP || state == MOVE_STATE_LOWFLYING ||
+                   state == MOVE_STATE_CANOE;
         }
 
         /// <summary>
-        /// Announce movement state changes.
-        /// FF2-specific: Ship could be the ocean ship or canoe depending on context,
-        /// but the game uses the same MoveState.Ship for both.
+        /// Announce movement state changes. Backup path for the ChangeMoveState hook (reads the
+        /// game's MoveState); the canoe is announced from the GetOn/GetOff path since it has no
+        /// game MoveState of its own.
         /// </summary>
         public static void AnnounceStateChange(int previousState, int newState)
         {
@@ -102,8 +108,11 @@ namespace FFII_ScreenReader.Utils
 
             if (newState == MOVE_STATE_SHIP)
             {
-                // FF2 uses Ship state for both ocean ship and canoe
                 announcement = "On ship";
+            }
+            else if (newState == MOVE_STATE_CANOE)
+            {
+                announcement = "On canoe";
             }
             else if (newState == MOVE_STATE_CHOCOBO)
             {
@@ -138,7 +147,7 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// Check if currently controlling ship (includes canoe in FF2)
+        /// Check if currently controlling the ocean ship (canoe is a separate state — see IsInCanoe)
         /// </summary>
         public static bool IsControllingShip()
         {
@@ -160,6 +169,14 @@ namespace FFII_ScreenReader.Utils
         public static bool IsRidingChocobo()
         {
             return GetCurrentMoveState() == MOVE_STATE_CHOCOBO;
+        }
+
+        /// <summary>
+        /// Check if currently in the canoe (FF1 parity)
+        /// </summary>
+        public static bool IsInCanoe()
+        {
+            return GetCurrentMoveState() == MOVE_STATE_CANOE;
         }
 
         /// <summary>
@@ -203,6 +220,10 @@ namespace FFII_ScreenReader.Utils
                     multiplier = 1.5f;  // Moderate increase for chocobo
                     break;
 
+                case MOVE_STATE_CANOE:
+                    multiplier = 1.5f;  // Moderate increase for canoe (FF1 parity)
+                    break;
+
                 case MOVE_STATE_AIRSHIP:
                 case MOVE_STATE_LOWFLYING:
                     multiplier = 1.0f;  // Airship uses different navigation system
@@ -229,6 +250,7 @@ namespace FFII_ScreenReader.Utils
                 case MOVE_STATE_AIRSHIP: return "Airship";
                 case MOVE_STATE_LOWFLYING: return "Low Flying";
                 case MOVE_STATE_CHOCOBO: return "Chocobo";
+                case MOVE_STATE_CANOE: return "Canoe";
                 case MOVE_STATE_GIMMICK: return "Gimmick";
                 case MOVE_STATE_UNIQUE: return "Unique";
                 default: return "Unknown";

@@ -332,10 +332,14 @@ namespace FFII_ScreenReader.Core
                 // Clear all cached GameObjects from the previous scene
                 GameObjectCache.ClearAll();
 
-                // Stop audio loops during scene transition and suppress wall tones briefly
+                // Stop audio loops during scene transition and suppress both briefly after load
                 audioLoopManager.StopWallToneLoop();
                 audioLoopManager.StopBeaconLoop();
                 audioLoopManager.wallToneSuppressedUntil = Time.time + 1.0f;
+                audioLoopManager.beaconSuppressedUntil = Time.time + 1.0f;
+
+                // A scene load means we've left the result screen (beacon gate no longer needed).
+                BattleResultActive = false;
 
                 // Reset movement state for new map
                 MovementSoundPatches.ResetState();
@@ -1054,6 +1058,15 @@ namespace FFII_ScreenReader.Core
         /// Cleared by BattleResultPatches.Show_Postfix when battle ends.
         /// </summary>
         public static bool IsInBattle { get; set; } = false;
+
+        /// <summary>
+        /// True while the victory/result screen is showing. Set by BattleResultPatches.Show_Postfix
+        /// (which also clears IsInBattle so the result screen's own reads work) and cleared once the
+        /// player returns to the field (GameStatePatches field transition / OnSceneLoaded). Beacon-only
+        /// gate: keeps the audio beacon silent on the result screen instead of pinging the field
+        /// underneath before the map actually reloads (the result screen registers no menu state).
+        /// </summary>
+        public static bool BattleResultActive { get; set; } = false;
 
         /// <summary>
         /// Check if we're in any battle UI context.

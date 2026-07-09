@@ -253,10 +253,12 @@ namespace FFII_ScreenReader.Core
                     continue;
                 }
 
-                // Silence when the field is not active, mod is suppressing input, or
-                // an NPC message box is displaying dialogue.
+                // Silence when the field is not active, mod is suppressing input, an NPC message
+                // box is displaying dialogue, or the battle result screen is still up (IsInBattle
+                // is cleared early there, so IsFieldActive alone would let the beacon ping the field
+                // underneath before the map reloads).
                 if (!ControllerRouter.IsFieldActive || ControllerRouter.SuppressGameInput
-                    || DialogueTracker.IsInDialogue)
+                    || DialogueTracker.IsInDialogue || FFII_ScreenReaderMod.BattleResultActive)
                 {
                     nextBeaconTime = Time.time + 0.1f;
                     continue;

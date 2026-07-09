@@ -1246,5 +1246,44 @@
     "ru": "Церковь",
     "th": "โบสถ์",
     "pt": "Igreja"
+  },
+  "定期船(アイコンあり)": {
+    "en": "Ferry (with icon)",
+    "fr": "Ferry (avec icône)",
+    "it": "Traghetto (con icona)",
+    "de": "Fähre (mit Symbol)",
+    "es": "Ferry (con icono)",
+    "ko": "정기선 (아이콘 있음)",
+    "zht": "定期船（有圖示）",
+    "zhc": "定期船（有图标）",
+    "ru": "Паром (со значком)",
+    "th": "เรือประจำทาง (มีไอคอน)",
+    "pt": "Balsa (com ícone)"
+  },
+  "協会": {
+    "en": "Association",
+    "fr": "Association",
+    "it": "Associazione",
+    "de": "Verband",
+    "es": "Asociación",
+    "ko": "협회",
+    "zht": "協會",
+    "zhc": "协会",
+    "ru": "Ассоциация",
+    "th": "สมาคม",
+    "pt": "Associação"
+  },
+  "通路をふさぐ岩(ヨーゼフ加入前)": {
+    "en": "Rock blocking the passage (before Josef joins)",
+    "fr": "Rocher bloquant le passage (avant l'arrivée de Josef)",
+    "it": "Roccia che blocca il passaggio (prima dell'arrivo di Josef)",
+    "de": "Fels, der den Durchgang blockiert (vor Josefs Beitritt)",
+    "es": "Roca que bloquea el paso (antes de que se una Josef)",
+    "ko": "통로를 막는 바위 (요제프 합류 전)",
+    "zht": "阻擋通道的岩石（約瑟夫加入前）",
+    "zhc": "阻挡通道的岩石（约瑟夫加入前）",
+    "ru": "Камень, преграждающий путь (до присоединения Йозефа)",
+    "th": "หินขวางทางเดิน (ก่อนโยเซฟเข้าร่วม)",
+    "pt": "Rocha bloqueando a passagem (antes de Josef entrar)"
   }
 }

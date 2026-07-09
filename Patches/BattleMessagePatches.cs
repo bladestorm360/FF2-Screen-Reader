@@ -10,7 +10,6 @@ using Il2CppLast.Systems;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using BattlePlayerData = Il2Cpp.BattlePlayerData;
-using BattleUtility = Il2CppLast.Battle.BattleUtility;
 using BattleController = Il2CppLast.Battle.BattleController;
 using BattlePlugManager = Il2CppLast.Battle.BattlePlugManager;
 using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
@@ -111,21 +110,10 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(createActFunctionMethod, postfix: new HarmonyMethod(postfix));
                 }
 
-                // Patch static BattleUtility.CreateDamageView for damage/healing display
-                // Note: BattleBasicFunction.CreateDamageView was removed - it fired redundantly with incorrect isRecovery flag
-                var utilityDamageViewMethod = AccessTools.Method(
-                    typeof(BattleUtility),
-                    "CreateDamageView",
-                    new Type[] { typeof(BattleUnitData), typeof(int), typeof(bool), typeof(bool), typeof(bool) }
-                );
-                if (utilityDamageViewMethod != null)
-                {
-                    var postfix = AccessTools.Method(typeof(BattleMessagePatches), nameof(CreateDamageViewUtility_Postfix));
-                    harmony.Patch(utilityDamageViewMethod, postfix: new HarmonyMethod(postfix));
-                }
-
-                // Patch BattleBasicFunction.CreateDamageView for HP/MP distinction
-                // This version has HitType parameter that distinguishes HP recovery (4) from MP recovery (6)
+                // Patch BattleBasicFunction.CreateDamageView — the single damage/healing handler (FF1
+                // parity). Its HitType parameter distinguishes HP recovery (4) from MP recovery (6), and
+                // it's the view that actually fires during combat (incl. multi-hit). The old static
+                // BattleUtility.CreateDamageView postfix was redundant dead code and has been removed.
                 var basicFunctionDamageViewMethod = AccessTools.Method(
                     typeof(BattleBasicFunction),
                     "CreateDamageView",
@@ -255,7 +243,7 @@ namespace FFII_ScreenReader.Patches
         }
 
         // Multi-hit multiplier captured from DamageViewUIManager.CreateHitCount, which fires just before
-        // the matching CreateDamageView. Consumed (and reset to 1) by CreateDamageViewUtility_Postfix.
+        // the matching CreateDamageView. Consumed (and reset to 1) by CreateDamageViewWithHitType_Postfix.
         private static int _pendingHitCount = 1;
         // Frame the multiplier was captured on. Used to reject a stale count that was never
         // consumed by a CreateDamageView (e.g. a fully-evaded multi-hit) so it can't leak into
@@ -345,6 +333,17 @@ namespace FFII_ScreenReader.Patches
 
                 if (string.IsNullOrEmpty(cleanMessage)) return;
 
+                // Bug 6: if a spell/skill act just stashed its caster (CreateActFunction suppressed
+                // its own base-name utterance), prepend the caster so this level-bearing message
+                // reads "Caster: name level" (e.g. "Balloon: self destruct I"). The first message
+                // after an act consumes the pending caster regardless of the window.
+                if (!string.IsNullOrEmpty(_pendingActorName))
+                {
+                    if (UnityEngine.Time.frameCount - _pendingActorFrame <= 30)
+                        cleanMessage = $"{_pendingActorName}: {cleanMessage}";
+                    _pendingActorName = null;
+                }
+
                 // Use interrupt for defeat message
                 bool isDefeatMessage = cleanMessage.Contains("defeated", StringComparison.OrdinalIgnoreCase);
 
@@ -365,6 +364,26 @@ namespace FFII_ScreenReader.Patches
                 string actionName = GetActionName(battleActData);
 
                 if (string.IsNullOrEmpty(actorName)) return;
+
+                // Bug 6: a spell/skill cast (ability present, not an item) is announced by the
+                // game's own message with its level (SetMessage_Postfix → "self destruct I"), so
+                // suppress this base-name utterance and stash the caster for SetMessage to prepend.
+                bool isAbilityCast = false;
+                try
+                {
+                    var abilityList = battleActData.abilityList;
+                    var itemList = battleActData.itemList;
+                    isAbilityCast = abilityList != null && abilityList.Count > 0
+                                    && (itemList == null || itemList.Count == 0);
+                }
+                catch { }
+
+                if (isAbilityCast)
+                {
+                    _pendingActorName = actorName;
+                    _pendingActorFrame = UnityEngine.Time.frameCount;
+                    return;
+                }
 
                 string announcement;
                 if (!string.IsNullOrEmpty(actionName))
@@ -556,16 +575,10 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Tracks recently announced damage to avoid duplicates from both patches.
-        /// Key: "targetName:value:type" where type is "damage", "hp", or "mp"
-        /// </summary>
-        private static string lastDamageAnnouncement = null;
-        private static DateTime lastDamageTime = DateTime.MinValue;
-        private const int DAMAGE_DEDUPE_MS = 100;
-
-        /// <summary>
-        /// Postfix for BattleBasicFunction.CreateDamageView with HitType parameter.
-        /// This distinguishes HP recovery (HitType.Recovery=4) from MP recovery (HitType.MPRecovery=6).
+        /// Postfix for BattleBasicFunction.CreateDamageView — the single damage/healing handler (FF1
+        /// parity). The HitType distinguishes HP damage/recovery from MP recovery, and this is the view
+        /// that actually fires during combat (incl. multi-hit). Announces directly — with only one
+        /// damage postfix there is no cross-patch duplication to dedup against.
         /// </summary>
         public static void CreateDamageViewWithHitType_Postfix(BattleUnitData data, int value, HitType hitType, bool isRecovery)
         {
@@ -573,122 +586,64 @@ namespace FFII_ScreenReader.Patches
             {
                 if (data == null) return;
 
+                // TEMP DIAG (0-damage / buff HitType confirmation): log the raw game damage-view event
+                // — value + HitType + isRecovery — so buff-vs-zero-damage HitTypes can be verified.
+                // Remove after confirming.
+                MelonLogger.Msg($"[DIAG-DMG] CreateDamageView value={value} hitType={hitType}({(int)hitType}) isRecovery={isRecovery}");
+
                 string targetName = GetTargetName(data);
                 var damageSource = ConsumeDamageSource();
 
-                string message;
-                string dedupeKey;
-
-                if (hitType == HitType.Miss)
-                {
-                    message = $"{targetName}: Miss";
-                    dedupeKey = $"{targetName}:miss";
-                }
-                else if (value == 0)
-                {
-                    // Buff/debuff spells (Protect, Haste, Slow, etc.) emit CreateDamageView
-                    // with value=0 and a non-Miss hitType. The actual condition application is
-                    // announced by ConditionAdd_Postfix — suppress here so we don't speak a
-                    // spurious "Miss" for every target the buff lands on.
-                    return;
-                }
-                else if (hitType == HitType.MPRecovery)
-                {
-                    message = $"{targetName}: Recovered {value} MP";
-                    dedupeKey = $"{targetName}:{value}:mp";
-                }
-                else if (isRecovery || hitType == HitType.Recovery)
-                {
-                    message = $"{targetName}: Recovered {value} HP";
-                    dedupeKey = $"{targetName}:{value}:hp";
-                }
-                else if (!string.IsNullOrEmpty(damageSource))
-                {
-                    message = $"{damageSource}: {targetName}: {value} damage";
-                    dedupeKey = $"{targetName}:{value}:damage:{damageSource}";
-                }
-                else
-                {
-                    message = $"{targetName}: {value} damage";
-                    dedupeKey = $"{targetName}:{value}:damage";
-                }
-
-                // Deduplicate against both this patch and CreateDamageViewUtility_Postfix
-                var now = DateTime.UtcNow;
-                if (dedupeKey == lastDamageAnnouncement && (now - lastDamageTime).TotalMilliseconds < DAMAGE_DEDUPE_MS)
-                {
-                    return;
-                }
-                lastDamageAnnouncement = dedupeKey;
-                lastDamageTime = now;
-
-                FFII_ScreenReaderMod.SpeakText(message, interrupt: false);
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Postfix for static BattleUtility.CreateDamageView - handles damage display only.
-        /// Signature: CreateDamageView(BattleUnitData targetUnitData, int damage, bool isRecovery, bool isMiss, bool isPlaySe)
-        /// Note: Recovery is handled by CreateDamageViewWithHitType_Postfix which has HitType for HP/MP distinction.
-        /// </summary>
-        public static void CreateDamageViewUtility_Postfix(BattleUnitData targetUnitData, int damage, bool isRecovery, bool isMiss)
-        {
-            try
-            {
-                if (targetUnitData == null) return;
-
-                // Skip recovery - let CreateDamageViewWithHitType_Postfix handle it
-                // since it has the HitType parameter for HP/MP distinction
-                if (isRecovery) return;
-
-                // Consume the multi-hit count captured by CreateHitCount (fires just before this view).
-                // Reject a stale count from an earlier action that never produced a damage view (e.g. a
-                // fully-evaded multi-hit), then reset to 1 unconditionally so a later damage with no fresh
-                // hit count defaults to single. This is the authoritative HP-damage path, so
-                // CreateDamageViewWithHitType_Postfix deliberately leaves it untouched.
+                // Consume the multi-hit "×N" count captured by CreateHitCount (fires just before this
+                // view). Reset to 1 so a stale count can't leak into the next attack.
                 bool fresh = UnityEngine.Time.frameCount - _pendingHitCountFrame <= 1;
                 int hitCount = fresh ? _pendingHitCount : 1;
                 _pendingHitCount = 1;
 
-                string targetName = GetTargetName(targetUnitData);
-
-                // Check for damage source (e.g., "Poison" from status effects)
-                var damageSource = ConsumeDamageSource();
-
                 string message;
-                string dedupeKey;
-                if (isMiss || damage == 0)
+
+                // Mirror the game's own HitType categorization (Il2CppLast.Systems.HitType):
+                // Non=-1, Hit=0, Critical=1, Miss=2, Zero=3, Recovery=4, MPHit=5, MPRecovery=6,
+                // RecoveryCondition=7.
+                if (hitType == HitType.RecoveryCondition || hitType == HitType.Non)
+                {
+                    // Condition/buff application (Protect, Haste, Slow, ...) — the condition itself is
+                    // announced by ConditionAdd_Postfix, so don't speak a damage number for it.
+                    return;
+                }
+                else if (hitType == HitType.Miss)
                 {
                     message = $"{targetName}: Miss";
-                    dedupeKey = $"{targetName}:miss";
+                }
+                else if (hitType == HitType.MPRecovery)
+                {
+                    message = $"{targetName}: Recovered {value} MP";
+                }
+                else if (hitType == HitType.Recovery || isRecovery)
+                {
+                    message = $"{targetName}: Recovered {value} HP";
+                }
+                else if (hitType == HitType.MPHit)
+                {
+                    message = $"{targetName}: {value} MP damage";
                 }
                 else if (!string.IsNullOrEmpty(damageSource))
                 {
-                    message = $"{damageSource}: {targetName}: {damage} damage";
-                    dedupeKey = $"{targetName}:{damage}:damage:{damageSource}";
+                    // HP damage from a status source (e.g. Poison).
+                    message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
+                        ? $"{damageSource}: {targetName}: {hitCount}x{value} damage"
+                        : $"{damageSource}: {targetName}: {value} damage";
                 }
                 else
                 {
-                    // HP DAMAGE — optionally prepend the multi-hit "{N}x" multiplier (kept terse; the
-                    // " damage" suffix stays so damage/recovery/drain remain distinguishable). The
-                    // dedupe key still uses the raw value so cross-postfix dedup is unaffected.
+                    // HP damage — Hit / Critical / Zero. A zero-damage hit (HitType.Zero) has value 0
+                    // and reads "0 damage", mirroring the game's on-screen "0".
                     message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
-                        ? $"{targetName}: {hitCount}x{damage} damage"
-                        : $"{targetName}: {damage} damage";
-                    dedupeKey = $"{targetName}:{damage}:damage";
+                        ? $"{targetName}: {hitCount}x{value} damage"
+                        : $"{targetName}: {value} damage";
                 }
 
-                // Deduplicate against CreateDamageViewWithHitType_Postfix
-                var now = DateTime.UtcNow;
-                if (dedupeKey == lastDamageAnnouncement && (now - lastDamageTime).TotalMilliseconds < DAMAGE_DEDUPE_MS)
-                {
-                    return;
-                }
-                lastDamageAnnouncement = dedupeKey;
-                lastDamageTime = now;
-
-                // Damage/healing doesn't interrupt - queues after action announcement
+                // Damage/healing doesn't interrupt - queues after the action announcement.
                 FFII_ScreenReaderMod.SpeakText(message, interrupt: false);
             }
             catch { }
@@ -703,6 +658,14 @@ namespace FFII_ScreenReader.Patches
         private static readonly Dictionary<IntPtr, string> _lastConditionByUnit = new Dictionary<IntPtr, string>();
         // Local guard for CreateActFunction (keyed by the native BattleActData pointer).
         private static IntPtr _lastActDataPtr = IntPtr.Zero;
+
+        // Bug 6: for a spell/skill cast, CreateActFunction suppresses its own base-name utterance
+        // (e.g. "Balloon, self destruct") and stashes the caster here; the game's own battle
+        // message (SetMessage_Postfix), which includes the spell level ("self destruct I"), then
+        // prepends it → "Balloon: self destruct I". Frame-stamped so a stale actor can't leak
+        // onto an unrelated later message.
+        private static string _pendingActorName = null;
+        private static int _pendingActorFrame = -1;
 
         public static void ResetConditionDedup()
         {
@@ -908,6 +871,8 @@ namespace FFII_ScreenReader.Patches
             GlobalBattleMessageTracker.Reset();
             lastPreemptiveState = 0;
             lastBattleCommandMessage = "";
+            _pendingActorName = null;
+            _pendingActorFrame = -1;
         }
     }
 }

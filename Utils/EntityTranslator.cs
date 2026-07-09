@@ -17,7 +17,8 @@ namespace FFII_ScreenReader.Utils
     /// translation.json resource. Falls back to English when a language-specific
     /// translation is missing; returns the original name when no entry exists at all.
     /// Handles prefixes (e.g., "SC01:", "Sc E 0025:", "6:") and suffixes (trailing ASCII digits).
-    /// Circled numbers (①②③) are preserved as part of the key.
+    /// A leading circled number (①-⑳) is stripped and dropped — positional info is added by the
+    /// entity scanner ("1 of 7"), and an exact-key entry (if one exists) still wins first.
     /// </summary>
     public static class EntityTranslator
     {
@@ -45,12 +46,13 @@ namespace FFII_ScreenReader.Utils
             @"([0-9０-９]+)$",
             RegexOptions.Compiled);
 
-        // Matches a single leading circled number ①-⑨ (U+2460..U+2468). The game uses
+        // Matches a single leading circled number ①-⑳ (U+2460..U+2473). The game uses
         // these as per-instance disambiguators for duplicate NPC sprites; the entity
         // scanner output already includes positional info ("- NPC, 1 of 7") so the
-        // circled number is dropped after stripping.
+        // circled number is dropped after stripping. Covers 1-20 so 10th+ instances
+        // (e.g. ⑩シド → Cid) strip like the single-digit ones.
         private static readonly Regex CircledNumberPrefixRegex = new Regex(
-            @"^[①-⑨]",
+            @"^[①-⑳]",
             RegexOptions.Compiled);
 
         /// <summary>

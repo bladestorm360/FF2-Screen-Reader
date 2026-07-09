@@ -387,21 +387,14 @@ namespace FFII_ScreenReader.Patches
                     announcement += $" lv{spellLevel}";
                 }
 
-                // FF2 specific: Get MP cost from ability data
-                int mpCost = 0;
-                try
+                // Add spell-level completion percentage (mirrors the field magic menu). The level
+                // already conveys the MP cost (cost = spell level), so no separate MP-cost line.
+                if (gaugeProgress >= 0f)
                 {
-                    var abilityDataForMp = ability.Ability;
-                    if (abilityDataForMp != null)
-                    {
-                        mpCost = abilityDataForMp.UseValue;
-                    }
-                }
-                catch { }
-
-                if (mpCost > 0)
-                {
-                    announcement += $", MP {mpCost}";
+                    int percentage = (int)(gaugeProgress * 100);
+                    if (percentage < 0) percentage = 0;
+                    if (percentage > 99) percentage = 99;
+                    announcement += $", {percentage} percent";
                 }
 
                 // Add description

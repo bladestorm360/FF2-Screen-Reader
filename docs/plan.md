@@ -2,6 +2,12 @@
 
 Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is fully playable.**
 
+**Landed (2026-07-09):** untranslated-phrase + bug-fix pass — see `docs/debug.md` (2026-07-09).
+3 translations + `⑩`-prefix strip, double-spell-announce merge ("Caster: name level"), enemy-HP
+toggle, beacon result-screen gate, spell-list layout (name/level/percent), multi-hit damage count
+(bug 3, FF1 port), and canoe "On canoe" state tracking (bug 4, FF1 port). Awaiting in-game
+confirmation.
+
 ## Feature Status
 
 | System | Status | Notes |
@@ -9,7 +15,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 | Menu Navigation | ✓ | Generic cursor + specialized patches |
 | Item Menu | ✓ | Item list, character target with MP |
 | Status Menu | ✓ | All stats, weapon skills (UI read), combat stats |
-| Magic Menu | ✓ | Spell list with level/MP, Use/Forget commands |
+| Magic Menu | ✓ | Spell list with level/percent, Use/Forget commands |
 | Config Menu | ✓ | Options with values, I key tooltip, Boost submenu |
 | Shop Menu | ✓ | Buy/sell with prices/stats |
 | Equipment Menu | ✓ | Slot/item selection, stat comparison |

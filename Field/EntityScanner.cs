@@ -523,6 +523,10 @@ namespace FFII_ScreenReader.Field
             // Check VehicleTypeMap first - this has the accurate type from Transportation.ModelList
             if (FieldNavigationHelper.VehicleTypeMap.TryGetValue(fieldEntity, out int vehicleType))
             {
+                // Skip the canoe (Content slot): an auto-summoned key-item vehicle that sits out of
+                // bounds — not a walk-to target (FF1 parity).
+                if (vehicleType == IL2CppOffsets.Transport.TRANSPORT_CONTENT)
+                    return null;
                 string vehicleName = GetVehicleNameFromType(vehicleType);
                 return new VehicleEntity(fieldEntity, position, vehicleName, vehicleType);
             }
@@ -612,6 +616,9 @@ namespace FFII_ScreenReader.Field
                 goNameLower.Contains("canoe") || goNameLower.Contains("airship") ||
                 goNameLower.Contains("chocobo"))
             {
+                // Skip the out-of-bounds canoe map object (FF1 parity).
+                if (goNameLower.Contains("canoe"))
+                    return null;
                 string vehicleName = CleanObjectName(goName, "Vehicle");
                 return new VehicleEntity(fieldEntity, position, vehicleName, 0);
             }

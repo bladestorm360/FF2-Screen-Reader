@@ -415,6 +415,7 @@ namespace FFII_ScreenReader.Patches
             switch (typeId)
             {
                 case IL2CppOffsets.Transport.TRANSPORT_SHIP: return "ship";
+                case IL2CppOffsets.Transport.TRANSPORT_CONTENT: return "canoe";  // FF1 parity: canoe rides the Content slot
                 case IL2CppOffsets.Transport.TRANSPORT_PLANE: return "airship";
                 case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return "submarine";
                 case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING: return "airship";

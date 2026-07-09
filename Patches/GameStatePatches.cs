@@ -153,6 +153,8 @@ namespace FFII_ScreenReader.Patches
         private static void ClearAllBattleState()
         {
             FFII_ScreenReaderMod.ClearBattleActive();
+            // Result screen is done — re-enable the audio beacon now the player is back on the field.
+            FFII_ScreenReaderMod.BattleResultActive = false;
             BattleCommandState.ClearState();
             BattleTargetPatches.SetTargetSelectionActive(false);
             BattleCommandPatches.ResetTurnState();

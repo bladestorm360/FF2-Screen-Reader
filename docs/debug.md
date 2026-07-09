@@ -1,5 +1,64 @@
 # Implementation Details
 
+## Untranslated phrases + bug-fix pass (2026-07-09)
+
+Translation source of truth is **`translation.json`** (project root, embedded via `FFII_ScreenReader.csproj`).
+The older `FFII_translations.json` / `UserData/.../FF2_translations.json` names in the "Entity Name
+Translation" section below are **stale** — ignore them.
+
+- **Translations** (`translation.json` + `Utils/EntityTranslator.cs`): added literal entries for
+  `定期船(アイコンあり)`→"Ferry (with icon)", `協会`→"Association",
+  `通路をふさぐ岩(ヨーゼフ加入前)`→"Rock blocking the passage (before Josef joins)" (all 11 langs).
+  Widened `CircledNumberPrefixRegex` from `①-⑨` to **`①-⑳`** (U+2460–U+2473) so 10th-20th-instance
+  NPCs strip the circled prefix — `⑩シド` now reuses the existing `シド`→"Cid" entry.
+- **Bug 6 — spell announced twice** (`Patches/BattleMessagePatches.cs`): a spell/skill cast produced
+  both `CreateActFunction_Postfix`'s base name ("Balloon, self destruct") and `SetMessage_Postfix`'s
+  level-bearing game message ("self destruct I"). Now `CreateActFunction_Postfix` detects an ability
+  cast (`abilityList` non-empty, `itemList` empty), **suppresses** its own utterance, and stashes the
+  caster (`_pendingActorName` + frame). `SetMessage_Postfix` prepends it → **"Balloon: self destruct I"**
+  (frame-window ≤30 guards against stale leak; cleared on consume and in `ResetState`). Attack/defend/
+  item are unchanged.
+- **Bug 2 — enemy HP toggle** (`Patches/BattleCommandPatches.cs`): `AnnounceEnemyTarget` now branches
+  on `PreferencesManager.EnemyHPDisplay` (0=`HP c/m`, 1=`HP {pct} percent`, 2=name only) instead of
+  always appending the number.
+- **Bug 1 — beacon pinged on the result screen** (`Core/FFII_ScreenReaderMod.cs`,
+  `Core/AudioLoopManager.cs`, `Patches/BattleResultPatches.cs`, `Patches/GameStatePatches.cs`):
+  `Show_Postfix` clears `IsInBattle` while the victory screen is still up over the field, so
+  `IsFieldActive` flipped true and the beacon un-gated early. Added a beacon-only `BattleResultActive`
+  flag (set in `Show_Postfix`, cleared on the field transition in `GameStatePatches.ClearAllBattleState`
+  and in `OnSceneLoaded`), added to the `BeaconLoop` skip condition. Also wired the previously-dead
+  `beaconSuppressedUntil` in `OnSceneLoaded`.
+- **Bug 5 — MP / spell layout**: FF2 PR is a plain MP pool (spell cost = level). MP/MaxMP display is
+  already wired everywhere (status, targeting, character-select, battle via `AnnouncePlayerTarget`).
+  Spell lists now read **name + level + percentage only** — removed the redundant `, MP {cost}` line
+  from the field (`Patches/MagicMenuPatches.cs`, dropped now-unused `GetMPCost`) and battle
+  (`Patches/BattleMagicPatches.cs`) menus; the battle list now speaks its `gaugeProgress` percentage
+  (previously computed but never announced).
+- **Bug 3 — multi-hit count read total only** (`Patches/BattleMessagePatches.cs`): the `×N` count
+  captured by `CreateHitCount` was applied only in a postfix on the static `BattleUtility.CreateDamageView`,
+  which doesn't fire for the real combat damage view — that goes through
+  `BattleBasicFunction.CreateDamageView` (`CreateDamageViewWithHitType_Postfix`), which announced the
+  total with no count. Collapsed to FF1's model: `CreateDamageViewWithHitType_Postfix` is now the
+  **single** damage/healing handler — it consumes the pending count and prepends `{N}x` to its
+  HP-damage branches and announces directly. The redundant `BattleUtility.CreateDamageView` postfix
+  and the cross-patch dedup (`lastDamageAnnouncement`/`DAMAGE_DEDUPE_MS`) were removed as dead code.
+  The branch logic now mirrors the game's `HitType` enum (Non=-1/Hit=0/Critical=1/Miss=2/Zero=3/
+  Recovery=4/MPHit=5/MPRecovery=6/RecoveryCondition=7): a **zero-damage hit** (`HitType.Zero`) reads
+  "0 damage" (matching the game's on-screen "0") rather than being suppressed; `MPHit` reads
+  "N MP damage"; `RecoveryCondition`/`Non` are suppressed (the condition is announced by
+  `ConditionAdd_Postfix`). A temporary `[DIAG-DMG]` log of each `CreateDamageView` (value/HitType/
+  isRecovery) is live to confirm which HitType buffs arrive as; remove once verified.
+- **Bug 4 — canoe announced nothing → "On canoe"** (FF1 parity, ported directly): the canoe rides the
+  `TRANSPORT_CONTENT` (5) slot and boards via `FieldPlayer.GetOn`, but FF2 dropped it (no case in
+  `GetTransportationName`; `ChangeTransportation` treats Content as intermediate). Added
+  `TRANSPORT_CONTENT → "canoe"` to `GetTransportationName` (the GetOn/GetOff path, exactly like FF1);
+  added a mod-internal `MoveStateHelper.MOVE_STATE_CANOE = 8` (FF2's game slot 5 is Chocobo, so the
+  canoe can't reuse it) with `TransportTypeToMoveState`/`AnnounceStateChange`/`IsInCanoe`/
+  `GetMoveStateName`/pathfinding-multiplier support, so boarding says "On canoe" and the V key reports
+  "Canoe". Also skip the out-of-bounds canoe map object in `Field/EntityScanner.cs` (VehicleTypeMap
+  Content + string-"canoe" paths) so it isn't offered as a nav target. `ChangeTransportation`'s
+  Content-as-intermediate handling is left intact (canoe rides the GetOn path, matching FF1).
+
 ## FF1-parity pass (2026-06-16)
 
 - **Unreachable directions → "No path"** (`AnnounceCurrentEntity`): speaks `pathInfo.Description` or

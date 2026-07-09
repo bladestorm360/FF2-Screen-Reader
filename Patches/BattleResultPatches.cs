@@ -716,6 +716,10 @@ namespace FFII_ScreenReader.Patches
 
                 // Clear battle active flag - battle is now over
                 FFII_ScreenReaderMod.ClearBattleActive();
+                // ...but the result screen is still up over the field. Latch a beacon-only gate so the
+                // audio beacon doesn't ping the field underneath until the player returns to it
+                // (cleared by GameStatePatches field transition / OnSceneLoaded).
+                FFII_ScreenReaderMod.BattleResultActive = true;
 
                 // Reset tracking for new battle result
                 ResetTracking(data);
