@@ -497,17 +497,17 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Postfix for SetNextState - clears state when returning to command bar or closing menu.
+        /// Its compiled body (0x4A9B40) is folded with seven other nextState setters and has no direct
+        /// callers (inlined at every ItemWindowController call site), so the postfix acts only when the
+        /// native object really is an ItemWindowController. The command-bar open read is armed by
+        /// CommandSelectInit instead (CommandBarPatches).
         /// </summary>
         public static void SetNextState_Postfix(object __instance, int state)
         {
             try
             {
-                // Arm the command-bar open-read when entering the command bar (menu open or return
-                // from a list); clear it otherwise so a later return to the bar re-announces.
-                if (state == IL2CppOffsets.Item.STATE_COMMAND_SELECT)
-                    CommandBarPatches.ArmItem();
-                else
-                    CommandBarPatches.ClearItem();
+                if (!Il2CppTypeCheck.Is<KeyInputItemWindowController>((__instance as Il2CppSystem.Object)?.Pointer ?? IntPtr.Zero))
+                    return;
 
                 // STATE_NONE = 0 (menu closing), STATE_COMMAND_SELECT = 1 (command bar)
                 if ((state == 0 || state == 1) && ItemMenuState.IsActive)

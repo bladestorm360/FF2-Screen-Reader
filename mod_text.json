@@ -699,20 +699,6 @@
     "th": "สิ่งของ",
     "pt": "entidade"
   },
-  "entities": {
-    "en": "entities",
-    "ja": "エンティティ",
-    "fr": "entités",
-    "it": "entità",
-    "de": "Objekte",
-    "es": "entidades",
-    "ko": "개체",
-    "zht": "個實體",
-    "zhc": "个实体",
-    "ru": "объектов",
-    "th": "สิ่งของ",
-    "pt": "entidades"
-  },
   "{0} of {1}": {
     "en": "{0} of {1}",
     "ja": "{0}/{1}",
@@ -1034,20 +1020,6 @@
     "ru": "Транспорт",
     "th": "ยานพาหนะ",
     "pt": "Veículos"
-  },
-  "Waypoints": {
-    "en": "Waypoints",
-    "ja": "ウェイポイント",
-    "fr": "Points de repère",
-    "it": "Punti di riferimento",
-    "de": "Wegpunkte",
-    "es": "Puntos de referencia",
-    "ko": "웨이포인트",
-    "zht": "航點",
-    "zhc": "航点",
-    "ru": "Точки маршрута",
-    "th": "จุดอ้างอิง",
-    "pt": "Pontos de referência"
   },
   "Yes": {
     "en": "Yes",
@@ -1679,20 +1651,6 @@
     "th": "ล้าง {0} {1} ทั้งหมดจากแผนที่นี้?",
     "pt": "Limpar todos os {0} {1} deste mapa?"
   },
-  "Are you sure?": {
-    "en": "Are you sure?",
-    "ja": "よろしいですか？",
-    "fr": "Êtes-vous sûr ?",
-    "it": "Sei sicuro?",
-    "de": "Sind Sie sicher?",
-    "es": "¿Está seguro?",
-    "ko": "확실합니까?",
-    "zht": "你確定嗎？",
-    "zhc": "你确定吗？",
-    "ru": "Вы уверены?",
-    "th": "คุณแน่ใจหรือ?",
-    "pt": "Tem certeza?"
-  },
   "Name cannot be empty": {
     "en": "Name cannot be empty",
     "ja": "名前を空にすることはできません",
@@ -2211,19 +2169,33 @@
     "th": "ไม่มีการควบคุมที่แสดง",
     "pt": "Nenhum controle exibido"
   },
-  "quantity {0}": {
-    "en": "quantity {0}",
-    "ja": "数量 {0}",
-    "fr": "quantité {0}",
-    "it": "quantità {0}",
-    "de": "Anzahl {0}",
-    "es": "cantidad {0}",
-    "ko": "수량 {0}",
-    "zht": "數量 {0}",
-    "zhc": "数量 {0}",
-    "ru": "количество {0}",
-    "th": "จำนวน {0}",
-    "pt": "quantidade {0}"
+  "Quantity: {0}": {
+    "en": "Quantity: {0}",
+    "ja": "数量: {0}",
+    "fr": "Quantité : {0}",
+    "it": "Quantità: {0}",
+    "de": "Anzahl: {0}",
+    "es": "Cantidad: {0}",
+    "ko": "수량: {0}",
+    "zht": "數量：{0}",
+    "zhc": "数量：{0}",
+    "ru": "Количество: {0}",
+    "th": "จำนวน: {0}",
+    "pt": "Quantidade: {0}"
+  },
+  "Quantity: {0}, Total: {1}": {
+    "en": "Quantity: {0}, Total: {1}",
+    "ja": "数量: {0}、合計: {1}",
+    "fr": "Quantité : {0}, total : {1}",
+    "it": "Quantità: {0}, totale: {1}",
+    "de": "Anzahl: {0}, gesamt: {1}",
+    "es": "Cantidad: {0}, total: {1}",
+    "ko": "수량: {0}, 합계: {1}",
+    "zht": "數量：{0}，合計：{1}",
+    "zhc": "数量：{0}，合计：{1}",
+    "ru": "Количество: {0}, итого: {1}",
+    "th": "จำนวน: {0}, รวม: {1}",
+    "pt": "Quantidade: {0}, total: {1}"
   },
   "Failed to dump entity names": {
     "en": "Failed to dump entity names",

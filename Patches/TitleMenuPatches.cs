@@ -48,6 +48,16 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                // The main / Options / Extras lists are TitleMenuCommandController lists, never a config
+                // menu or the naming screen: drop those states so their generic-reader suppression can't
+                // outlive them (e.g. backing out of the title Configuration into the Options list).
+                if (ConfigMenuState.IsActive)
+                {
+                    ConfigMenuState.ResetState();
+                    ConfigMenuPatches.CancelReannounce();
+                }
+                NewGameNamingState.Clear();
+
                 if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
                     return;
                 var cursor = __instance.commandController?.selectCursor;

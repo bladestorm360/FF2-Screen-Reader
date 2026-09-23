@@ -193,21 +193,22 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("[Keyword] Could not find SelectContentByItem method");
                 }
 
-                // Patch WordsContentListController.SetDescriptionText for Words menu navigation (KeyInput)
-                // This is called when the description is set, ensuring the text is available
-                var wordsSetDescriptionMethod = AccessTools.Method(
-                    typeof(KeyInputWordsContentListController),
-                    "SetDescriptionText",
-                    new Type[] { typeof(int) });
+                // Words menu navigation (KeyInput): WordsContentListController.SetCommandSelectCursor
+                // (private, unique RVA 0x810F60). It moves the cursor and fills the description panel —
+                // SetDescriptionText is inlined into it and has NO callers, so the old hook on it never
+                // fired. Callers: the Cursor.NextIndex/PrevIndex callbacks, SetDefaultCursor and the
+                // click lambda (event-driven).
+                var wordsSelectCursorMethod = AccessTools.Method(
+                    typeof(KeyInputWordsContentListController), "SetCommandSelectCursor", Type.EmptyTypes);
 
-                if (wordsSetDescriptionMethod != null)
+                if (wordsSelectCursorMethod != null)
                 {
-                    var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsSetDescriptionText_Postfix));
-                    harmony.Patch(wordsSetDescriptionMethod, postfix: new HarmonyMethod(postfix));
+                    var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsSetCommandSelectCursor_Postfix));
+                    harmony.Patch(wordsSelectCursorMethod, postfix: new HarmonyMethod(postfix));
                 }
                 else
                 {
-                    MelonLogger.Error("[Keyword] Could not find WordsContentListController.SetDescriptionText method");
+                    MelonLogger.Error("[Keyword] Could not find WordsContentListController.SetCommandSelectCursor method");
                 }
 
                 // Patch WordsContentListController.UpdateView (KeyInput) — fires when menu opens
@@ -352,10 +353,11 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for Words menu SetDescriptionText (KeyInput).
-        /// Called when the description text is set, ensuring it's available to announce.
+        /// Postfix for Words menu SetCommandSelectCursor (KeyInput): the cursor moved to a keyword and
+        /// the description panel was filled. Reads "keyword" (+ ": description" with Auto Detail; the
+        /// description is cached for the I key either way) with its "(X of Y)" position.
         /// </summary>
-        public static void WordsSetDescriptionText_Postfix(KeyInputWordsContentListController __instance, int index)
+        public static void WordsSetCommandSelectCursor_Postfix(KeyInputWordsContentListController __instance)
         {
             try
             {
@@ -363,7 +365,10 @@ namespace FFII_ScreenReader.Patches
                 var menuManager = MenuManager.Instance;
                 if (menuManager == null || !menuManager.IsOpen)
                     return;
+                if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
+                    return;
 
+                int index = GetWordsContentCursorIndex(__instance);
                 if (index < 0)
                     return;
 
@@ -407,23 +412,25 @@ namespace FFII_ScreenReader.Patches
 
             string announcement = null;
             int count = -1;
+            int focusIndex = -1;
             try
             {
                 if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
                     yield break;
 
-                // Skip if SetDescriptionText already announced the first keyword this open.
-                if (!WordsMenuState.IsNewIndex(0))
+                // Skip if the cursor hook already announced this keyword this open.
+                focusIndex = GetWordsContentCursorIndex(controller);
+                if (focusIndex < 0 || !WordsMenuState.IsNewIndex(focusIndex))
                     yield break;
 
-                announcement = GetWordsKeywordFromDictionary(controller, 0, out count);
+                announcement = GetWordsKeywordFromDictionary(controller, focusIndex, out count);
             }
             catch { }
 
             if (!string.IsNullOrEmpty(announcement))
             {
                 WordsMenuState.SetActive();
-                announcement = MenuPosition.Format(announcement, 0, count);
+                announcement = MenuPosition.Format(announcement, focusIndex, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
             }
         }
@@ -754,29 +761,26 @@ namespace FFII_ScreenReader.Patches
                     if (contentItem == null)
                         return null;
 
-                    int keywordId = contentItem.Id;
-
-                    // Now look up the Content from keyWordContentDictionary
+                    // keyWordContentDictionary is keyed by LIST INDEX: UpdateView fills it through
+                    // SetKeyWordsDictionary(index, content), and the game's description read
+                    // (SetCommandSelectCursor → inlined SetDescriptionText) looks up
+                    // dict[selectCursor.Index]. The old contentItem.Id key missed, which is why the Words
+                    // menu read the name only.
                     IntPtr dictPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Keyword.OFFSET_WORDS_KEYWORD_DICTIONARY);
-                    if (dictPtr == IntPtr.Zero)
-                        return null;
-
-                    var dict = new Il2CppSystem.Collections.Generic.Dictionary<int, ContentData>(dictPtr);
-                    if (dict == null)
-                        return null;
-
                     ContentData contentData = null;
-                    if (dict.ContainsKey(keywordId))
+                    if (dictPtr != IntPtr.Zero)
                     {
-                        contentData = dict[keywordId];
+                        var dict = new Il2CppSystem.Collections.Generic.Dictionary<int, ContentData>(dictPtr);
+                        if (dict != null && dict.ContainsKey(index))
+                            contentData = dict[index];
                     }
 
                     if (contentData == null)
                     {
-                        // Fallback to just the name from the UI if dictionary lookup fails
+                        // Fallback: the row's name plus the rendered description panel
                         string fallbackName = contentItem.Name;
                         if (!string.IsNullOrEmpty(fallbackName))
-                            return ComposeKeywordAnnouncement(TextUtils.StripIconMarkup(fallbackName), null);
+                            return ComposeKeywordAnnouncement(TextUtils.StripIconMarkup(fallbackName), GetWordsRenderedDescription(controllerPtr));
                         return null;
                     }
 
@@ -799,6 +803,10 @@ namespace FFII_ScreenReader.Patches
                     {
                         description = TextUtils.StripIconMarkup(messageManager.GetMessage(descMessageId, false));
                     }
+                    if (string.IsNullOrWhiteSpace(description))
+                        description = GetWordsRenderedDescription(controllerPtr);
+                    if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrEmpty(contentItem.Name))
+                        name = TextUtils.StripIconMarkup(contentItem.Name);
 
                     return ComposeKeywordAnnouncement(name, description);
                 }
@@ -807,6 +815,28 @@ namespace FFII_ScreenReader.Patches
 
             return null;
         }
+
+        /// <summary>
+        /// The description the Words window shows for the focused keyword:
+        /// WordsContentListController.view (0x20) → WordsContentListView.descriptionText (0x20).
+        /// </summary>
+        private static string GetWordsRenderedDescription(IntPtr controllerPtr)
+        {
+            try
+            {
+                IntPtr viewPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(controllerPtr, OFFSET_WORDS_VIEW);
+                if (viewPtr == IntPtr.Zero) return null;
+                IntPtr textPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(viewPtr, OFFSET_WORDS_VIEW_DESCRIPTION);
+                if (textPtr == IntPtr.Zero) return null;
+                string text = new UnityEngine.UI.Text(textPtr).text;
+                return string.IsNullOrWhiteSpace(text) ? null : TextUtils.StripIconMarkup(text).Trim();
+            }
+            catch { return null; }
+        }
+
+        // KeyInput WordsContentListController.view / WordsContentListView.descriptionText (dump.cs:454326 / 454457)
+        private const int OFFSET_WORDS_VIEW = 0x20;
+        private const int OFFSET_WORDS_VIEW_DESCRIPTION = 0x20;
 
         /// <summary>
         /// Gets keyword name and description from Touch WordsContentListController.

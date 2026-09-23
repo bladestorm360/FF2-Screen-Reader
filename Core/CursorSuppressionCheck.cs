@@ -88,6 +88,10 @@ namespace FFII_ScreenReader.Core
             if (WordsMenuState.ShouldSuppress())
                 return SuppressionResult.Suppressed("WordsMenu");
 
+            // Naming screen: character slots and suggested names have their own readers.
+            if (NewGameNamingState.ShouldSuppress())
+                return SuppressionResult.Suppressed("NewGameNaming");
+
             // === EXTRAS (FF1 parity) ===
             // Bestiary, music player and gallery announce their own navigation; the generic reader
             // would double every move.

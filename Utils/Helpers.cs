@@ -173,4 +173,26 @@ namespace FFII_ScreenReader.Utils
             return preservedIndex;
         }
     }
+
+    /// <summary>
+    /// Native IL2CPP class checks. A Harmony hook on a method whose compiled body is shared (folded)
+    /// with other methods fires for all of them, and the managed wrapper passed as __instance is built
+    /// from the declared type, so it proves nothing; the object's real class does.
+    /// </summary>
+    public static class Il2CppTypeCheck
+    {
+        /// <summary>True when the native object is (or derives from) the IL2CPP class of T.</summary>
+        public static bool Is<T>(IntPtr obj) where T : Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase
+        {
+            try
+            {
+                if (obj == IntPtr.Zero) return false;
+                IntPtr cls = Il2CppInterop.Runtime.Il2CppClassPointerStore<T>.NativeClassPtr;
+                return cls != IntPtr.Zero
+                    && Il2CppInterop.Runtime.IL2CPP.il2cpp_class_is_assignable_from(
+                        cls, Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_class(obj));
+            }
+            catch { return false; }
+        }
+    }
 }

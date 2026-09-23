@@ -263,6 +263,11 @@ namespace FFII_ScreenReader.Patches
         private static int _reannounceGen = 0;
         // Retry cap for the deferred read (~2 s at 60 fps) while the focused row isn't readable yet.
         private const int MAX_REANNOUNCE_FRAMES = 120;
+        // Set when the player confirmed Return to Title / Quit Game from the config menu
+        // (ConfigActualDetailsControllerBase.TitleBack / ExitGame): the menu can stay active through the
+        // fade-out, so the popup-close re-read must not speak the row. Cleared when the config menu
+        // closes (CancelReannounce) or is opened afresh (ShowConfig / InitSelectLanguage).
+        private static bool _configLeaving = false;
 
         /// <summary>
         /// Applies config menu patches using manual Harmony patching.
@@ -427,6 +432,43 @@ namespace FFII_ScreenReader.Patches
             {
                 MelonLogger.Error($"[Config Menu] Error patching re-announce hooks: {ex.Message}");
             }
+
+            // Title Language screen opened: OptionController.InitSelectLanguage (SelectLanguage state
+            // entry, unique RVA 0x2F8330; entered from SetEnableLanguageRoot and the title Config list).
+            // It points configActualDetailsController at the language section and moves the cursor with
+            // SetCursorFocus, which never calls ConfigCommandController.SetFocus, so nothing read the row.
+            try
+            {
+                var initSelectLanguage = AccessTools.Method(typeof(OptionController), "InitSelectLanguage", Type.EmptyTypes);
+                if (initSelectLanguage != null)
+                    harmony.Patch(initSelectLanguage,
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), nameof(InitSelectLanguage_Prefix))),
+                        postfix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), nameof(InitSelectLanguage_Postfix))));
+                else
+                    MelonLogger.Warning("[Config Menu] OptionController.InitSelectLanguage not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Config Menu] Error patching InitSelectLanguage: {ex.Message}");
+            }
+
+            // Return to Title / Quit Game confirmed (virtual on the base, not overridden by the KeyInput
+            // details controller; unique RVAs 0x2E2C30 / 0x2D67A0): stop the popup-close re-read.
+            foreach (var method in new[] { "TitleBack", "ExitGame" })
+            {
+                try
+                {
+                    var m = AccessTools.Method(typeof(ConfigActualDetailsControllerBase_KeyInput), method, Type.EmptyTypes);
+                    if (m != null)
+                        harmony.Patch(m, prefix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), nameof(ConfigLeaving_Prefix))));
+                    else
+                        MelonLogger.Warning($"[Config Menu] ConfigActualDetailsControllerBase.{method} not found");
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Error($"[Config Menu] Error patching {method}: {ex.Message}");
+                }
+            }
         }
 
         private static void TryPatchSetFocus(HarmonyLib.Harmony harmony)
@@ -571,6 +613,9 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void ReannounceFocusedConfigOption(OptionController option = null)
         {
+            // Return to Title / Quit confirmed: the menu may stay active through the fade-out.
+            if (_configLeaving)
+                return;
             _pendingConfigReannounce = true;
             int gen = ++_reannounceGen;
             try { CoroutineManager.StartManaged(DeferredReannounce(option, gen)); }
@@ -578,7 +623,22 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>Drops a pending re-announce (config menu closed).</summary>
-        public static void CancelReannounce() => _pendingConfigReannounce = false;
+        public static void CancelReannounce()
+        {
+            _pendingConfigReannounce = false;
+            _configLeaving = false;
+        }
+
+        /// <summary>
+        /// Prefix for ConfigActualDetailsControllerBase.TitleBack / ExitGame (the confirmed Return to
+        /// Title / Quit Game): cancels a pending re-read and blocks new ones until the menu closes, so the
+        /// row is never spoken while the config menu is still up during the fade-out.
+        /// </summary>
+        public static void ConfigLeaving_Prefix()
+        {
+            _configLeaving = true;
+            _pendingConfigReannounce = false;
+        }
 
         /// <summary>
         /// Reads the focused row one frame after the arming event, retrying each frame (capped) while
@@ -655,12 +715,40 @@ namespace FFII_ScreenReader.Patches
         /// read (postfix), so the initial row speaks exactly once whether or not ShowConfig's own
         /// SetFocus fires.
         /// </summary>
-        public static void ShowConfig_Prefix() => ConfigMenuState.ClearDedup();
+        public static void ShowConfig_Prefix()
+        {
+            _configLeaving = false;
+            ConfigMenuState.ClearDedup();
+        }
 
         public static void ShowConfig_Postfix(OptionController __instance)
         {
             try
             {
+                ReannounceFocusedConfigOption(__instance);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Title Language screen opened (FF1 InitSelectLanguage parity): forget the last spoken row
+        /// (prefix) and read the focused language row, "Language: English (1 of 1)", one frame later via
+        /// the deferred reader (postfix). The postfix also takes the config state so the dropdown's
+        /// SetDropDownItemFocus (gated on it) reads the language list when it opens.
+        /// </summary>
+        public static void InitSelectLanguage_Prefix()
+        {
+            _configLeaving = false;
+            ConfigMenuState.ClearDedup();
+        }
+
+        public static void InitSelectLanguage_Postfix(OptionController __instance)
+        {
+            try
+            {
+                if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
+                    return;
+                ConfigMenuState.SetActive();
                 ReannounceFocusedConfigOption(__instance);
             }
             catch { }

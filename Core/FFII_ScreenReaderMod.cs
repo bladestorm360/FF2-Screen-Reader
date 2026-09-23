@@ -1121,6 +1121,7 @@ namespace FFII_ScreenReader.Core
                     MenuStateRegistry.BESTIARY_DETAIL,
                     MenuStateRegistry.BESTIARY_FORMATION,
                     MenuStateRegistry.BESTIARY_MAP,
+                    MenuStateRegistry.NEW_GAME_NAMING,
                     MenuStateRegistry.POPUP);
 
                 // Clear the command-bar open-read arm flags too (leak safety).
@@ -1220,6 +1221,16 @@ namespace FFII_ScreenReader.Core
                     CoroutineManager.StartManaged(
                         MenuTextDiscovery.WaitAndReadCursor(cursor, "Navigate", 0, false)
                     );
+                    return;
+                }
+
+                // === GAME-OVER POPUPS ===
+                // Load / Return to Title and the "Start from recent save data?" Yes/No are read here,
+                // before the battle check, so a battle flag not yet cleared after the defeat can't
+                // silence them (replaces the per-frame UpdateCommand hooks).
+                if (PopupState.IsGameOverPopupActive)
+                {
+                    PopupPatches.ReadCurrentButton(cursor);
                     return;
                 }
 

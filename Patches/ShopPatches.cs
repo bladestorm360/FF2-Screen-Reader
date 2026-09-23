@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -178,6 +179,7 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 PatchSetDescription(harmony);
+                PatchListSetCursor(harmony);
                 PatchCommandSetCursor(harmony);
                 PatchTradeWindow(harmony);
 
@@ -214,6 +216,32 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        // ShopListMainContentController.SetCursor(bool, WithinRangeType) (private, unique RVA 0x663740):
+        // SelectContent (every focus change, affordable or not — it runs after the OnSelected →
+        // SetDescription callback) and ResetCursor. A second, delegate-independent "focus moved" signal
+        // for the buy/sell list, so a greyed (unaffordable) item never depends on the OnSelected
+        // callback alone. Deduplicated with SetDescription by list index.
+        private static void PatchListSetCursor(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var method = AccessTools.Method(typeof(ShopListMainContentController), "SetCursor");
+                if (method != null)
+                {
+                    harmony.Patch(method,
+                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(ListSetCursor_Postfix)));
+                }
+                else
+                {
+                    MelonLogger.Warning("[Shop] Could not find ShopListMainContentController.SetCursor");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Shop] Failed to patch list SetCursor: {ex.Message}");
+            }
+        }
+
         // ShopCommandMenuController.SetCursor(int) fires when the Buy/Sell/Equipment/Back
         // command bar is focused — on shop open AND on navigation — so it announces the
         // initial command without an arrow press.
@@ -243,21 +271,38 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        /// <summary>
+        /// Trade (quantity) window, event-driven (CLAUDE.md rule 3; replaces the per-frame
+        /// UpdateCotroller postfix). ShopTradeWindowController.UpdateArrowImage (private, unique RVA
+        /// 0x66C770) runs at the end of Show and after every AddCount / TakeCount, from both the key
+        /// input lambda and the arrow-click lambdas — i.e. whenever the count can change. Show
+        /// (unique RVA 0x66BF20) is bracketed so its own UpdateArrowImage stays quiet and the opening
+        /// count is read one frame later, after ShopController's SetTotalPriceText.
+        /// </summary>
         private static void PatchTradeWindow(HarmonyLib.Harmony harmony)
         {
             try
             {
                 Type tradeType = typeof(ShopTradeWindowController);
-                var updateMethod = tradeType.GetMethod("UpdateCotroller", new Type[] { typeof(bool) });
 
-                if (updateMethod != null)
-                {
-                    harmony.Patch(updateMethod,
-                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(UpdateCotroller_Postfix)));
-                }
+                var arrowMethod = AccessTools.Method(tradeType, "UpdateArrowImage", Type.EmptyTypes);
+                if (arrowMethod != null)
+                    harmony.Patch(arrowMethod,
+                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(TradeUpdateArrowImage_Postfix)));
+                else
+                    MelonLogger.Warning("[Shop] Could not find ShopTradeWindowController.UpdateArrowImage");
+
+                var showMethod = AccessTools.Method(tradeType, "Show");
+                if (showMethod != null)
+                    harmony.Patch(showMethod,
+                        prefix: new HarmonyMethod(typeof(ShopPatches), nameof(TradeShow_Prefix)),
+                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(TradeShow_Postfix)));
+                else
+                    MelonLogger.Warning("[Shop] Could not find ShopTradeWindowController.Show");
             }
-            catch
+            catch (Exception ex)
             {
+                MelonLogger.Error($"[Shop] Failed to patch the trade window: {ex.Message}");
             }
         }
 
@@ -303,6 +348,40 @@ namespace FFII_ScreenReader.Patches
                 if (mainList == null)
                     return;
 
+                AnnounceFocusedFromList(mainList);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Postfix for ShopListMainContentController.SetCursor — the list's own focus-moved signal
+        /// (see PatchListSetCursor). Same state gate and index dedup as SetDescription_Postfix.
+        /// </summary>
+        public static void ListSetCursor_Postfix(ShopListMainContentController __instance)
+        {
+            try
+            {
+                if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
+                    return;
+
+                int state = ShopMenuTracker.GetState();
+                if (state != IL2CppOffsets.Shop.STATE_SELECT_PRODUCT && state != IL2CppOffsets.Shop.STATE_SELECT_SELL_ITEM)
+                    return;
+
+                _cachedMainList = __instance;
+                AnnounceFocusedFromList(__instance);
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Reads the focused buy/sell row from the list (selectCursor.Index into productContentList) and
+        /// announces it once per index. Shared by the SetDescription and list SetCursor signals.
+        /// </summary>
+        private static void AnnounceFocusedFromList(ShopListMainContentController mainList)
+        {
+            try
+            {
                 ShopMenuTracker.SetActive();
                 // In the item list — re-arm the command-bar and quantity announcements for
                 // the trip back / into the trade window.
@@ -336,7 +415,18 @@ namespace FFII_ScreenReader.Patches
                 if (list == null || index >= list.Count)
                     return;
 
-                AnnounceShopItem(list[index], index, list.Count);
+                // FF1 parity: the list is a fixed pool whose unused entries still hold other products,
+                // so the position counts the ACTIVE entries, not the pool size.
+                int activeCount = 0;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    try { var c = list[i]; if (c != null && c.gameObject != null && c.gameObject.activeInHierarchy) activeCount++; }
+                    catch { }
+                }
+                if (activeCount <= index)
+                    activeCount = list.Count;
+
+                AnnounceShopItem(list[index], index, activeCount);
             }
             catch { }
         }
@@ -412,7 +502,7 @@ namespace FFII_ScreenReader.Patches
             if (string.IsNullOrEmpty(itemName))
             {
                 // Empty sell slot — announce but keep the last real item for the I key.
-                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count));
+                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count), interrupt: true);
                 return;
             }
 
@@ -443,9 +533,9 @@ namespace FFII_ScreenReader.Patches
             if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(detail))
                 announcement = $"{baseAnnouncement}: {detail}";
 
-            // Caller (SetDescription) already gated on the list-index guard, so announce.
+            // Caller already gated on the list-index guard, so announce.
             announcement = MenuPosition.Format(announcement, index, count);
-            FFII_ScreenReaderMod.SpeakText(announcement);
+            FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
         }
 
         /// <summary>
@@ -604,31 +694,68 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        public static void UpdateCotroller_Postfix(ShopTradeWindowController __instance, bool isCount)
+        // True while ShopTradeWindowController.Show runs (its UpdateArrowImage precedes the total text).
+        private static bool _tradeShowInProgress = false;
+        private static int _tradeShowGen = 0;
+
+        public static void TradeShow_Prefix() => _tradeShowInProgress = true;
+
+        /// <summary>Trade window opened: read the opening count and total one frame later.</summary>
+        public static void TradeShow_Postfix(ShopTradeWindowController __instance)
+        {
+            _tradeShowInProgress = false;
+            try
+            {
+                if (__instance != null)
+                    CoroutineManager.StartManaged(DeferredOpeningQuantity(__instance, ++_tradeShowGen));
+            }
+            catch { }
+        }
+
+        private static IEnumerator DeferredOpeningQuantity(ShopTradeWindowController controller, int gen)
+        {
+            yield return null;
+            if (gen != _tradeShowGen) yield break;
+            try
+            {
+                if (controller != null && controller.gameObject != null && controller.gameObject.activeInHierarchy)
+                {
+                    _lastQuantity = -1;   // the opening count always speaks
+                    AnnounceQuantity(controller);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Postfix for ShopTradeWindowController.UpdateArrowImage — the count may have changed
+        /// (AddCount / TakeCount). Speaks only a real change, as the per-frame reader did.
+        /// </summary>
+        public static void TradeUpdateArrowImage_Postfix(ShopTradeWindowController __instance)
         {
             try
             {
-                if (__instance == null)
+                if (_tradeShowInProgress || __instance == null)
                     return;
-
-                int selectedCount = GetSelectedCount(__instance);
-
-                // Local quantity guard — the trade window calls this every frame for visual sync.
-                if (selectedCount == _lastQuantity)
-                    return;
-                _lastQuantity = selectedCount;
-
-                string totalPrice = GetTotalPriceText(__instance);
-
-                string announcement = string.IsNullOrEmpty(totalPrice)
-                    ? selectedCount.ToString()
-                    : $"{selectedCount}, {totalPrice}";
-
-                FFII_ScreenReaderMod.SpeakText(announcement);
+                AnnounceQuantity(__instance);
             }
-            catch
-            {
-            }
+            catch { }
+        }
+
+        /// <summary>"Quantity: N, Total: X" (or "Quantity: N"), once per distinct count — FF1's wording.</summary>
+        private static void AnnounceQuantity(ShopTradeWindowController controller)
+        {
+            int selectedCount = GetSelectedCount(controller);
+            if (selectedCount == _lastQuantity)
+                return;
+            _lastQuantity = selectedCount;
+
+            string totalPrice = GetTotalPriceText(controller);
+            string announcement = string.IsNullOrWhiteSpace(totalPrice)
+                ? string.Format(T("Quantity: {0}"), selectedCount)
+                : string.Format(T("Quantity: {0}, Total: {1}"), selectedCount, TextUtils.StripIconMarkup(totalPrice.Trim()));
+
+            FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
         }
 
         private static int GetSelectedCount(ShopTradeWindowController controller)

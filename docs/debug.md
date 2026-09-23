@@ -1,5 +1,144 @@
 # Implementation Details
 
+## Open-issues pass (2026-09-23, session 2)
+
+Remaining OPEN_ISSUES items for FF2. All hooks below were checked in `dump.cs` (RVA count 1 unless
+stated) and their callers with `tools/hitscan.py` / capstone. State-machine `Init*` methods have no
+direct callers by design: `StateMachine<T>.Change` (0x10E1C00, shared generic) invokes them through the
+state's delegate, with no same-state short-circuit (`current?.Exit(); previous = current; current =
+list[tag]; current.Init?.Invoke()`). **Not verified in game.**
+
+**"Press any button" on return to title** (`PopupPatches`)
+- KeyInput `TitleWindowController.Initialize` (0x8054C0, called by `SceneTitleScreen.CreateTitleWindow`)
+  ends with `stateMachine.Change(SceneManager.arguments == null ? None : ShortcutCommand)`. Boot and a
+  return to title have no arguments → `None`; `ShortcutCommand` is the return-from-Extras path (it never
+  waits for input). `UpdateNone` (0x806C60) waits for `FadeManager.IsFadeFinish` + `SceneTitle.
+  PreloadIsFinished`, then — once, while `view.startParent` is inactive — calls `SystemIndicator.Hide`
+  and activates `startParent` (the prompt), then polls any-key.
+- Arm: `TitleWindowController.InitNone` postfix (0x804A50; hides background/startParent/menuParent).
+  Speak: the existing `SystemIndicator.Hide` postfix, only when `Time.frameCount > armFrame`.
+  `SceneTitleScreen.CreateInstance` calls `Hide` in the same frame as `InitNone` (right after
+  `CreateTitleWindow`, before `FadeManager.FadeIn`) — that is the "~1 s early" boot speech of the old
+  version, now skipped. Other `Hide` callers (`FieldMap.InitEvent/StateInit/StartFadeIn`,
+  `MainGame.FinishSetupSubScenes`, config `FastSwitchFont`) cannot run between the two. Disarmed on
+  `SetEnableMainMenu(true)`.
+- Removed the `SplashController.InitializeTitle` hook: its body (0x448230, `field_0x28?.Invoke()`) is
+  folded with 6 lambdas (`NewGameWindowController.<SettingSelfInputButton>`, `LibraryFieldController.
+  OnSelectAction`, `EquipmentInfoWindowController`, `ResultItemController.OnClick`,
+  `ShopTradeWindowController.<Initialize>b__11_7`, `WordsWindowController.<InitializeSelect>b__26_0`),
+  so it could arm the prompt in game and a later map-load `Hide` would speak "Press any button".
+
+**Language picker** (`ConfigMenuPatches`) — `OptionController.InitSelectLanguage` (0x2F8330; entered
+from `SetEnableLanguageRoot` and `<InitConfig>b__84_2`, i.e. confirming Language) sets
+`configActualDetailsController` to the language section and moves the cursor with `SetCursorFocus`, which
+never calls `ConfigCommandController.SetFocus` (it only drives the `Cursor`), so nothing read the row.
+Prefix clears the config dedup; postfix takes `ConfigMenuState` and arms the existing deferred row read
+("Language: English (1 of 1)"). Taking the config state also opens the gate of
+`SetDropDownItemFocus_Postfix`, which reads the dropdown items (`UpdateSelectingLanguage` → `SetCursor` →
+`SetDropDownItemFocus`). Cancel returns to `Config` (`Change(16)` → `InitConfig`).
+`TitleMenuPatches.Init_Postfix` (InitSelect / InitializeOption / InitializeExtra) now drops
+`ConfigMenuState` and the naming state: those lists are never config menus, and nothing else cleared the
+config suppression when backing out of the title Configuration into the Options list.
+
+**Config popup guard** — `ConfigActualDetailsControllerBase.TitleBack` (0x2E2C30) / `ExitGame`
+(0x2D67A0), virtual and not overridden by the KeyInput details controller, run on a confirmed Return to
+Title / Quit. Their prefix sets `_configLeaving` and cancels a pending re-read; `ReannounceFocusedConfig
+Option` returns while it is set. Cleared by `CancelReannounce` (`ConfigController.SetActive(false)`),
+`ShowConfig` and `InitSelectLanguage`.
+
+**Naming screen** (`NewGameNamingPatches`, `CursorSuppressionCheck`) — the KeyInput
+`NewGameWindowController` (Serial.FF2, dump.cs:280599) character list moves with its own
+`GetCursorMoveIndex` → `SetTargetSelectContent` (no `Cursor.NextIndex`), but the suggested-name list
+(`NameContentListController.<UpdateController>b__9_0`) uses `Cursor.NextIndex/PrevIndex/SkipNext/
+SkipPrev`, so the generic reader doubled every name spoken by `SetFocus_Postfix`. New registry state
+`NEW_GAME_NAMING` (suppression checked after the popup check): set in `InitSelect` / `InitNameSelect`,
+cleared in `InitNameInput`, `InitStartPopup`, `InitErrorPopup` (0x3C3F70) and `InitNone` (0x3C4830,
+`SetActive(false)` → `Change(None)`), by the title list inits and map transitions. The start popup is a
+`NewGamePopup` (MonoBehaviour, `popup` @0xA8, not a `Popup`): its Yes/No moves with `Cursor.NextIndex/
+PrevIndex` and is read ONLY by the generic reader, hence the clear on `InitStartPopup`.
+
+**Per-frame patches removed (rule 3)**
+- *Item / Equip command bars* (`CommandBarPatches`): the `UpdateController` postfixes read while an arm
+  flag set by `SetNextState` was up — but `ItemWindowController.SetNextState` (0x4A9B40, folded with 7
+  setters) has no direct callers at all and `EquipmentWindowController.SetNextState` (0x38E930, folded
+  with 15) is only called from `BattlePlayController.ActDecisionDelegate`, so the arm never came from
+  the real transition. Now: `ItemWindowController.CommandSelectInit` (0x7CDEB0) /
+  `EquipmentWindowController.CommandInit` (0x5217A0) postfixes start a deferred read (one frame, retried
+  ≤30 frames) of `commandController@0x38` → `contentList[selectCursor].Data.Id`, abandoned if the window
+  left its command state (`ReadStateTag` 0x70 / 0x60). Both `SetNextState_Postfix`es now return unless
+  the native object is the window class (`Il2CppTypeCheck.Is<T>`, new in `Utils/Helpers.cs`).
+- *Magic menu* (`MagicMenuPatches`): removed the `AbilityContentListController.UpdateController` and
+  `AbilityCommandController.UpdateController` postfixes, the `AbilityCommandController.UpdateFocus`
+  postfix (also per-frame: `UpdateCommandSelect` calls it unconditionally) and the `SetNextState`
+  postfix (0x2AECD0: folded ×9, no callers). New: `AbilityWindowController.CommandInit` (0x3B8610;
+  prefix `OnCommandMenuActive` + in-progress flag, postfix deferred command read), `UseListInit`
+  (0x3BCA20) / `ForgetInit` (0x3B92B0) (prefix `OnSpellListFocused` + in-progress flag, postfix deferred
+  initial-spell read via `listController@0x58`), `InitializeSelfOrderly` (0x3B9BD0) /
+  `InitializeSelfOrderlyTarget` (0x3B9AC0) (unfocus the list, as the per-frame reader did), and
+  `AbilityCommandController.SetCommandSelectCursor` (0x40E8C0; callers: the `Cursor.NextIndex/PrevIndex`
+  callbacks, click lambda, `ResetCursor`, `SelectCommandByIndex`) for Use/Forget navigation, deduplicated
+  by `ShouldAnnounceCommand`. Cursor postfixes stay quiet while an Init body runs (it positions the
+  cursor before the view is settled). All window Inits run from `UpdateController → Change(nextState)`.
+  Difference: the command bar and the spell list now re-read on every re-entry (the old flags only
+  reset when the window closed, so a second entry was silent).
+- *Shop trade window* (`ShopPatches`): `UpdateCotroller` postfix → `ShopTradeWindowController.
+  UpdateArrowImage` (0x66C770) postfix; it runs at the end of `Show` and after every `AddCount` /
+  `TakeCount` (key lambda `<UpdateCotroller>b__18_0` and both click lambdas). `Show` (0x66BF20) is
+  bracketed so its own `UpdateArrowImage` is quiet and the opening count is read a frame later (after
+  `ShopController.InitConfirmation*` → `SetTotalPriceText`). Same change-only guard as before; wording
+  "Quantity: N, Total: X" (FF1's wording; keys "Quantity: {0}" / "Quantity: {0}, Total: {1}").
+- *Game-over popups* (`PopupPatches`, `ManualPatches.CursorNavigation_Postfix`): `GameOverSelectPopup.
+  UpdateCommand` and `GameOverLoadPopup.UpdateCommand/UpdateFocus` are per-frame (`UpdateSelect` calls
+  `UpdateFocus` first thing every frame). Both popups navigate with `Cursor.NextIndex/PrevIndex`, so they
+  are now owned through `PopupState` and read by `ReadCurrentButton`: the select popup was already
+  registered by `Popup.Open` (now with its cursor offset 0x38, so the open read appends the focused
+  choice); the load popup (MonoBehaviour) is registered by its open read a frame after
+  `InitSaveLoadPopup` (cursor 0x58, commands 0x60) and its message now ends with the focused choice.
+  `GameOverPopupController.InitCommandSelect` (0x7776A0) re-registers the select popup two frames later
+  and reads its focused choice when it regains the cursor from the load popup / back-to-title popup.
+  `PopupState.IsGameOverPopupActive` routes these before the battle-context early return.
+  (`GameOverLoadPopup.SetCommandSelectCursor` was not used: `UpdateSelect` calls it every frame while
+  the positive command is hidden.)
+
+**Words menu** (`KeywordPatches`) — `WordsContentListController.SetDescriptionText(int)` (hooked
+before) has no callers: it is inlined into `SetCommandSelectCursor` (0x810F60; callers: the
+`Cursor.NextIndex/PrevIndex` callbacks `<UpdateController>b__9_*` = `jmp SetCommandSelectCursor`,
+`SetDefaultCursor`, click lambda). That method sets the cursor and fills `view.descriptionText` from
+`keyWordContentDictionary[selectCursor.Index]` — the dictionary is keyed by LIST INDEX
+(`SetKeyWordsDictionary(index, content)`), while the mod looked it up by `contentItem.Id`, so it fell back
+to the bare name. Now hooked on `SetCommandSelectCursor`; lookup by index; fallback description is the
+rendered `view@0x20 → descriptionText@0x20`; the open read uses the live cursor index. Description via
+the shared `ComposeKeywordAnnouncement` (inline with Auto Detail, cached for the I key).
+
+**Shop items** — `ShopListMainContentController.SelectContent` invokes `OnSelected` (→
+`ShopController.<InitSelectProduct>b__40_1` → `ShopInfoController.SetDescription`) for every focused row,
+selectable or not (`canSelect@0x40` only chooses `SetFocusContent(true/false)`), so the existing
+SetDescription reader already covers greyed items. Added a delegate-independent second signal,
+`ShopListMainContentController.SetCursor` (0x663740; callers `SelectContent`, `ResetCursor` ×2), sharing
+the list-index dedup; row position counts active pool entries (FF1); rows speak with interrupt.
+
+**Unused keys** — deleted "Are you sure?" (the removed two-stage waypoint clear), "entities" (no count
+announcement anywhere; FF1 says "Entity scan complete" only) and "Waypoints" (waypoint categories start at
+"All"; no waypoint section). "quantity {0}" was replaced by FF1's "Quantity: {0}" / "Quantity: {0}, Total: {1}" keys for the trade window.
+
+**L3 / R3** — `FieldMap..ctor` fills `inputFormatConfigTable`: `EncountChange(7) → Key.StickR` (static
++0x88), `AutoDash(8) → Key.StickL` (+0x80); `FieldMap.UpdatePlayerStatePlay` checks `keyAutoDash@0x80` →
+`ConfigClient.SetIsAutoDash` and `keyEncountChange@0x78` → `CheatSettingsClient.SetIsEnableEncount`. So
+L3 = walk/run, R3 = encounters; readme updated.
+
+**Value-0 battle events** — today: `HitType.Zero` → "Target: 0 damage" (since 2026-07-09), `Recovery
+Condition` and `Non` silent, no condition-removal announcement anywhere. The hit type comes from each
+`FunctionBase` subclass's `Calc` through `ICalcControllerProvider` (e.g. `AddConditionFunction.Calc` →
+`GetFixedStatus(Miss/Hit)` or `GetAddConditionStatus`), 34 subclasses plus the `CalcExecuteFF2` paths —
+not provable offline. Nothing new is spoken; one log line per value-0 view:
+`[Battle] value-0 view: hitType=N isRecovery=B target=X` (the July `[DIAG-DMG]` log was removed before
+any session logged it — the newest FF2 log is 2026-07-08).
+
+**Cross-checks** — controller unplug and F8 state sync: already fixed (`ControllerRouter.Update`). Tab:
+already checks for a live `BattleController`. `InputManager.IsOnValidMap` (every frame from
+`DetermineContext`) re-ran `FindObjectOfType<FieldPlayerController>` each frame off the field; a miss now
+suppresses the rescan for 30 frames.
+
 ## Offline entity-label extraction + official-name pass (2026-09-23)
 
 Every map's entity labels are now translated, found offline instead of by walking maps with the
@@ -28,6 +167,12 @@ Every map's entity labels are now translated, found offline instead of by walkin
   are menu headers ("Weapons"), not shop names.
 - Re-run after a game update: `python tools/extract_entities.py missing <out.json>`, translate the
   keys, then `python tools/apply_translations.py apply <batch.json>`.
+- **Official-name substring pass (2026-09-23, session 2).** Also fixed keys that *contain* an
+  official proper noun (characters, places, key items, vehicles, monsters, weapons), replacing
+  only that noun with the game's form for each language: fr Josef → Joseph, ko 파라메키아 →
+  팔라메키아, Mysidia Tower → Mysidian Tower, and the kana item spellings ビックホーン and サンダギガース.
+  Totals: 13 entries / 49 values. Rules and the full old→new list:
+  `D:\Games\Dev\Unity\FFPR\tools\official_substring\`.
 
 ## FF1-parity pass 2 (2026-09-23)
 
@@ -1119,6 +1264,9 @@ Saved to MelonLoader prefs: WallTones, Footsteps, AudioBeacons (all default fals
 ## Game Over Screen Accessibility (2026-01-31)
 
 Ported from FF1 screen reader. Announces game over screen elements including defeat message, button navigation, and load popup.
+
+**Superseded (2026-09-23, session 2):** the `UpdateCommand` / `UpdateFocus` hooks below were per-frame
+and are gone; navigation is read through `PopupState` + `ReadCurrentButton` (see "Open-issues pass").
 
 ### Patches
 

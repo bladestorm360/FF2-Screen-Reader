@@ -113,7 +113,7 @@ Button names are shown Xbox (PlayStation). Nintendo Pro / Joy-Con labels are als
 - LB / RB (L1 / R1): Tab switching in menus.
 - LT (L2): Page up in non-field menus. On the field, LT is reserved by the mod for pathfinding (see Mod controller).
 - RT (R2): Open the pause menu on the field and in battle. In non-field menus, page down.
-- L3 / R3 (Stick Clicks): the game's walk/run and random-encounter toggles — only when Stick-click normalization is enabled in the Mod Menu.
+- L3 (Left Stick Click): the game's walk/run (auto-dash) toggle. R3 (Right Stick Click): the game's random-encounter toggle. Only when Stick-click normalization is enabled in the Mod Menu.
 
 ### Mod controller
 
@@ -148,7 +148,7 @@ Button names are shown Xbox (PlayStation). Nintendo Pro / Joy-Con labels are als
 
 - Back + L3: toggle audio beacons.
 - Back + R3: toggle pathfinding filter.
-- (L3 / R3 alone become game functions — the walk/run and encounter toggles.)
+- (L3 / R3 alone become game functions: L3 toggles walk/run, R3 toggles random encounters.)
 
 #### Normal-state mod actions (no Mod button needed)
 

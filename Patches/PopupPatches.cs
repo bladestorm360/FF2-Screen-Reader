@@ -30,8 +30,8 @@ using KeyInputTitleMenuCommandController = Il2CppLast.UI.KeyInput.TitleMenuComma
 using TouchCommonPopup = Il2CppLast.UI.Touch.CommonPopup;
 using TouchTitleMenuCommandController = Il2CppLast.UI.Touch.TitleMenuCommandController;
 
-// Splash/Title screen
-using SplashController = Il2CppLast.UI.SplashController;
+// Title screen (the "Press any button" prompt is the None state of the KeyInput title window)
+using KeyInputTitleWindowController = Il2CppLast.UI.KeyInput.TitleWindowController;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -83,6 +83,14 @@ namespace FFII_ScreenReader.Patches
         public static void Clear() => _helper.IsActive = false;
 
         public static bool ShouldSuppress() => IsConfirmationPopupActive && CommandListOffset >= 0;
+
+        /// <summary>
+        /// True while one of the game-over popups (Load / Return to Title, then "Start from recent
+        /// save data?") owns the cursor. Their navigation is routed to ReadCurrentButton even when the
+        /// battle flag is still set, so it never depends on the battle-context early return.
+        /// </summary>
+        public static bool IsGameOverPopupActive =>
+            ShouldSuppress() && CurrentPopupType != null && CurrentPopupType.StartsWith("GameOver", StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -114,7 +122,6 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 TryPatchBasePopup(harmony);
-                TryPatchGameOverSelectPopupUpdateCommand(harmony);
                 TryPatchGameOverLoadPopup(harmony);
                 TryPatchTitleScreen(harmony);
                 isPatched = true;
@@ -152,62 +159,17 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Patch GameOverSelectPopup.UpdateCommand to read buttons on navigation.
-        /// FF2 uses UpdateCommand (not UpdateFocus like FF1 for button input handling).
-        /// </summary>
-        private static void TryPatchGameOverSelectPopupUpdateCommand(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type popupType = typeof(KeyInputGameOverSelectPopup);
-                var updateCommandMethod = AccessTools.Method(popupType, "UpdateCommand");
-
-                if (updateCommandMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(GameOverSelectPopup_UpdateCommand_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateCommandMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Error("[Popup] GameOverSelectPopup.UpdateCommand method not found");
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
         /// Patch GameOverLoadPopup for the "Start from recent save data?" popup.
-        /// This popup is NOT a Popup subclass (it extends MonoBehaviour), so we need separate patches.
+        /// This popup is NOT a Popup subclass (it extends MonoBehaviour), so Popup.Open never sees it:
+        /// InitSaveLoadPopup starts its open read, which also registers it in PopupState so its Yes/No
+        /// navigation (Cursor.NextIndex/PrevIndex in the popup's own input lambda) is read by
+        /// ReadCurrentButton. The per-frame UpdateCommand/UpdateFocus hooks are gone (CLAUDE.md rule 3):
+        /// both run every frame from the popup's UpdateSelect.
         /// </summary>
         private static void TryPatchGameOverLoadPopup(HarmonyLib.Harmony harmony)
         {
             try
             {
-                // Patch GameOverLoadPopup.UpdateCommand for button navigation
-                Type loadPopupType = typeof(KeyInputGameOverLoadPopup);
-                var updateCommandMethod = AccessTools.Method(loadPopupType, "UpdateCommand");
-
-                if (updateCommandMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(GameOverLoadPopup_UpdateCommand_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateCommandMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Error("[Popup] GameOverLoadPopup.UpdateCommand method not found");
-                }
-
-                // Also patch UpdateFocus - cursor navigation may use this method instead of UpdateCommand
-                var updateFocusMethod = AccessTools.Method(loadPopupType, "UpdateFocus");
-                if (updateFocusMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(GameOverLoadPopup_UpdateCommand_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
-                }
-
                 // Patch GameOverPopupController.InitSaveLoadPopup to announce the popup message
                 Type controllerType = typeof(KeyInputGameOverPopupController);
                 var initMethod = AccessTools.Method(controllerType, "InitSaveLoadPopup");
@@ -222,35 +184,56 @@ namespace FFII_ScreenReader.Patches
                 {
                     MelonLogger.Error("[Popup] GameOverPopupController.InitSaveLoadPopup method not found");
                 }
+
+                // GameOverPopupController.InitCommandSelect (unique RVA 0x7776A0): the Load / Return to
+                // Title choice regains the cursor — on first open, and when the load popup or the
+                // back-to-title confirmation is cancelled. The select popup is not re-opened then, so
+                // Popup.Open never re-registers it.
+                var initCommandSelect = AccessTools.Method(controllerType, "InitCommandSelect", Type.EmptyTypes);
+                if (initCommandSelect != null)
+                {
+                    var postfix = typeof(PopupPatches).GetMethod(nameof(GameOverPopupController_InitCommandSelect_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(initCommandSelect, postfix: new HarmonyMethod(postfix));
+                }
+                else
+                {
+                    MelonLogger.Error("[Popup] GameOverPopupController.InitCommandSelect method not found");
+                }
             }
             catch { }
         }
 
         /// <summary>
-        /// Patch title screen "Press any button" using combination approach:
-        /// 1. SplashController.InitializeTitle - stores text silently (fires early during loading)
-        /// 2. SystemIndicator.Hide - speaks stored text when loading completes (indicator hidden)
+        /// Patch the title screen "Press any button" prompt (boot AND return to title):
+        /// 1. KeyInput TitleWindowController.InitNone (unique RVA 0x804A50) arms the prompt. The None
+        ///    state is entered by TitleWindowController.Initialize whenever the title scene is built
+        ///    without scene arguments (SceneTitleScreen.CreateInstance → CreateTitleWindow → Initialize →
+        ///    StateMachine.Change(None)), which is both boot and return to title.
+        /// 2. SystemIndicator.Hide speaks it. UpdateNone calls Hide exactly once, in the frame it shows
+        ///    view.startParent (the prompt), once the fade and preload are done. CreateInstance also calls
+        ///    Hide, in the same frame as InitNone and before the fade-in, so an arm-frame gate skips it.
+        /// (SplashController.InitializeTitle was dropped: its body is folded with six Action-invoke
+        /// lambdas — shop trade window, Words menu, result items, … — so it armed the prompt in game.)
         /// </summary>
         private static void TryPatchTitleScreen(HarmonyLib.Harmony harmony)
         {
             try
             {
-                // Step 1: Patch SplashController.InitializeTitle to capture and store the text
-                Type splashControllerType = typeof(SplashController);
-                var initTitleMethod = AccessTools.Method(splashControllerType, "InitializeTitle");
-
-                if (initTitleMethod != null)
+                // Step 1: arm on the title window's None-state entry
+                var initNoneMethod = AccessTools.Method(typeof(KeyInputTitleWindowController), "InitNone", Type.EmptyTypes);
+                if (initNoneMethod != null)
                 {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(SplashController_InitializeTitle_Postfix),
+                    var postfix = typeof(PopupPatches).GetMethod(nameof(TitleWindowController_InitNone_Postfix),
                         BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(initTitleMethod, postfix: new HarmonyMethod(postfix));
+                    harmony.Patch(initNoneMethod, postfix: new HarmonyMethod(postfix));
                 }
                 else
                 {
-                    MelonLogger.Error("[Popup] SplashController.InitializeTitle method not found");
+                    MelonLogger.Error("[Popup] TitleWindowController.InitNone method not found");
                 }
 
-                // Step 2: Patch SystemIndicator.Hide
+                // Step 2: Patch SystemIndicator.Hide (speaks the armed prompt)
                 Type systemIndicatorType = null;
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
@@ -559,12 +542,13 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                // GameOverSelectPopup
+                // GameOverSelectPopup — the open read appends the focused command (Load / Return to
+                // Title); navigation is read by ReadCurrentButton (see IsGameOverPopupActive).
                 var gameOver = __instance.TryCast<KeyInputGameOverSelectPopup>();
                 if (gameOver != null)
                 {
                     HandlePopupDetected("GameOverSelectPopup", gameOver.Pointer, IL2CppOffsets.Popup.GAMEOVER_CMDLIST_OFFSET,
-                        () => ReadGameOverSelectPopup(gameOver.Pointer));
+                        () => ReadGameOverSelectPopup(gameOver.Pointer), IL2CppOffsets.Popup.GAMEOVER_SELECT_CURSOR_OFFSET);
                     return;
                 }
 
@@ -669,11 +653,6 @@ namespace FFII_ScreenReader.Patches
             catch { }
         }
 
-        // Local cursor-index guards (the GameOver popup Update methods fire repeatedly while
-        // the popup is active). Reset to -1 on popup close so reopening starts fresh.
-        private static int _lastGameOverButtonIndex = -1;
-        private static int _lastGameOverLoadButtonIndex = -1;
-
         // True while a popup opened over the config menu is up (see PopupOpen_Postfix).
         private static bool _openedOverConfig = false;
 
@@ -688,152 +667,12 @@ namespace FFII_ScreenReader.Patches
                 {
                     PopupState.Clear();
                 }
-                // Always reset button tracking on popup close to ensure fresh state for next popup
-                _lastGameOverButtonIndex = -1;
-                _lastGameOverLoadButtonIndex = -1;
-
                 // A cancelled popup over the config menu returns to the row without re-focusing it;
                 // re-announce it (read one frame later, only while the config menu is still open).
                 if (_openedOverConfig)
                 {
                     _openedOverConfig = false;
                     ConfigMenuPatches.ReannounceFocusedConfigOption();
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Postfix for GameOverSelectPopup.UpdateCommand - reads and announces current button.
-        /// GameOverSelectPopup has its own UpdateCommand method that needs separate patching.
-        /// </summary>
-        public static void GameOverSelectPopup_UpdateCommand_Postfix(object __instance)
-        {
-            try
-            {
-                if (__instance == null) return;
-
-                var popup = __instance as KeyInputGameOverSelectPopup;
-                if (popup == null) return;
-
-                IntPtr popupPtr = popup.Pointer;
-                if (popupPtr == IntPtr.Zero) return;
-
-                // Read selectCursor at offset 0x38
-                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVER_SELECT_CURSOR_OFFSET);
-                if (cursorPtr == IntPtr.Zero)
-                {
-                    return;
-                }
-
-                var cursor = new GameCursor(cursorPtr);
-                int cursorIndex = cursor.Index;
-
-                // Local index guard - skip if same button as last announced
-                if (cursorIndex == _lastGameOverButtonIndex)
-                    return;
-                _lastGameOverButtonIndex = cursorIndex;
-
-                // Read commandList at offset 0x40
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVER_CMDLIST_OFFSET);
-                if (listPtr == IntPtr.Zero)
-                {
-                    return;
-                }
-
-                // IL2CPP List: _size at 0x18, _items at 0x10
-                int size = Marshal.ReadInt32(listPtr + 0x18);
-                if (cursorIndex < 0 || cursorIndex >= size)
-                {
-                    return;
-                }
-
-                IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
-                if (itemsPtr == IntPtr.Zero) return;
-
-                // Array elements start at 0x20, 8 bytes per pointer
-                IntPtr commandPtr = Marshal.ReadIntPtr(itemsPtr + 0x20 + (cursorIndex * 8));
-                if (commandPtr == IntPtr.Zero) return;
-
-                // CommonCommand.text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.Popup.COMMON_COMMAND_TEXT_OFFSET);
-                if (textPtr == IntPtr.Zero) return;
-
-                var textComponent = new Text(textPtr);
-                string buttonText = textComponent.text;
-
-                if (!string.IsNullOrWhiteSpace(buttonText))
-                {
-                    buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Postfix for GameOverLoadPopup.UpdateCommand - reads and announces current button.
-        /// This handles button navigation (Yes/No) for the "Start from recent save data?" popup.
-        /// </summary>
-        public static void GameOverLoadPopup_UpdateCommand_Postfix(object __instance)
-        {
-            try
-            {
-                if (__instance == null) return;
-
-                var popup = __instance as KeyInputGameOverLoadPopup;
-                if (popup == null) return;
-
-                IntPtr popupPtr = popup.Pointer;
-                if (popupPtr == IntPtr.Zero) return;
-
-                // Read selectCursor at offset 0x58
-                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVERLOAD_SELECT_CURSOR_OFFSET);
-                if (cursorPtr == IntPtr.Zero)
-                {
-                    return;
-                }
-
-                var cursor = new GameCursor(cursorPtr);
-                int cursorIndex = cursor.Index;
-
-                // Local index guard - skip if same button as last announced
-                if (cursorIndex == _lastGameOverLoadButtonIndex)
-                    return;
-                _lastGameOverLoadButtonIndex = cursorIndex;
-
-                // Read commandList at offset 0x60
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVERLOAD_CMDLIST_OFFSET);
-                if (listPtr == IntPtr.Zero)
-                {
-                    return;
-                }
-
-                // IL2CPP List: _size at 0x18, _items at 0x10
-                int size = Marshal.ReadInt32(listPtr + 0x18);
-                if (cursorIndex < 0 || cursorIndex >= size)
-                {
-                    return;
-                }
-
-                IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
-                if (itemsPtr == IntPtr.Zero) return;
-
-                // Array elements start at 0x20, 8 bytes per pointer
-                IntPtr commandPtr = Marshal.ReadIntPtr(itemsPtr + 0x20 + (cursorIndex * 8));
-                if (commandPtr == IntPtr.Zero) return;
-
-                // CommonCommand.text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.Popup.COMMON_COMMAND_TEXT_OFFSET);
-                if (textPtr == IntPtr.Zero) return;
-
-                var textComponent = new Text(textPtr);
-                string buttonText = textComponent.text;
-
-                if (!string.IsNullOrWhiteSpace(buttonText))
-                {
-                    buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
                 }
             }
             catch { }
@@ -870,6 +709,58 @@ namespace FFII_ScreenReader.Patches
             catch { }
         }
 
+        // GameOverPopupController.selectPopup (KeyInput, dump.cs: GameOverPopupController @0x50)
+        private const int GAMEOVERPOPUPCTRL_SELECT_POPUP_OFFSET = 0x50;
+
+        /// <summary>
+        /// Postfix for GameOverPopupController.InitCommandSelect. Two frames later (after the open
+        /// read that Popup.Open schedules for the first appearance), makes the select popup the popup
+        /// that owns the cursor again and, unless that open read already spoke a choice, reads the
+        /// focused Load / Return to Title — the back-out read after cancelling the load popup or the
+        /// back-to-title confirmation (the old per-frame UpdateCommand hook re-read it then).
+        /// </summary>
+        public static void GameOverPopupController_InitCommandSelect_Postfix(KeyInputGameOverPopupController __instance)
+        {
+            try
+            {
+                if (__instance != null && __instance.Pointer != IntPtr.Zero)
+                    CoroutineManager.StartManaged(DelayedGameOverSelectReturn(__instance.Pointer));
+            }
+            catch { }
+        }
+
+        private static IEnumerator DelayedGameOverSelectReturn(IntPtr controllerPtr)
+        {
+            yield return null;
+            yield return null;
+
+            try
+            {
+                IntPtr popupPtr = Marshal.ReadIntPtr(controllerPtr + GAMEOVERPOPUPCTRL_SELECT_POPUP_OFFSET);
+                if (popupPtr == IntPtr.Zero) yield break;
+                var popup = new KeyInputGameOverSelectPopup(popupPtr);
+                if (popup.gameObject == null || !popup.gameObject.activeInHierarchy) yield break;
+
+                bool owned = PopupState.IsConfirmationPopupActive && PopupState.ActivePopupPtr == popupPtr;
+                if (owned && PopupState.LastButtonIndex >= 0)
+                    yield break;   // the open read (or a navigation) already spoke the choice
+
+                if (!owned)
+                    PopupState.SetActive("GameOverSelectPopup", popupPtr,
+                        IL2CppOffsets.Popup.GAMEOVER_CMDLIST_OFFSET, IL2CppOffsets.Popup.GAMEOVER_SELECT_CURSOR_OFFSET);
+
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.Popup.GAMEOVER_SELECT_CURSOR_OFFSET);
+                if (cursorPtr == IntPtr.Zero) yield break;
+                int idx = new GameCursor(cursorPtr).Index;
+                string choice = ReadButtonFromCommandList(popupPtr, IL2CppOffsets.Popup.GAMEOVER_CMDLIST_OFFSET, idx, out int count);
+                if (string.IsNullOrWhiteSpace(choice)) yield break;
+
+                PopupState.LastButtonIndex = idx;
+                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(TextUtils.StripIconMarkup(choice.Trim()), idx, count), interrupt: false);
+            }
+            catch { }
+        }
+
         /// <summary>
         /// Coroutine to read GameOverLoadPopup message after 1 frame delay.
         /// Navigates: controller -> view (0x30) -> loadPopup (0x18) -> messageText (0x40)
@@ -899,116 +790,118 @@ namespace FFII_ScreenReader.Patches
                 // Read messageText at offset 0x40
                 IntPtr messagePtr = Marshal.ReadIntPtr(loadPopupPtr + IL2CppOffsets.Popup.GAMEOVERLOAD_MESSAGE_OFFSET);
                 string message = ReadTextFromPointer(messagePtr);
+                message = string.IsNullOrWhiteSpace(message) ? null : TextUtils.StripIconMarkup(message.Trim());
 
-                if (!string.IsNullOrWhiteSpace(message))
+                // Own the cursor from here: Yes/No navigation (Cursor.NextIndex/PrevIndex) is routed to
+                // ReadCurrentButton. Registered a frame after InitSaveLoadPopup, so the game-over select
+                // popup's own Close (which clears PopupState) has already run.
+                PopupState.SetActive("GameOverLoadPopup", loadPopupPtr,
+                    IL2CppOffsets.Popup.GAMEOVERLOAD_CMDLIST_OFFSET, IL2CppOffsets.Popup.GAMEOVERLOAD_SELECT_CURSOR_OFFSET);
+
+                // Append the initially-focused choice (the old per-frame UpdateCommand hook spoke it).
+                string choice = null;
+                IntPtr cursorPtr = Marshal.ReadIntPtr(loadPopupPtr + IL2CppOffsets.Popup.GAMEOVERLOAD_SELECT_CURSOR_OFFSET);
+                if (cursorPtr != IntPtr.Zero)
                 {
-                    message = TextUtils.StripIconMarkup(message.Trim());
-                    FFII_ScreenReaderMod.SpeakText(message, interrupt: false);
+                    int idx = new GameCursor(cursorPtr).Index;
+                    choice = ReadButtonFromCommandList(loadPopupPtr, IL2CppOffsets.Popup.GAMEOVERLOAD_CMDLIST_OFFSET, idx, out int count);
+                    if (!string.IsNullOrWhiteSpace(choice))
+                    {
+                        choice = MenuPosition.Format(TextUtils.StripIconMarkup(choice.Trim()), idx, count);
+                        PopupState.LastButtonIndex = idx;
+                    }
+                    else
+                    {
+                        choice = null;
+                    }
                 }
+
+                string announcement = message != null && choice != null ? $"{message}. {choice}" : (message ?? choice);
+                if (!string.IsNullOrWhiteSpace(announcement))
+                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
             }
             catch { }
         }
 
         #endregion
 
-        #region Title Screen (Press Any Button) - SystemIndicator Approach
+        #region Title Screen (Press Any Button) - InitNone arms, SystemIndicator.Hide speaks
 
         /// <summary>
-        /// Stores the "Press any button" text captured during InitializeTitle.
-        /// Spoken when SystemIndicator.Hide() is called (loading indicator hidden).
-        ///
-        /// KNOWN ISSUE: Speech occurs ~1 second before user input is actually available.
-        /// No hookable method exists that fires exactly when input becomes available.
+        /// The "Press any button" text armed by TitleWindowController.InitNone; spoken by the next
+        /// SystemIndicator.Hide in a LATER frame (UpdateNone's, the moment the prompt appears).
         /// </summary>
         private static string pendingTitleText = null;
 
-        /// <summary>
-        /// Guard flag: only true when we've captured title screen text and are waiting to speak it.
-        /// This ensures speech only triggers for title screen, not other loading sequences.
-        /// Set true ONLY by InitializeTitle, cleared when speech occurs.
-        /// </summary>
+        /// <summary>True between InitNone (the title's None state) and the prompt being spoken.</summary>
         private static bool isTitleScreenTextPending = false;
 
         /// <summary>
-        /// Postfix for SplashController.InitializeTitle.
-        /// Called when entering the Title state - captures and stores the text but does NOT speak.
-        /// The text will be spoken later by SystemIndicator.Hide when loading completes.
+        /// Frame InitNone armed the prompt. SceneTitleScreen.CreateInstance calls SystemIndicator.Hide
+        /// synchronously right after building the title window (same frame as InitNone, before the
+        /// fade-in); UpdateNone's Hide comes frames later, once the fade and preload are finished.
         /// </summary>
-        public static void SplashController_InitializeTitle_Postfix(SplashController __instance)
+        private static int titlePromptArmFrame = -1;
+
+        /// <summary>
+        /// Postfix for KeyInput TitleWindowController.InitNone — the title's "Press any button" state
+        /// entry, on boot and on every return to the title. Arms the prompt; does not speak.
+        /// </summary>
+        public static void TitleWindowController_InitNone_Postfix()
         {
             try
             {
-                if (__instance == null)
-                {
-                    return;
-                }
-
-                // Try to read the localized "Press any button" text from UiMessageConstants
-                string pressText = null;
-
-                try
-                {
-                    // Access UiMessageConstants via reflection since it's in root namespace
-                    var uiMsgType = Type.GetType("Il2CppUiMessageConstants, Assembly-CSharp")
-                                 ?? Type.GetType("UiMessageConstants, Assembly-CSharp");
-
-                    if (uiMsgType != null)
-                    {
-                        var field = uiMsgType.GetField("MENU_TITLE_PRESS_TEXT", BindingFlags.Public | BindingFlags.Static);
-                        if (field != null)
-                        {
-                            pressText = field.GetValue(null) as string;
-                        }
-                    }
-                }
-                catch
-                {
-                    // Silently ignore - will use fallback
-                }
-
-                if (!string.IsNullOrWhiteSpace(pressText))
-                {
-                    pendingTitleText = TextUtils.StripIconMarkup(pressText.Trim());
-                }
-                else
-                {
-                    // Fallback to hardcoded text
-                    pendingTitleText = T("Press any button");
-                }
-
-                // Set the guard flag - this ensures only title screen triggers speech
+                pendingTitleText = GetPressAnyButtonText();
                 isTitleScreenTextPending = true;
+                titlePromptArmFrame = UnityEngine.Time.frameCount;
             }
-            catch
-            {
-                pendingTitleText = T("Press any button");
-                isTitleScreenTextPending = true;
-            }
+            catch { }
         }
 
         /// <summary>
-        /// Postfix for SystemIndicator.Hide().
-        /// Called when loading indicator is hidden (loading complete).
-        /// If we have pending title text AND the guard flag is set, speaks immediately.
-        ///
-        /// KNOWN ISSUE: This fires ~1 second before user input is actually available.
+        /// Localized "Press any button": the UiMessageConstants.MENU_TITLE_PRESS_TEXT constant when it
+        /// resolves, else the mod text (unchanged from the boot path that already worked).
+        /// </summary>
+        private static string GetPressAnyButtonText()
+        {
+            try
+            {
+                var uiMsgType = Type.GetType("Il2CppUiMessageConstants, Assembly-CSharp")
+                             ?? Type.GetType("UiMessageConstants, Assembly-CSharp");
+                var field = uiMsgType?.GetField("MENU_TITLE_PRESS_TEXT", BindingFlags.Public | BindingFlags.Static);
+                string pressText = field?.GetValue(null) as string;
+                if (!string.IsNullOrWhiteSpace(pressText))
+                    return TextUtils.StripIconMarkup(pressText.Trim());
+            }
+            catch { } // best-effort; mod text below
+            return T("Press any button");
+        }
+
+        /// <summary>
+        /// Postfix for SystemIndicator.Hide(). Speaks the armed prompt when Hide comes from a later
+        /// frame than InitNone — TitleWindowController.UpdateNone hides the indicator in the same call
+        /// that shows the prompt. The same-frame Hide from SceneTitleScreen.CreateInstance is skipped.
         /// </summary>
         public static void SystemIndicator_Hide_Postfix()
         {
             try
             {
-                // Only proceed if BOTH the guard flag is set AND we have valid text
-                // This ensures we only speak for the title screen, not other loading sequences
-                if (isTitleScreenTextPending && !string.IsNullOrWhiteSpace(pendingTitleText))
-                {
-                    FFII_ScreenReaderMod.SpeakText(pendingTitleText, interrupt: false);
+                if (!isTitleScreenTextPending || UnityEngine.Time.frameCount <= titlePromptArmFrame)
+                    return;
 
-                    // Clear BOTH to prevent any re-triggering
-                    pendingTitleText = null;
-                    isTitleScreenTextPending = false;
-                }
+                string text = pendingTitleText;
+                DisarmTitlePrompt();
+                if (!string.IsNullOrWhiteSpace(text))
+                    FFII_ScreenReaderMod.SpeakText(text, interrupt: false);
             }
             catch { }
+        }
+
+        /// <summary>Drops an armed prompt (the title main menu opened, i.e. the prompt was dismissed).</summary>
+        private static void DisarmTitlePrompt()
+        {
+            pendingTitleText = null;
+            isTitleScreenTextPending = false;
         }
 
         /// <summary>
@@ -1025,6 +918,8 @@ namespace FFII_ScreenReader.Patches
                     // Title menu is becoming active - clear all battle/menu states
                     // This happens after user presses button on "Press any button" screen
                     MenuStateRegistry.ResetAll();
+                    // The prompt is gone; never let a stale arm speak on a later Hide (in game).
+                    DisarmTitlePrompt();
                 }
             }
             catch { }

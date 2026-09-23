@@ -16,6 +16,31 @@ using NewGamePopup = Il2CppSerial.FF2.UI.KeyInput.NewGamePopup;
 namespace FFII_ScreenReader.Patches
 {
     /// <summary>
+    /// Suppresses the generic cursor reader on the naming screen while its own readers speak: the
+    /// character-slot state (SetTargetSelectContent) and the suggested-name list (NameContentListController
+    /// .SetFocus — its cursor moves through Cursor.NextIndex/PrevIndex, so the generic reader doubled
+    /// every name). Active in the Select and NameSelect states only. The keyboard entry, the
+    /// "Start with these names?" popup (NewGamePopup: its Yes/No IS read by the generic reader — it is
+    /// neither a Popup nor otherwise hooked) and the error popup clear it, as does leaving the screen.
+    /// </summary>
+    public static class NewGameNamingState
+    {
+        private static readonly MenuStateHelper _helper = new(MenuStateRegistry.NEW_GAME_NAMING);
+
+        public static bool IsActive => _helper.IsActive;
+
+        public static void SetActive() => _helper.SetActiveExclusive();
+
+        public static void Clear()
+        {
+            if (_helper.IsActive)
+                _helper.IsActive = false;
+        }
+
+        public static bool ShouldSuppress() => IsActive;
+    }
+
+    /// <summary>
     /// Patches for the New Game character naming screen.
     /// FF2 has multiple suggested names per character that players can cycle through.
     /// Uses event-driven hooks (SetFocusContent, SetForcusIndex) instead of per-frame patches.
@@ -98,6 +123,18 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("InitStartPopup method not found via AccessTools");
                 }
 
+                // InitErrorPopup / InitNone (unique RVAs 0x3C3F70 / 0x3C4830): the error popup and
+                // leaving the screen (SetActive(false) → None) hand the cursor back to the generic reader.
+                foreach (var name in new[] { "InitErrorPopup", "InitNone" })
+                {
+                    var m = AccessTools.Method(controllerType, name, Type.EmptyTypes);
+                    if (m != null)
+                        harmony.Patch(m, postfix: new HarmonyMethod(typeof(NewGameNamingPatches).GetMethod(
+                            nameof(NamingSuppressionOff_Postfix), BindingFlags.Public | BindingFlags.Static)));
+                    else
+                        MelonLogger.Error($"{name} method not found via AccessTools");
+                }
+
                 // EVENT-DRIVEN HOOK: CharacterContentListController.SetTargetSelectContent(int)
                 // KeyInput version uses SetTargetSelectContent (private) instead of SetFocusContent
                 // Fires once when cursor moves to new character slot
@@ -161,6 +198,7 @@ namespace FFII_ScreenReader.Patches
             {
                 // Store controller reference for event-driven hooks
                 currentController = __instance;
+                NewGameNamingState.SetActive();
 
                 // Reset tracking when entering character selection
                 // Don't pre-register any index - let first navigation announce correctly
@@ -185,6 +223,7 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                NewGameNamingState.Clear();
                 string characterName = GetCurrentCharacterName(__instance);
                 string announcement = !string.IsNullOrEmpty(characterName)
                     ? string.Format(T("Enter name for {0}. Type using keyboard."), characterName)
@@ -205,6 +244,8 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                // The popup's Yes/No is read by the generic cursor reader.
+                NewGameNamingState.Clear();
                 // Access popup field via property accessor
                 var popupProp = AccessTools.Property(typeof(NewGameWindowController), "popup");
                 if (popupProp == null)
@@ -232,6 +273,9 @@ namespace FFII_ScreenReader.Patches
             }
             catch { }
         }
+
+        /// <summary>Error popup / screen closed: the generic cursor reader takes over again.</summary>
+        public static void NamingSuppressionOff_Postfix() => NewGameNamingState.Clear();
 
         /// <summary>
         /// EVENT-DRIVEN: Postfix for KeyInput.CharacterContentListController.SetTargetSelectContent
@@ -352,6 +396,7 @@ namespace FFII_ScreenReader.Patches
             {
                 // Store controller reference for event-driven hooks
                 currentController = __instance;
+                NewGameNamingState.SetActive();
 
                 // Reset tracking
                 _lastNameAnnounced = null;

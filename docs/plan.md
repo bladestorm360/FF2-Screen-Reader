@@ -2,6 +2,13 @@
 
 Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is fully playable.**
 
+**Landed (2026-09-23, session 2):** open-issues pass — see `docs/debug.md` ("Open-issues pass").
+"Press any button" on return to title (InitNone arms, the prompt's own SystemIndicator.Hide speaks),
+language-picker open read, naming-screen generic-reader suppression, config Return-to-Title/Quit guard,
+per-frame hooks replaced (item/equip/magic command bars, spell list, shop quantity, game-over popups),
+Words menu descriptions, shop list second focus signal, value-0 battle diagnostic log, IsOnValidMap
+throttle, L3/R3 readme. **Not yet verified in game.**
+
 **Landed (2026-09-23):** FF1-parity pass 2 — see `docs/debug.md` (2026-09-23). Four bug fixes (config
 bestiary states 18/19, vehicle names, item command-bar offset, battle-magic player offset), phased
 battle results incl. spell level-ups, FF1 battle command/target model, bestiary detail keys + single
@@ -22,9 +29,9 @@ confirmation.
 | Menu Navigation | ✓ | Generic cursor + specialized patches |
 | Item Menu | ✓ | Item list, character target with MP |
 | Status Menu | ✓ | All stats, weapon skills (UI read), combat stats |
-| Magic Menu | ✓ | Spell list with level/percent, Use/Forget commands |
-| Config Menu | ✓ | Options with values and "(X of Y)", I key tooltip, Boost submenu, re-read after bestiary/popup, controls list navigation |
-| Shop Menu | ✓ | Buy/sell with prices/stats |
+| Magic Menu | ✓ | Spell list with level/percent, Use/Forget commands; entry reads from state Inits, no per-frame hooks (not yet verified in game) |
+| Config Menu | ✓ | Options with values and "(X of Y)", I key tooltip, Boost submenu, re-read after bestiary/popup, controls list navigation; language screen reads its row on open; no re-read after a confirmed Return to Title / Quit (not yet verified in game) |
+| Shop Menu | ✓ | Buy/sell with prices/stats; "Quantity: N, Total: X" from UpdateArrowImage (no per-frame hook); greyed items also via the list's SetCursor (not yet verified in game) |
 | Equipment Menu | ✓ | Slot/item selection, stat comparison |
 | Dialogue | ✓ | NPC dialogue, multi-line pages, fade/scroll messages |
 | Battle Commands | ✓ | Turn, command (per-turn/page dedup, back-out re-read), targets with statuses, ally initial target |
@@ -35,11 +42,12 @@ confirmation.
 | Waypoint System | ✓ | Add/rename/delete waypoints, category filtering, single-confirm clear all (FF1 model) |
 | Mod Menu | ✓ | Windowless (no focus stealing); field-only gating; FF1 layout; Beacon Destination Announcement toggle |
 | Entity Translation | ✓ | Japanese→English name translation, circled number prefixes (①②③...), full-width trailing-digit strip/append (柵N→"Fence N"). All 421 map labels covered via the offline extractor (`tools/`, 2026-09-23); proper nouns use the game's official names per language |
-| Title Menu | ✓ | New Game, Continue, Options; initial focus read on entry (unverified in game) |
-| Popup Dialogs | ✓ | All types: confirmations, game over, title screen |
+| Title Menu | ✓ | New Game, Continue, Options; initial focus read on entry; "Press any button" on boot and return to title (not yet verified in game) |
+| Naming Screen | ✓ | Character slots and suggested names by their own readers; generic reader suppressed there, start popup still read by it (not yet verified in game) |
+| Popup Dialogs | ✓ | All types: confirmations, game over (read through PopupState, no per-frame hooks — not yet verified in game), title screen |
 | Save/Load | ✓ | Slot info, confirmations, quicksave |
 | Battle Pause | ✓ | Spacebar menu commands |
-| Keyword System | Partial | NPC dialogue works; Words menu reads name only |
+| Keyword System | ✓ | NPC dialogue works; Words menu reads name + description (Auto Detail / I key) via SetCommandSelectCursor (not yet verified in game) |
 
 ## Recent Fixes (2026-06-14)
 
@@ -55,12 +63,13 @@ confirmation.
 
 ## Known Issues
 
-1. **Words menu description** - Main menu keyword list shows name only (NPC Ask/Learn works)
-2. **Shop unaffordable items** - Game skips `SetFocus(true)` for these
-3. **"Press any button" on return to title** - spoken at boot only; FF1 polls from the scene load and
-   FF2 has no confirmed event hook for the return
-4. **No EXP counter / "Battle Results" mod-menu section** - FF2 has no EXP, and no result counting
+1. **No EXP counter / "Battle Results" mod-menu section** - FF2 has no EXP, and no result counting
    animation was confirmed
+2. **Value-0 battle events** - a status cure (e.g. Antidote) is silent; `HitType.Zero` reads "0
+   damage". Which HitType buffs / cures / real 0-damage hits carry is not provable offline; the
+   `[Battle] value-0 view:` log line settles it in one test (see debug.md, open-issues pass)
+3. Fixed 2026-09-23 session 2, not yet verified in game: Words menu description, unaffordable shop
+   items, "Press any button" on return to title
 
 ## Needs in-game confirmation (2026-09-23 pass)
 
@@ -75,6 +84,23 @@ confirmation.
 - Item menu: item list and item-use targets read on entry and on back-out, no double on single-target entry.
 - Save list and title menus: initial slot/command read once.
 - Encounter toggle speaks once on the field (not on config changes / loads).
+
+## Needs in-game confirmation (2026-09-23 open-issues pass, session 2)
+
+- "Press any button" once at boot and once after Return to Title, when the prompt appears (not during
+  the fade-in); never in game.
+- Item / Equipment / Magic command bars: focused command read once on open and on return from a list;
+  magic spell list reads its first spell on every entry; no double reads while navigating.
+- Shop trade window: "Quantity: 1, Total: X" on open, then each change once; greyed items read like others.
+- Game-over: "Game Over. Load" on open; arrows read each choice once; "Start from recent save data?
+  Yes (1 of 2)"; back out of it → the focused Load / Return to Title is read.
+- Title Configuration → Language: "Language: English (1 of 1)"; the dropdown reads its items.
+- Config → Return to Title → Yes: no config row spoken during the fade.
+- Naming screen: suggested names read once each; the start popup's Yes/No still read.
+- Words menu: "keyword: description (X of Y)" with Auto Detail on; the name only with it off, I reads the
+  description.
+- `[Battle] value-0 view:` log lines for a buff (Protect), a cure (Antidote on a poisoned ally) and a
+  0-damage hit.
 
 ## FF2-Specific
 

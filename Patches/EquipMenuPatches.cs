@@ -241,12 +241,12 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                // Arm the command-bar open-read when entering the command bar (menu open or return
-                // from the slot list); clear it otherwise so a later return to the bar re-announces.
-                if (state == IL2CppOffsets.Equipment.STATE_COMMAND)
-                    CommandBarPatches.ArmEquip();
-                else
-                    CommandBarPatches.ClearEquip();
+                // The compiled body (0x38E930) is folded with fifteen other setters and is only ever
+                // called from BattlePlayController.ActDecisionDelegate (every battle action): act only
+                // when the native object really is the equipment window. The command-bar open read is
+                // armed by CommandInit instead (CommandBarPatches).
+                if (!Il2CppTypeCheck.Is<KeyInputEquipmentWindowController>((__instance as Il2CppSystem.Object)?.Pointer ?? IntPtr.Zero))
+                    return;
 
                 // STATE_NONE = 0 (menu closing), STATE_COMMAND = 1 (command bar)
                 if ((state == 0 || state == 1) && EquipMenuState.IsActive)

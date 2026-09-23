@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
@@ -40,7 +41,6 @@ namespace FFII_ScreenReader.Patches
         private static bool _isSpellListFocused = false;
         private static bool _isTargetSelectionActive = false;
         private static bool _isCommandMenuActive = false;
-        private static bool _cmdBarOpenRead = false;   // initial Use/Forget announced this COMMAND entry
         private static int lastSpellId = -1;
         private static string lastTargetAnnouncement = "";
         private static string lastCommandAnnouncement = "";
@@ -53,7 +53,6 @@ namespace FFII_ScreenReader.Patches
                 _isSpellListFocused = false;
                 _isTargetSelectionActive = false;
                 _isCommandMenuActive = false;
-                _cmdBarOpenRead = false;
                 lastSpellId = -1;
                 lastTargetAnnouncement = "";
                 lastCommandAnnouncement = "";
@@ -79,7 +78,6 @@ namespace FFII_ScreenReader.Patches
         public static bool IsSpellListActive => _isSpellListFocused;
         public static bool IsTargetSelectionActive => _isTargetSelectionActive;
         public static bool IsCommandMenuActive => _isCommandMenuActive;
-        public static bool CmdBarOpenRead { get => _cmdBarOpenRead; set => _cmdBarOpenRead = value; }
 
         public static bool IsActive => _helper.IsActive;
 
@@ -334,25 +332,8 @@ namespace FFII_ScreenReader.Patches
             {
                 Type controllerType = typeof(AbilityContentListController);
 
-                // Patch UpdateController to track when spell list is active
-                MethodInfo updateMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "UpdateController")
-                    {
-                        updateMethod = method;
-                        break;
-                    }
-                }
-
-                if (updateMethod != null)
-                {
-                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(UpdateController_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateMethod, postfix: new HarmonyMethod(postfix));
-                }
-
-                // Patch SetCursor for navigation
+                // Patch SetCursor for navigation (the list's active state and initial read now come from
+                // the window's UseListInit / ForgetInit — see TryPatchWindowController)
                 MethodInfo setCursorMethod = null;
                 foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
                 {
@@ -379,80 +360,63 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        /// <summary>
+        /// State-entry hooks on the KeyInput AbilityWindowController (all state-machine Inits with unique
+        /// RVAs; they run from UpdateController → StateMachine.Change(nextState) once per transition):
+        /// CommandInit 0x3B8610, UseListInit 0x3BCA20, ForgetInit 0x3B92B0, InitializeSelfOrderly
+        /// 0x3B9BD0, InitializeSelfOrderlyTarget 0x3B9AC0. They replace the per-frame UpdateController
+        /// postfixes (CLAUDE.md rule 3) and the SetNextState postfix, whose body (0x2AECD0) is folded
+        /// with eight other methods and has no direct callers (inlined), so it never saw a transition.
+        /// </summary>
         private static void TryPatchWindowController(HarmonyLib.Harmony harmony)
+        {
+            PatchWindow(harmony, "CommandInit", nameof(CommandInit_Prefix), nameof(CommandInit_Postfix));
+            PatchWindow(harmony, "UseListInit", nameof(ListInit_Prefix), nameof(ListInit_Postfix));
+            PatchWindow(harmony, "ForgetInit", nameof(ListInit_Prefix), nameof(ListInit_Postfix));
+            PatchWindow(harmony, "InitializeSelfOrderly", null, nameof(SelfOrderlyInit_Postfix));
+            PatchWindow(harmony, "InitializeSelfOrderlyTarget", null, nameof(SelfOrderlyInit_Postfix));
+        }
+
+        private static void PatchWindow(HarmonyLib.Harmony harmony, string method, string prefixName, string postfixName)
         {
             try
             {
-                Type controllerType = typeof(AbilityWindowController);
-
-                // Patch SetNextState to detect state transitions
-                MethodInfo setNextStateMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+                var target = AccessTools.Method(typeof(AbilityWindowController), method, Type.EmptyTypes);
+                if (target == null)
                 {
-                    if (method.Name == "SetNextState")
-                    {
-                        setNextStateMethod = method;
-                        break;
-                    }
+                    MelonLogger.Error($"[Magic Menu] AbilityWindowController.{method} not found");
+                    return;
                 }
-
-                if (setNextStateMethod != null)
-                {
-                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(SetNextState_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                }
+                harmony.Patch(target,
+                    prefix: prefixName == null ? null : new HarmonyMethod(AccessTools.Method(typeof(MagicMenuPatches), prefixName)),
+                    postfix: new HarmonyMethod(AccessTools.Method(typeof(MagicMenuPatches), postfixName)));
             }
-            catch
+            catch (Exception ex)
             {
+                MelonLogger.Error($"[Magic Menu] Error patching AbilityWindowController.{method}: {ex.Message}");
             }
         }
 
+        /// <summary>
+        /// Use/Forget command-bar navigation: AbilityCommandController.SetCommandSelectCursor (private,
+        /// unique RVA 0x40E8C0). Callers: the Cursor.NextIndex/PrevIndex callbacks of the bar's input
+        /// lambda, a click lambda, ResetCursor and SelectCommandByIndex (CommandInit) — event-driven.
+        /// Replaces the UpdateFocus postfix: UpdateCommandSelect calls UpdateFocus every frame.
+        /// </summary>
         private static void TryPatchCommandController(HarmonyLib.Harmony harmony)
         {
             try
             {
-                Type controllerType = typeof(AbilityCommandController);
-
-                // Patch UpdateFocus to announce command selection
-                MethodInfo updateFocusMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "UpdateFocus")
-                    {
-                        updateFocusMethod = method;
-                        break;
-                    }
-                }
-
-                if (updateFocusMethod != null)
-                {
-                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(CommandController_UpdateFocus_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateFocusMethod, postfix: new HarmonyMethod(postfix));
-                }
-
-                // Patch UpdateController to announce the INITIAL command on open (UpdateFocus only
-                // fires on nav, so the bar was silent on entry). Additive — separate postfix.
-                MethodInfo updateControllerMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "UpdateController")
-                    {
-                        updateControllerMethod = method;
-                        break;
-                    }
-                }
-
-                if (updateControllerMethod != null)
-                {
-                    var postfix = typeof(MagicMenuPatches).GetMethod(nameof(CommandController_UpdateController_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(updateControllerMethod, postfix: new HarmonyMethod(postfix));
-                }
+                var target = AccessTools.Method(typeof(AbilityCommandController), "SetCommandSelectCursor", Type.EmptyTypes);
+                if (target != null)
+                    harmony.Patch(target, postfix: new HarmonyMethod(
+                        AccessTools.Method(typeof(MagicMenuPatches), nameof(CommandSelectCursor_Postfix))));
+                else
+                    MelonLogger.Error("[Magic Menu] AbilityCommandController.SetCommandSelectCursor not found");
             }
-            catch
+            catch (Exception ex)
             {
+                MelonLogger.Error($"[Magic Menu] Error patching SetCommandSelectCursor: {ex.Message}");
             }
         }
 
@@ -491,285 +455,225 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        // AbilityWindowController (Serial.FF2 KeyInput, dump.cs:279525): commandController / listController
+        private const int OFFSET_WINDOW_COMMAND_CONTROLLER = 0x48;
+        private const int OFFSET_WINDOW_LIST_CONTROLLER = 0x58;
+        private const int MAX_RETRY_FRAMES = 30;
+
+        // True while an Init body runs: it moves the cursor (SelectCommandByIndex / SelectContentByIndex)
+        // before the view is settled, so the cursor postfixes stay quiet and the deferred read after the
+        // Init speaks the settled focus once.
+        private static bool _commandInitInProgress = false;
+        private static bool _listInitInProgress = false;
+        // Bumped per Init; an older deferred read exits when superseded.
+        private static int _commandReadGen = 0;
+        private static int _listReadGen = 0;
+
+        private enum ReadResult { Spoken, NotReady, Abandon }
+
         /// <summary>
-        /// Postfix for SetNextState - detects state transitions.
-        /// Activates appropriate menu state based on transition.
+        /// Command bar (Use / Forget / …) entered — magic menu open and every return from a list. Takes
+        /// the command state, which also forgets the last spoken command so the entry reads again.
         /// </summary>
-        public static void SetNextState_Postfix(object __instance, int state)
+        public static void CommandInit_Prefix()
         {
+            MagicMenuState.OnCommandMenuActive();
+            _commandInitInProgress = true;
+        }
+
+        public static void CommandInit_Postfix(AbilityWindowController __instance)
+        {
+            _commandInitInProgress = false;
             try
             {
-                if (state == MagicMenuState.STATE_COMMAND)
-                {
-                    // Transitioning to command menu - activate command state
-                    MagicMenuState.OnCommandMenuActive();
-                }
-                else if (state == MagicMenuState.STATE_POPUP)
-                {
-                    // Transitioning to popup - clear all flags, let generic cursor handle
-                    MagicMenuState.ResetState();
-                }
-                else if (state == MagicMenuState.STATE_USE_TARGET || state == MagicMenuState.STATE_SELF_ORDERLY_TARGET)
-                {
-                    // Transitioning to target selection
-                    MagicMenuState.OnCommandMenuInactive();
-                    MagicMenuState.OnSpellListUnfocused();
-                    MagicMenuState.OnTargetSelectionActive();
-                }
-                else if (state == MagicMenuState.STATE_USE_LIST || state == MagicMenuState.STATE_FORGET)
-                {
-                    // Transitioning to spell list
-                    MagicMenuState.OnCommandMenuInactive();
-                    MagicMenuState.OnTargetSelectionInactive();
-                    // OnSpellListFocused will be called by UpdateController_Postfix
-                }
-                else if (state == MagicMenuState.STATE_NONE)
-                {
-                    // Menu closing
-                    MagicMenuState.ResetState();
-                }
+                if (__instance != null)
+                    CoroutineManager.StartManaged(DeferredCommandRead(__instance, ++_commandReadGen));
             }
             catch { }
         }
 
         /// <summary>
-        /// Postfix for AbilityCommandController.UpdateFocus - announces Use/Forget commands.
+        /// Use / Forget spell list entered (from the command bar, or back from a target / popup). Marks
+        /// the list active (SetCursor_Postfix is gated on it) and forgets the last spoken spell. The
+        /// command flag is left as it was, so the generic-reader suppression is unchanged.
         /// </summary>
-        public static void CommandController_UpdateFocus_Postfix(object __instance)
+        public static void ListInit_Prefix()
+        {
+            MagicMenuState.OnSpellListFocused();
+            _listInitInProgress = true;
+        }
+
+        public static void ListInit_Postfix(AbilityWindowController __instance)
+        {
+            _listInitInProgress = false;
+            try
+            {
+                if (__instance != null)
+                    CoroutineManager.StartManaged(DeferredSpellRead(__instance, ++_listReadGen));
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Manual sort states reuse the spell list outside Use/Forget: the list is no longer the focused
+        /// reader (the per-frame UpdateController postfix unfocused it in these states).
+        /// </summary>
+        public static void SelfOrderlyInit_Postfix()
+        {
+            if (MagicMenuState.IsSpellListActive)
+                MagicMenuState.OnSpellListUnfocused();
+        }
+
+        /// <summary>
+        /// Postfix for AbilityCommandController.SetCommandSelectCursor — announces the Use/Forget command
+        /// the cursor moved to. Deduplicated with the entry read via ShouldAnnounceCommand.
+        /// </summary>
+        public static void CommandSelectCursor_Postfix(AbilityCommandController __instance)
         {
             try
             {
-                if (__instance == null)
+                if (_commandInitInProgress || __instance == null || !__instance.gameObject.activeInHierarchy)
                     return;
 
-                var controller = __instance as AbilityCommandController;
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                    return;
-
-                // Verify we're in command state
                 var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
-                if (windowController != null)
-                {
-                    int currentState = MagicMenuState.GetCurrentState(windowController);
-                    if (currentState != MagicMenuState.STATE_COMMAND)
-                    {
-                        return;
-                    }
-                }
+                if (windowController == null || MagicMenuState.GetCurrentState(windowController) != MagicMenuState.STATE_COMMAND)
+                    return;
 
-                // Mark command menu as active
                 if (!MagicMenuState.IsCommandMenuActive)
-                {
                     MagicMenuState.OnCommandMenuActive();
-                }
 
-                // Read cursor index and content list using pointer offsets
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return;
-
-                unsafe
-                {
-                    // Get selectCursor at offset 0x58
-                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_SELECT_CURSOR);
-                    if (cursorPtr == IntPtr.Zero)
-                        return;
-
-                    var cursor = new GameCursor(cursorPtr);
-                    int index = cursor.Index;
-
-                    // Get contentList at offset 0x48
-                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_CONTENT_LIST);
-                    if (contentListPtr == IntPtr.Zero)
-                        return;
-
-                    var contentList = new Il2CppSystem.Collections.Generic.List<AbilityCommandContentView>(contentListPtr);
-                    if (index < 0 || index >= contentList.Count)
-                        return;
-
-                    var contentView = contentList[index];
-                    if (contentView == null)
-                        return;
-
-                    var data = contentView.Data;
-                    if (data == null)
-                        return;
-
-                    string commandName = data.Name;
-                    if (string.IsNullOrEmpty(commandName))
-                        return;
-
-                    // Check for duplicate announcement
-                    if (!MagicMenuState.ShouldAnnounceCommand(commandName))
-                        return;
-
-                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
-                }
+                TryAnnounceFocusedCommand(__instance);
             }
-            catch
-            {
-            }
+            catch { }
         }
 
-        /// <summary>
-        /// Postfix for AbilityCommandController.UpdateController — announces the INITIALLY-focused
-        /// Use/Forget command on OPEN. UpdateFocus (the nav reader) doesn't fire for the initial
-        /// focus, so the bar was silent on entry. Self-gated: reads once per COMMAND-state entry via
-        /// _cmdBarOpenRead (reset on leave). Additive only — does not modify UpdateFocus, suppression,
-        /// or the use/forget menus. Dedup is shared with the nav reader via ShouldAnnounceCommand.
-        /// </summary>
-        public static void CommandController_UpdateController_Postfix(object __instance)
+        // yield stays outside the try (yield-in-try-with-catch is illegal).
+        private static IEnumerator DeferredCommandRead(AbilityWindowController window, int gen)
         {
-            try
+            for (int frame = 0; frame < MAX_RETRY_FRAMES; frame++)
             {
-                if (__instance == null)
-                    return;
+                yield return null;
+                if (gen != _commandReadGen) yield break;
 
-                var controller = __instance as AbilityCommandController;
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                    return;
-
-                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
-                if (windowController == null)
-                    return;
-
-                int currentState = MagicMenuState.GetCurrentState(windowController);
-                if (currentState != MagicMenuState.STATE_COMMAND)
-                {
-                    MagicMenuState.CmdBarOpenRead = false;   // re-arm for the next COMMAND entry
-                    return;
-                }
-                if (MagicMenuState.CmdBarOpenRead)
-                    return;   // already announced this entry; nav is handled by UpdateFocus
-
-                // Same read as CommandController_UpdateFocus_Postfix (duplicated to keep that reader
-                // untouched): selectCursor -> contentList[index].Data.Name.
-                IntPtr controllerPtr = controller.Pointer;
-                if (controllerPtr == IntPtr.Zero)
-                    return;
-
-                unsafe
-                {
-                    IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_SELECT_CURSOR);
-                    if (cursorPtr == IntPtr.Zero)
-                        return;
-
-                    var cursor = new GameCursor(cursorPtr);
-                    int index = cursor.Index;
-
-                    IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_CONTENT_LIST);
-                    if (contentListPtr == IntPtr.Zero)
-                        return;
-
-                    var contentList = new Il2CppSystem.Collections.Generic.List<AbilityCommandContentView>(contentListPtr);
-                    if (index < 0 || index >= contentList.Count)
-                        return;
-
-                    var contentView = contentList[index];
-                    if (contentView == null)
-                        return;
-
-                    var data = contentView.Data;
-                    if (data == null)
-                        return;
-
-                    string commandName = data.Name;
-                    if (string.IsNullOrEmpty(commandName))
-                        return;
-
-                    MagicMenuState.CmdBarOpenRead = true;   // success — don't re-read this entry
-                    if (MagicMenuState.ShouldAnnounceCommand(commandName))
-                        FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        /// <summary>
-        /// Postfix for UpdateController - tracks when spell list is actively handling input.
-        /// Only activates during UseList or Forget states.
-        /// </summary>
-        public static void UpdateController_Postfix(object __instance)
-        {
-            try
-            {
-                if (__instance == null)
-                    return;
-
-                var controller = __instance as AbilityContentListController;
-                if (controller == null || !controller.gameObject.activeInHierarchy)
-                    return;
-
-                // Check if we're in a spell list state
-                var windowController = GameObjectCache.GetOrRefresh<AbilityWindowController>();
-                if (windowController != null)
-                {
-                    int currentState = MagicMenuState.GetCurrentState(windowController);
-
-                    // Only activate spell list during UseList or Forget states
-                    if (currentState != MagicMenuState.STATE_USE_LIST &&
-                        currentState != MagicMenuState.STATE_FORGET)
-                    {
-                        // Not in spell list state - don't activate
-                        if (MagicMenuState.IsSpellListActive)
-                        {
-                            MagicMenuState.OnSpellListUnfocused();
-                        }
-                        return;
-                    }
-                }
-
-                // Spell list is active in correct state
-                if (!MagicMenuState.IsSpellListActive)
-                {
-                    MagicMenuState.OnSpellListFocused();
-
-                    // Announce the initially-focused spell on open. The game sets the cursor
-                    // before the state reaches USE_LIST/FORGET, so SetCursor_Postfix (gated on
-                    // IsSpellListActive) never fires for the initial focus — read the controller's
-                    // selectCursor and announce it once here. Subsequent SetCursor fires for the
-                    // same focus are deduped by ShouldAnnounceSpell(spellId).
-                    try
-                    {
-                        IntPtr controllerPtr = controller.Pointer;
-                        if (controllerPtr != IntPtr.Zero)
-                        {
-                            unsafe
-                            {
-                                IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_LIST_SELECT_CURSOR);
-                                if (cursorPtr != IntPtr.Zero)
-                                {
-                                    int index = new GameCursor(cursorPtr).Index;
-                                    if (index >= 0)
-                                        AnnounceSpellAtIndex(controller, index);
-                                }
-                            }
-                        }
-                    }
-                    catch { }
-                }
-
-                // Cache character data for MP display
+                ReadResult result;
                 try
                 {
-                    IntPtr controllerPtr = controller.Pointer;
-                    if (controllerPtr != IntPtr.Zero)
-                    {
-                        unsafe
-                        {
-                            IntPtr charPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_TARGET_CHARACTER);
-                            if (charPtr != IntPtr.Zero)
-                            {
-                                MagicMenuState.CurrentCharacter = new OwnedCharacterData(charPtr);
-                            }
-                        }
-                    }
+                    result = ReadCommandEntry(window);
                 }
-                catch { }
+                catch { result = ReadResult.NotReady; }
+                if (result != ReadResult.NotReady) yield break;
             }
-            catch { }
+        }
+
+        private static ReadResult ReadCommandEntry(AbilityWindowController window)
+        {
+            if (window == null || window.gameObject == null || !window.gameObject.activeInHierarchy)
+                return ReadResult.NotReady;
+            int state = MagicMenuState.GetCurrentState(window);
+            if (state != MagicMenuState.STATE_COMMAND)
+                return state < 0 ? ReadResult.NotReady : ReadResult.Abandon;   // already left the bar
+
+            IntPtr cmdPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(window.Pointer, OFFSET_WINDOW_COMMAND_CONTROLLER);
+            if (cmdPtr == IntPtr.Zero)
+                return ReadResult.NotReady;
+            return TryAnnounceFocusedCommand(new AbilityCommandController(cmdPtr)) ? ReadResult.Spoken : ReadResult.NotReady;
+        }
+
+        /// <summary>
+        /// Reads selectCursor (0x58) → contentList (0x48)[index].Data.Name and speaks it with "(X of Y)"
+        /// unless it was the last command spoken. Returns false only while the focus isn't readable yet.
+        /// </summary>
+        private static bool TryAnnounceFocusedCommand(AbilityCommandController controller)
+        {
+            IntPtr controllerPtr = controller.Pointer;
+            if (controllerPtr == IntPtr.Zero)
+                return false;
+
+            unsafe
+            {
+                IntPtr cursorPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_SELECT_CURSOR);
+                if (cursorPtr == IntPtr.Zero)
+                    return false;
+                int index = new GameCursor(cursorPtr).Index;
+
+                IntPtr contentListPtr = *(IntPtr*)((byte*)controllerPtr.ToPointer() + MagicMenuState.OFFSET_COMMAND_CONTENT_LIST);
+                if (contentListPtr == IntPtr.Zero)
+                    return false;
+
+                var contentList = new Il2CppSystem.Collections.Generic.List<AbilityCommandContentView>(contentListPtr);
+                if (index < 0 || index >= contentList.Count)
+                    return false;
+
+                var data = contentList[index]?.Data;
+                string commandName = data?.Name;
+                if (string.IsNullOrEmpty(commandName))
+                    return false;
+
+                if (MagicMenuState.ShouldAnnounceCommand(commandName))
+                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(commandName, index, contentList.Count), interrupt: true);
+                return true;
+            }
+        }
+
+        private static IEnumerator DeferredSpellRead(AbilityWindowController window, int gen)
+        {
+            for (int frame = 0; frame < MAX_RETRY_FRAMES; frame++)
+            {
+                yield return null;
+                if (gen != _listReadGen) yield break;
+
+                ReadResult result;
+                try
+                {
+                    result = ReadSpellEntry(window);
+                }
+                catch { result = ReadResult.NotReady; }
+                if (result != ReadResult.NotReady) yield break;
+            }
+        }
+
+        /// <summary>
+        /// Announces the initially-focused spell on Use/Forget list entry (the game places the cursor
+        /// inside the Init, before the list is readable) and caches the list's character.
+        /// </summary>
+        private static ReadResult ReadSpellEntry(AbilityWindowController window)
+        {
+            if (window == null || window.gameObject == null || !window.gameObject.activeInHierarchy)
+                return ReadResult.NotReady;
+            int state = MagicMenuState.GetCurrentState(window);
+            if (state != MagicMenuState.STATE_USE_LIST && state != MagicMenuState.STATE_FORGET)
+                return state < 0 ? ReadResult.NotReady : ReadResult.Abandon;
+            if (!MagicMenuState.IsSpellListActive)
+                return ReadResult.Abandon;   // reset (popup) since the Init
+
+            IntPtr listPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(window.Pointer, OFFSET_WINDOW_LIST_CONTROLLER);
+            if (listPtr == IntPtr.Zero)
+                return ReadResult.NotReady;
+
+            unsafe
+            {
+                IntPtr cursorPtr = *(IntPtr*)((byte*)listPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_LIST_SELECT_CURSOR);
+                IntPtr contentListPtr = *(IntPtr*)((byte*)listPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_CONTENT_LIST);
+                if (cursorPtr == IntPtr.Zero || contentListPtr == IntPtr.Zero)
+                    return ReadResult.NotReady;
+                int index = new GameCursor(cursorPtr).Index;
+                var contentList = new Il2CppSystem.Collections.Generic.List<BattleAbilityInfomationContentController>(contentListPtr);
+                if (index < 0 || index >= contentList.Count)
+                    return ReadResult.NotReady;
+
+                IntPtr charPtr = *(IntPtr*)((byte*)listPtr.ToPointer() + IL2CppOffsets.Magic.OFFSET_TARGET_CHARACTER);
+                if (charPtr != IntPtr.Zero)
+                    MagicMenuState.CurrentCharacter = new OwnedCharacterData(charPtr);
+            }
+
+            AnnounceSpellAtIndex(new AbilityContentListController(listPtr), GetListCursorIndex(listPtr));   // deduplicated by spell id
+            return ReadResult.Spoken;
+        }
+
+        private static int GetListCursorIndex(IntPtr listPtr)
+        {
+            IntPtr cursorPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(listPtr, IL2CppOffsets.Magic.OFFSET_LIST_SELECT_CURSOR);
+            return cursorPtr == IntPtr.Zero ? -1 : new GameCursor(cursorPtr).Index;
         }
 
         /// <summary>
@@ -782,6 +686,9 @@ namespace FFII_ScreenReader.Patches
             {
                 if (__instance == null || targetCursor == null)
                     return;
+
+                if (_listInitInProgress)
+                    return;   // the entry read after UseListInit / ForgetInit speaks the initial focus
 
                 var controller = __instance as AbilityContentListController;
                 if (controller == null || !controller.gameObject.activeInHierarchy)

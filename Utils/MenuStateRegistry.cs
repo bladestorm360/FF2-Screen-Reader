@@ -35,6 +35,8 @@ namespace FFII_ScreenReader.Utils
         public const string SAVE_LOAD_MENU = "SaveLoadMenu";
         public const string SHOP_MENU = "ShopMenu";
         public const string STATUS_MENU = "StatusMenu";
+        // New-game naming screen (character slots / suggested names): its own readers speak.
+        public const string NEW_GAME_NAMING = "NewGameNaming";
 
         // Extras menu states
         public const string GALLERY = "Gallery";

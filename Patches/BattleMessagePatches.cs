@@ -570,6 +570,13 @@ namespace FFII_ScreenReader.Patches
                 string targetName = GetTargetName(data);
                 var damageSource = ConsumeDamageSource();
 
+                // Value-0 diagnostic — one line per value-0 damage view (a view is created once per
+                // target per action, so this is bounded). Settles in game which HitType a buff/debuff,
+                // a status cure (Antidote) and a genuine 0-damage hit carry; not provable offline
+                // (every Function subclass computes its own result). See debug.md, open-issues pass 2.
+                if (value == 0)
+                    MelonLogger.Msg($"[Battle] value-0 view: hitType={(int)hitType} isRecovery={isRecovery} target={targetName}");
+
                 // Consume the multi-hit "×N" count captured by CreateHitCount (fires just before this
                 // view). Reset to 1 so a stale count can't leak into the next attack. When no ×N was
                 // paired with this view, fall back to the attack's own calculated hit count.

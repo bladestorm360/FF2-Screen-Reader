@@ -281,15 +281,33 @@ namespace FFII_ScreenReader.Core
             return KeyContext.Global;
         }
 
+        // Frame of the last scene scan that found no FieldPlayerController (see IsOnValidMap).
+        private static int _validMapMissFrame = -1000;
+        private const int VALID_MAP_RESCAN_FRAMES = 30;
+
         private static bool IsOnValidMap()
         {
             // Self-heal the cache (like every other FieldPlayerController reader) so a cleared or
             // stale entry can't wedge the field context into Global and silently disable field hotkeys.
+            // DetermineContext runs every frame, and off the field (title, loading, menus over a
+            // non-field scene) there is no FieldPlayerController, so the FindObjectOfType rescan is
+            // throttled to once every 30 frames after a miss (FF1 found this per-frame scene scan).
             try
             {
-                var pc = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>()
-                         ?? GameObjectCache.Refresh<Il2CppLast.Map.FieldPlayerController>();
-                return pc?.fieldPlayer != null;
+                var pc = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>();
+                if (pc == null)
+                {
+                    int now = Time.frameCount;
+                    if (now - _validMapMissFrame < VALID_MAP_RESCAN_FRAMES)
+                        return false;
+                    pc = GameObjectCache.Refresh<Il2CppLast.Map.FieldPlayerController>();
+                    if (pc == null)
+                    {
+                        _validMapMissFrame = now;
+                        return false;
+                    }
+                }
+                return pc.fieldPlayer != null;
             }
             catch { return false; }
         }
