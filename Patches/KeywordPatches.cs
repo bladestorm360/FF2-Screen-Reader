@@ -7,6 +7,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using Il2CppLast.Management;
 
 // Type aliases for IL2CPP types
@@ -74,11 +75,11 @@ namespace FFII_ScreenReader.Patches
         {
             return commandId switch
             {
-                0 => "Ask",
-                1 => "Learn",
-                2 => "Key Items",
-                3 => "Cancel",
-                _ => $"Command {commandId}"
+                0 => T("Ask"),
+                1 => T("Learn"),
+                2 => T("Key Items"),
+                3 => T("Cancel"),
+                _ => string.Format(T("Command {0}"), commandId)
             };
         }
     }

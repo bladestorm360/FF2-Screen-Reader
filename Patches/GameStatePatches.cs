@@ -4,6 +4,7 @@ using MelonLoader;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using FFII_ScreenReader.Field;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using SubSceneManagerMainGame = Il2CppLast.Management.SubSceneManagerMainGame;
 using UserDataManager = Il2CppLast.Management.UserDataManager;
 
@@ -45,14 +46,10 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        // Config menu bestiary states (SubSceneManagerMainGame): FF2 uses MenuLibraryUi=17, MenuLibraryInfo=18.
-        private const int STATE_MENU_LIBRARY_UI = 17;
-        private const int STATE_MENU_LIBRARY_INFO = 18;
-
         /// <summary>
         /// Called when game state changes (field, battle, menu, etc.).
         /// Handles map transition announcements, battle state clearing,
-        /// and config menu bestiary dispatch (states 17/18).
+        /// and config menu bestiary dispatch (states 18/19).
         /// </summary>
         public static void ChangeState_Postfix(SubSceneManagerMainGame.State state)
         {
@@ -69,24 +66,30 @@ namespace FFII_ScreenReader.Patches
                         ClearAllBattleState();
                     }
 
-                    // If we were in config bestiary, handle exit
+                    // If we were in config bestiary, handle exit. Returning from the bestiary lands back
+                    // on the config menu, which does not re-announce its focused row by itself — arm the
+                    // re-announce (its deferred read speaks only while a config menu is open, so an exit
+                    // that really went to the field stays silent).
                     if (ConfigBestiaryStateHandler.WasInConfigBestiary)
                     {
                         ConfigBestiaryStateHandler.HandleExit();
+                        ConfigMenuPatches.ReannounceFocusedConfigOption();
                     }
 
                     // Check for map transition
                     CheckMapTransition();
                 }
                 // Config menu bestiary states
-                else if (stateValue == STATE_MENU_LIBRARY_UI || stateValue == STATE_MENU_LIBRARY_INFO)
+                else if (stateValue == ConfigBestiaryStateHandler.STATE_MENU_LIBRARY_UI
+                      || stateValue == ConfigBestiaryStateHandler.STATE_MENU_LIBRARY_INFO)
                 {
                     ConfigBestiaryStateHandler.HandleStateChange(stateValue);
                 }
-                // Exiting config bestiary to another non-field state
+                // Exiting config bestiary to another non-field state (back to the config menu)
                 else if (ConfigBestiaryStateHandler.WasInConfigBestiary)
                 {
                     ConfigBestiaryStateHandler.HandleExit();
+                    ConfigMenuPatches.ReannounceFocusedConfigOption();
                 }
             }
             catch (Exception ex)
@@ -97,7 +100,8 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Checks for map transitions and triggers entity rescan when map changes.
-        /// Announces new map name and clears stale entity cache.
+        /// Announces the new map name — including the first map after loading a save (FF1 parity) —
+        /// and clears stale entity cache.
         /// </summary>
         private static void CheckMapTransition()
         {
@@ -108,37 +112,35 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 int currentMapId = userDataManager.CurrentMapId;
+                if (currentMapId <= 0 || currentMapId == lastAnnouncedMapId)
+                    return;
 
-                if (currentMapId != lastAnnouncedMapId && lastAnnouncedMapId != -1)
-                {
-                    // Map has changed - announce new map
-                    string mapName = MapNameResolver.GetCurrentMapName();
-                    string announcement = $"Entering {mapName}";
+                lastAnnouncedMapId = currentMapId;
 
-                    // Record for deduplication before announcing
-                    // This prevents the game's fade message (e.g., "Altair - 1F") from also being announced
-                    LocationMessageTracker.SetLastMapTransition(announcement);
+                // Map actually changed — clear any menu/popup flag that got stuck due to a
+                // set/clear patch mismatch, which would otherwise silently block field
+                // navigation on the new map.
+                FFII_ScreenReaderMod.ClearMenuFlagsForMapTransition();
 
-                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
-                    lastAnnouncedMapId = currentMapId;
+                // Clear vehicle type map so it gets repopulated with new map's vehicles
+                FieldNavigationHelper.ResetTransportationDebug();
 
-                    // Map actually changed — clear any menu/popup flag that got stuck due to a
-                    // set/clear patch mismatch, which would otherwise silently block field
-                    // navigation on the new map.
-                    FFII_ScreenReaderMod.ClearMenuFlagsForMapTransition();
+                // Force entity rescan to clear stale entities from previous map (silent —
+                // ForceEntityRescan now announces and is reserved for the manual ` key).
+                FFII_ScreenReaderMod.Instance?.RescanEntitiesSilent();
 
-                    // Clear vehicle type map so it gets repopulated with new map's vehicles
-                    FieldNavigationHelper.ResetTransportationDebug();
+                // An unresolvable map name isn't worth announcing.
+                string mapName = MapNameResolver.GetCurrentMapName();
+                if (string.IsNullOrEmpty(mapName) || mapName == T("Unknown"))
+                    return;
 
-                    // Force entity rescan to clear stale entities from previous map (silent —
-                    // ForceEntityRescan now announces and is reserved for the manual ` key).
-                    FFII_ScreenReaderMod.Instance?.RescanEntitiesSilent();
-                }
-                else if (lastAnnouncedMapId == -1)
-                {
-                    // First run - store current map without announcing
-                    lastAnnouncedMapId = currentMapId;
-                }
+                string announcement = string.Format(T("Entering {0}"), mapName);
+
+                // Record for deduplication before announcing
+                // This prevents the game's fade message (e.g., "Altair - 1F") from also being announced
+                LocationMessageTracker.SetLastMapTransition(announcement);
+
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
             }
             catch (Exception ex)
             {
@@ -152,16 +154,9 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         private static void ClearAllBattleState()
         {
-            FFII_ScreenReaderMod.ClearBattleActive();
+            FFII_ScreenReaderMod.ClearBattleState();
             // Result screen is done — re-enable the audio beacon now the player is back on the field.
             FFII_ScreenReaderMod.BattleResultActive = false;
-            BattleCommandState.ClearState();
-            BattleTargetPatches.SetTargetSelectionActive(false);
-            BattleCommandPatches.ResetTurnState();
-            BattleCommandPatches.ResetCommandCursorState();
-            BattleMagicMenuState.Reset();
-            BattleItemMenuState.Reset();
-            BattleMessagePatches.ResetState();
         }
 
     }

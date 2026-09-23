@@ -37,6 +37,12 @@ namespace FFII_ScreenReader.Menus
 
                 if (!string.IsNullOrEmpty(menuText))
                 {
+                    // The title and field menus keep their commands in C# lists, not Content transforms,
+                    // so no strategy yields a count — fall back to their command counts (-1, inert, elsewhere).
+                    if (listCount < 0)
+                        listCount = Patches.TitleMenuPatches.TryGetActiveCommandCount(cursor);
+                    if (listCount < 0)
+                        listCount = Patches.FieldMenuReader.TryGetFieldCommandCount(cursor);
                     menuText = MenuPosition.Format(menuText, cursorIndex, listCount);
                     FFII_ScreenReaderMod.SpeakText(menuText);
                 }
@@ -55,9 +61,13 @@ namespace FFII_ScreenReader.Menus
             count = -1;
             string menuText = null;
 
-            // Strategy 0: Check for save/load menu (priority for debugging location names)
-            menuText = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index, out count);
-            if (menuText != null) return menuText;
+            // Strategy 0: Save/load slot — only while a real save/load menu is up, so a background
+            // autosave list built during a map load isn't read outside the save menu.
+            if (Patches.SaveLoadPatches.ShouldReadSaveSlot())
+            {
+                menuText = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index, out count);
+                if (menuText != null) return menuText;
+            }
 
             // Strategy 1: Shop command menu (Buy/Sell/Equipment/Back)
             menuText = ShopCommandReader.TryReadShopCommand(cursor.transform, cursor.Index);

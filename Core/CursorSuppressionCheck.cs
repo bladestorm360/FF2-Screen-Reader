@@ -88,6 +88,18 @@ namespace FFII_ScreenReader.Core
             if (WordsMenuState.ShouldSuppress())
                 return SuppressionResult.Suppressed("WordsMenu");
 
+            // === EXTRAS (FF1 parity) ===
+            // Bestiary, music player and gallery announce their own navigation; the generic reader
+            // would double every move.
+            if (BestiaryStateTracker.IsInBestiary)
+                return SuppressionResult.Suppressed("Bestiary");
+
+            if (MusicPlayerStateTracker.IsInMusicPlayer)
+                return SuppressionResult.Suppressed("MusicPlayer");
+
+            if (GalleryStateTracker.IsInGallery)
+                return SuppressionResult.Suppressed("Gallery");
+
             return SuppressionResult.None;
         }
     }

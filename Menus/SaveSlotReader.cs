@@ -2,6 +2,7 @@ using System;
 using MelonLoader;
 using UnityEngine;
 using static FFII_ScreenReader.Utils.TextUtils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using SaveContentController_KeyInput = Il2CppLast.UI.KeyInput.SaveContentController;
 using SaveContentController_Touch = Il2CppLast.UI.Touch.SaveContentController;
 using SaveSlotData = Il2CppLast.Management.SaveSlotData;
@@ -232,10 +233,10 @@ namespace FFII_ScreenReader.Menus
             // Fallback based on index
             // Index 0 = Autosave, Index 1 = Quicksave, Index 2+ = File (index - 1)
             if (slotIndex == 0)
-                return "Autosave";
+                return T("Autosave");
             if (slotIndex == 1)
-                return "Quicksave";
-            return $"File {slotIndex - 1}";
+                return T("Quicksave");
+            return string.Format(T("File {0}"), slotIndex - 1);
         }
 
         /// <summary>

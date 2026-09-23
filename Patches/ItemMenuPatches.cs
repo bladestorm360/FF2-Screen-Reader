@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -228,6 +229,9 @@ namespace FFII_ScreenReader.Patches
                 // Patch ItemWindowController.SetNextState for state transition detection
                 TryPatchSetNextState(harmony);
 
+                // Item list / item-use target (re)entry reads
+                FieldItemReannouncePatches.ApplyPatches(harmony);
+
                 isPatched = true;
             }
             catch (Exception ex)
@@ -263,23 +267,41 @@ namespace FFII_ScreenReader.Patches
                 if (itemData == null)
                     return;
 
+                if (AnnounceItemListData(itemData, index, targetList.Count))
+                    FieldItemReannouncePatches.ItemListAnnounced();
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
+        /// Announces an item-list row: "Item Name, quantity" (+ ": description" with AutoDetail),
+        /// with its "(X of Y)" position. Shared by navigation and the list (re)entry read.
+        /// Returns true when spoken.
+        /// </summary>
+        internal static bool AnnounceItemListData(ItemListContentData itemData, int index, int count)
+        {
+            try
+            {
                 // Store selected item for 'I' key lookup
                 ItemMenuState.LastSelectedItem = itemData;
 
                 string itemName = itemData.Name;
                 if (string.IsNullOrEmpty(itemName))
-                    return;
+                    return false;
 
                 // Strip icon markup from name
                 itemName = TextUtils.StripIconMarkup(itemName);
 
                 if (string.IsNullOrEmpty(itemName))
-                    return;
+                    return false;
 
-                // Build announcement: "Item Name (quantity)" — description appended only when
-                // AutoDetail is on; otherwise the I key reads it on demand.
+                // Build announcement: "Item Name, quantity" — description appended only when
+                // AutoDetail is on; otherwise the I key reads it on demand. (A comma, not parentheses,
+                // so the quantity can't run into the "(X of Y)" position suffix.)
                 int quantity = itemData.Count;
-                string announcement = quantity > 1 ? $"{itemName} ({quantity})" : itemName;
+                string announcement = quantity > 1 ? $"{itemName}, {quantity}" : itemName;
 
                 string description = itemData.Description;
                 if (!string.IsNullOrWhiteSpace(description))
@@ -294,11 +316,13 @@ namespace FFII_ScreenReader.Patches
                 // Set active state AFTER validation - menu is confirmed open and we have valid data
                 ItemMenuState.SetActive();
 
-                announcement = MenuPosition.Format(announcement, index, targetList.Count);
+                announcement = MenuPosition.Format(announcement, index, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                return true;
             }
             catch
             {
+                return false;
             }
         }
 
@@ -317,17 +341,7 @@ namespace FFII_ScreenReader.Patches
                 if (targetCursor == null || targetContents == null)
                     return;
 
-                // Context gate on the ItemUseController's OWN state machine. Entry/navigation
-                // happen in the Single/All target-select states; confirming a target transitions
-                // to a Learning* state (which opens the learn popup) and re-fires SelectContent
-                // with the cursor reset to index 0 — the spurious top-of-list re-read. The OUTER
-                // ItemWindowController state stays TARGET_SELECT throughout, so gating on it never
-                // caught the confirm. nextState (set synchronously on confirm, before the re-read)
-                // covers the transition frame where the current state is still Single.
-                int useState = StateReaderHelper.ReadStateTag(__instance.Pointer, IL2CppOffsets.ItemUse.OFFSET_STATE_MACHINE);
-                int nextState = Marshal.ReadInt32(__instance.Pointer + IL2CppOffsets.ItemUse.OFFSET_NEXT_STATE);
-                if ((useState != IL2CppOffsets.ItemUse.STATE_SINGLE && useState != IL2CppOffsets.ItemUse.STATE_ALL)
-                    || nextState >= IL2CppOffsets.ItemUse.STATE_LEARNING_VERIFICATION)
+                if (!IsSelectingTarget(__instance))
                     return;
 
                 int index = targetCursor.Index;
@@ -344,16 +358,48 @@ namespace FFII_ScreenReader.Patches
                 if (content == null)
                     return;
 
+                if (AnnounceItemUseTarget(content, index, contentList.Count))
+                    FieldItemReannouncePatches.ItemTargetAnnounced();
+            }
+            catch
+            {
+            }
+        }
+
+        /// <summary>
+        /// Context gate on the ItemUseController's OWN state machine. Entry/navigation happen in the
+        /// Single/All target-select states; confirming a target transitions to a Learning* state (which
+        /// opens the learn popup) and re-fires SelectContent with the cursor reset to index 0 — the
+        /// spurious top-of-list re-read. The OUTER ItemWindowController state stays TARGET_SELECT
+        /// throughout, so gating on it never caught the confirm. nextState (set synchronously on
+        /// confirm, before the re-read) covers the transition frame where the current state is still Single.
+        /// </summary>
+        internal static bool IsSelectingTarget(KeyInputItemUseController controller)
+        {
+            int useState = StateReaderHelper.ReadStateTag(controller.Pointer, IL2CppOffsets.ItemUse.OFFSET_STATE_MACHINE);
+            int nextState = Marshal.ReadInt32(controller.Pointer + IL2CppOffsets.ItemUse.OFFSET_NEXT_STATE);
+            return (useState == IL2CppOffsets.ItemUse.STATE_SINGLE || useState == IL2CppOffsets.ItemUse.STATE_ALL)
+                && nextState < IL2CppOffsets.ItemUse.STATE_LEARNING_VERIFICATION;
+        }
+
+        /// <summary>
+        /// Announces an item-use target: "Character Name, Level X, HP current/max, MP current/max,
+        /// Status effects" with its "(X of Y)". Shared by navigation and the target (re)entry read.
+        /// Returns true when spoken.
+        /// </summary>
+        internal static bool AnnounceItemUseTarget(ItemTargetSelectContentController content, int index, int count)
+        {
+            try
+            {
                 // Get character data from the content controller
                 var characterData = content.CurrentData;
                 if (characterData == null)
-                    return;
+                    return false;
 
-                // Build announcement: "Character Name, Level X, HP current/max, MP current/max, Status effects"
                 // FF2 uses MP, unlike FF3's spell charges
                 string charName = characterData.Name;
                 if (string.IsNullOrWhiteSpace(charName))
-                    return;
+                    return false;
 
                 string announcement = charName;
 
@@ -367,18 +413,18 @@ namespace FFII_ScreenReader.Patches
                         int level = parameter.BaseLevel;
                         if (level > 0)
                         {
-                            announcement += $", Level {level}";
+                            announcement += ", " + string.Format(T("Level {0}"), level);
                         }
 
                         // Add HP
                         int currentHp = parameter.currentHP;
                         int maxHp = parameter.ConfirmedMaxHp();
-                        announcement += $", HP {currentHp}/{maxHp}";
+                        announcement += $", {T("HP")} {currentHp}/{maxHp}";
 
                         // Add MP (FF2 specific - unlike FF3 which uses spell charges)
                         int currentMp = parameter.currentMP;
                         int maxMp = parameter.ConfirmedMaxMp();
-                        announcement += $", MP {currentMp}/{maxMp}";
+                        announcement += $", {T("MP")} {currentMp}/{maxMp}";
 
                         // Add status conditions
                         var conditionList = parameter.CurrentConditionList;
@@ -408,11 +454,13 @@ namespace FFII_ScreenReader.Patches
                 // Set active state AFTER validation
                 ItemMenuState.SetActive();
 
-                announcement = MenuPosition.Format(announcement, index, contentList.Count);
+                announcement = MenuPosition.Format(announcement, index, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                return true;
             }
             catch
             {
+                return false;
             }
         }
 
@@ -468,6 +516,178 @@ namespace FFII_ScreenReader.Patches
                 }
             }
             catch { }
+        }
+    }
+
+    /// <summary>
+    /// Announces the focused row when the item LIST or the item-use TARGET list (re)gains focus — on
+    /// entry and on back-out from a deeper screen (FF1 FieldItemReannouncePatches port). The list's
+    /// SelectContent only fires on cursor movement (UseSelectInit & co. never call it), and AllInit
+    /// never selects either. Each state-entry Init arms a one-shot in a PREFIX — so a SelectContent
+    /// the Init body itself makes (SingleInit does) announces and disarms it — and its POSTFIX starts
+    /// a deferred read one frame later that retries (capped) until the list is built. No per-frame
+    /// hook (CLAUDE.md rule 3). All five Inits have unique RVAs (dump.cs:450812-450830, 451880-451889).
+    /// </summary>
+    public static class FieldItemReannouncePatches
+    {
+        // KeyInput ItemListController (dump.cs:450675) / ItemUseController (dump.cs:451796)
+        private const int ITEM_LIST_SELECT_CURSOR = 0x60;
+        private const int ITEM_LIST_DATA_LIST = 0x78;     // IEnumerable<ItemListContentData>
+        private const int ITEM_USE_CONTENT_LIST = 0x40;   // List<ItemTargetSelectContentController>
+        private const int ITEM_USE_SELECT_CURSOR = 0x50;
+        private const int MAX_RETRY_FRAMES = 30;
+
+        private static bool _pendingItemList;
+        private static int _itemListGen;
+        private static bool _pendingItemTarget;
+        private static int _itemTargetGen;
+
+        public static void ApplyPatches(HarmonyLib.Harmony harmony)
+        {
+            foreach (var init in new[] { "UseSelectInit", "ImportantSelectInit", "OrganizeSelectInit" })
+                Patch(harmony, typeof(KeyInputItemListController), init, nameof(ItemList_Init_Prefix), nameof(ItemList_Init_Postfix));
+
+            foreach (var init in new[] { "SingleInit", "AllInit" })
+                Patch(harmony, typeof(KeyInputItemUseController), init, nameof(ItemTarget_Init_Prefix), nameof(ItemTarget_Init_Postfix));
+        }
+
+        private static void Patch(HarmonyLib.Harmony harmony, Type type, string method, string prefixName, string postfixName)
+        {
+            try
+            {
+                var target = AccessTools.Method(type, method, Type.EmptyTypes);
+                if (target == null)
+                {
+                    MelonLogger.Error($"[Item Menu] {type.Name}.{method} not found");
+                    return;
+                }
+                harmony.Patch(target,
+                    prefix: new HarmonyMethod(AccessTools.Method(typeof(FieldItemReannouncePatches), prefixName)),
+                    postfix: new HarmonyMethod(AccessTools.Method(typeof(FieldItemReannouncePatches), postfixName)));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Item Menu] Error patching {type.Name}.{method}: {ex.Message}");
+            }
+        }
+
+        public static void ItemList_Init_Prefix() { _pendingItemList = true; _itemListGen++; }
+        public static void ItemTarget_Init_Prefix() { _pendingItemTarget = true; _itemTargetGen++; }
+
+        /// <summary>Navigation spoke the row — the pending entry read is satisfied.</summary>
+        internal static void ItemListAnnounced() => _pendingItemList = false;
+        internal static void ItemTargetAnnounced() => _pendingItemTarget = false;
+
+        /// <summary>Starts the deferred list read unless the Init body's own SelectContent already spoke.</summary>
+        public static void ItemList_Init_Postfix(KeyInputItemListController __instance)
+        {
+            try
+            {
+                if (_pendingItemList && __instance != null)
+                    CoroutineManager.StartManaged(DeferredItemListRead(__instance, _itemListGen));
+            }
+            catch { }
+        }
+
+        /// <summary>Starts the deferred target read unless the Init body's own SelectContent already spoke.</summary>
+        public static void ItemTarget_Init_Postfix(KeyInputItemUseController __instance)
+        {
+            try
+            {
+                if (_pendingItemTarget && __instance != null)
+                    CoroutineManager.StartManaged(DeferredItemTargetRead(__instance, _itemTargetGen));
+            }
+            catch { }
+        }
+
+        // Each read waits a frame, then retries once per frame (capped) until the row is spoken, a
+        // navigation SelectContent satisfied it, or a newer Init superseded it. yield stays outside
+        // the try (yield-in-try-with-catch is illegal).
+        private static IEnumerator DeferredItemListRead(KeyInputItemListController controller, int gen)
+        {
+            for (int frame = 0; frame < MAX_RETRY_FRAMES; frame++)
+            {
+                yield return null;
+                if (!_pendingItemList || gen != _itemListGen) yield break;
+
+                bool done = false;
+                try
+                {
+                    if (controller != null && controller.gameObject.activeInHierarchy)
+                        done = TryAnnounceItemList(controller);
+                }
+                catch { }
+                if (done)
+                {
+                    _pendingItemList = false;
+                    yield break;
+                }
+            }
+            if (gen == _itemListGen) _pendingItemList = false;
+        }
+
+        private static IEnumerator DeferredItemTargetRead(KeyInputItemUseController controller, int gen)
+        {
+            for (int frame = 0; frame < MAX_RETRY_FRAMES; frame++)
+            {
+                yield return null;
+                if (!_pendingItemTarget || gen != _itemTargetGen) yield break;
+
+                bool done = false;
+                try
+                {
+                    if (controller != null && controller.gameObject.activeInHierarchy)
+                        done = TryAnnounceItemTarget(controller);
+                }
+                catch { }
+                if (done)
+                {
+                    _pendingItemTarget = false;
+                    yield break;
+                }
+            }
+            if (gen == _itemTargetGen) _pendingItemTarget = false;
+        }
+
+        private static bool TryAnnounceItemList(KeyInputItemListController controller)
+        {
+            if (!IsMenuOpen()) return false;
+            IntPtr ptr = controller.Pointer;
+
+            IntPtr dataPtr = Marshal.ReadIntPtr(ptr, ITEM_LIST_DATA_LIST);
+            IntPtr cursorPtr = Marshal.ReadIntPtr(ptr, ITEM_LIST_SELECT_CURSOR);
+            if (dataPtr == IntPtr.Zero || cursorPtr == IntPtr.Zero) return false;
+
+            var enumerable = new Il2CppSystem.Object(dataPtr)
+                .TryCast<Il2CppSystem.Collections.Generic.IEnumerable<ItemListContentData>>();
+            if (enumerable == null) return false;
+            var list = new Il2CppSystem.Collections.Generic.List<ItemListContentData>(enumerable);
+
+            int index = new GameCursor(cursorPtr).Index;
+            if (index < 0 || index >= list.Count || list[index] == null) return false;
+            return ItemMenuPatches.AnnounceItemListData(list[index], index, list.Count);
+        }
+
+        private static bool TryAnnounceItemTarget(KeyInputItemUseController controller)
+        {
+            if (!IsMenuOpen() || !ItemMenuPatches.IsSelectingTarget(controller)) return false;
+            IntPtr ptr = controller.Pointer;
+
+            IntPtr listPtr = Marshal.ReadIntPtr(ptr, ITEM_USE_CONTENT_LIST);
+            IntPtr cursorPtr = Marshal.ReadIntPtr(ptr, ITEM_USE_SELECT_CURSOR);
+            if (listPtr == IntPtr.Zero || cursorPtr == IntPtr.Zero) return false;
+
+            var list = new Il2CppSystem.Collections.Generic.List<ItemTargetSelectContentController>(listPtr);
+            int index = new GameCursor(cursorPtr).Index;
+            if (index < 0 || index >= list.Count || list[index] == null) return false;
+            return ItemMenuPatches.AnnounceItemUseTarget(list[index], index, list.Count);
+        }
+
+        // MenuManager.IsOpen is false during a map/asset load's scene-construction flurry.
+        private static bool IsMenuOpen()
+        {
+            try { var mm = Il2CppLast.UI.MenuManager.Instance; return mm != null && mm.IsOpen; }
+            catch { return false; }
         }
     }
 }

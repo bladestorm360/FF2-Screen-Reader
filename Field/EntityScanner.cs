@@ -6,6 +6,7 @@ using MelonLoader;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Core.Filters;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using Il2CppLast.Entity.Field;
 using Il2CppLast.Map;
 using Il2CppLast.Management;
@@ -17,6 +18,7 @@ using SavePointEventEntity = Il2CppLast.Entity.Field.SavePointEventEntity;
 using PropertyEntity = Il2CppLast.Map.PropertyEntity;
 using PropertyGotoMap = Il2CppLast.Map.PropertyGotoMap;
 using PropertyTransportation = Il2CppLast.Map.PropertyTransportation;
+using PropertyTelepoPoint = Il2CppLast.Map.PropertyTelepoPoint;
 using FieldEntity = Il2CppLast.Entity.Field.FieldEntity;
 using FieldAirShip = Il2CppLast.Entity.Field.FieldAirShip;
 
@@ -587,29 +589,42 @@ namespace FFII_ScreenReader.Field
                 goNameLower.Contains("warp") || goNameLower.Contains("transfer"))
             {
                 var (destMapId, destName) = GetMapExitDestination(fieldEntity);
-                return new MapExitEntity(fieldEntity, position, "Exit", destMapId, destName);
+                return new MapExitEntity(fieldEntity, position, T("Exit"), destMapId, destName);
             }
+
+            // 1b. Same-map warp tiles (PropertyTelepoPoint, dump.cs:324048) — FF1 parity.
+            try
+            {
+                if (fieldEntity.Property?.TryCast<PropertyTelepoPoint>() != null)
+                {
+                    var (_, warpName) = GetEntityNameWithRaw(fieldEntity);
+                    if (string.IsNullOrEmpty(warpName))
+                        warpName = T("Warp Tile");
+                    return new EventEntity(fieldEntity, position, warpName, "Warp Tile");
+                }
+            }
+            catch { } // IL2CPP cast may fail on an invalid property
 
             // 2. Check for treasure chest - first by type cast (most reliable), then by name
             var treasureBox = fieldEntity.TryCast<FieldTresureBox>();
             if (treasureBox != null)
             {
                 bool isOpened = GetTreasureBoxOpenedState(treasureBox);
-                return new TreasureChestEntity(fieldEntity, position, "Treasure Chest", isOpened);
+                return new TreasureChestEntity(fieldEntity, position, T("Treasure Chest"), isOpened);
             }
 
             // Fallback: Check for treasure chest by name patterns
             if (typeName.Contains("Treasure") || goNameLower.Contains("treasure") ||
                 goNameLower.Contains("chest") || goNameLower.Contains("box"))
             {
-                string name = CleanObjectName(goName, "Treasure Chest");
+                string name = CleanObjectName(goName, T("Treasure Chest"));
                 bool isOpened = CheckIfTreasureOpened(fieldEntity);
                 return new TreasureChestEntity(fieldEntity, position, name, isOpened);
             }
 
             // 3. Check for save point
             if (typeName.Contains("Save") || goNameLower.Contains("save"))
-                return new SavePointEntity(fieldEntity, position, "Save Point");
+                return new SavePointEntity(fieldEntity, position, T("Save Point"));
 
             // 4. Check for transportation/vehicles (string-based fallback)
             if (typeName.Contains("Transport") || goNameLower.Contains("ship") ||
@@ -619,14 +634,14 @@ namespace FFII_ScreenReader.Field
                 // Skip the out-of-bounds canoe map object (FF1 parity).
                 if (goNameLower.Contains("canoe"))
                     return null;
-                string vehicleName = CleanObjectName(goName, "Vehicle");
+                string vehicleName = CleanObjectName(goName, T("Vehicle"));
                 return new VehicleEntity(fieldEntity, position, vehicleName, 0);
             }
 
             // 5. Check for SavePointEventEntity by type casting
             var savePointEvent = fieldEntity.TryCast<SavePointEventEntity>();
             if (savePointEvent != null)
-                return new SavePointEntity(fieldEntity, position, "Save Point");
+                return new SavePointEntity(fieldEntity, position, T("Save Point"));
 
             // Layer transition (stairs/ladders) — must run BEFORE the generic EventTriggerEntity
             // check below because SwitchLayerEventEntity derives from EventTriggerEntity. Tag as
@@ -658,7 +673,7 @@ namespace FFII_ScreenReader.Field
                     return null;
                 // Use display name for entity, fallback to cleaned goName
                 if (string.IsNullOrEmpty(eventDisplay))
-                    eventDisplay = CleanObjectName(goName, "Event");
+                    eventDisplay = CleanObjectName(goName, T("Event"));
                 return new EventEntity(fieldEntity, position, eventDisplay, "Event");
             }
 
@@ -694,7 +709,7 @@ namespace FFII_ScreenReader.Field
                     return null;
                 // Use display name, fallback to cleaned goName
                 if (string.IsNullOrEmpty(intDisplay))
-                    intDisplay = CleanObjectName(goName, "Interactive Object");
+                    intDisplay = CleanObjectName(goName, T("Interactive Object"));
                 return new EventEntity(fieldEntity, position, intDisplay, "Interactive");
             }
 
@@ -822,18 +837,7 @@ namespace FFII_ScreenReader.Field
         /// </summary>
         private string GetVehicleNameFromType(int transportType)
         {
-            // TransportationType enum values from dump.cs
-            return transportType switch
-            {
-                2 => "Ship",
-                3 => "Airship",
-                6 => "Submarine",
-                7 => "Airship",      // LowFlying variant
-                8 => "Airship",      // SpecialPlane variant
-                9 => "Yellow Chocobo",
-                10 => "Black Chocobo",
-                _ => "Vehicle"
-            };
+            return VehicleEntity.GetVehicleName(transportType) ?? T("Vehicle");
         }
 
         /// <summary>
@@ -1039,7 +1043,7 @@ namespace FFII_ScreenReader.Field
         private (int mapId, string mapName) GetMapExitDestination(FieldEntity fieldEntity)
         {
             int destMapId = -1;
-            string destName = "Exit";
+            string destName = T("Exit");
 
             try
             {
@@ -1078,7 +1082,7 @@ namespace FFII_ScreenReader.Field
         private string FormatAssetNameAsMapName(string assetName)
         {
             if (string.IsNullOrEmpty(assetName))
-                return "Exit";
+                return T("Exit");
 
             // Replace underscores with spaces and title case
             string[] parts = assetName.Split('_');
@@ -1195,13 +1199,13 @@ namespace FFII_ScreenReader.Field
                 if (string.IsNullOrWhiteSpace(rawName))
                     rawName = "NPC";
                 if (string.IsNullOrEmpty(displayName))
-                    displayName = rawName != "NPC" ? EntityTranslator.Translate(rawName) : "NPC";
+                    displayName = rawName != "NPC" ? EntityTranslator.Translate(rawName) : T("NPC");
 
                 return (rawName, displayName);
             }
             catch
             {
-                return ("NPC", "NPC");
+                return ("NPC", T("NPC"));
             }
         }
 

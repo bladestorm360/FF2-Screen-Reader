@@ -44,57 +44,60 @@ namespace FFII_ScreenReader.Core
             }
         }
 
+        /// <summary>
+        /// V key / field mod-mode A: current movement state (on foot, ship, airship...). Works
+        /// anywhere, like FF1 — the state is cached from the boarding hooks.
+        /// </summary>
+        public static void AnnounceVehicleState()
+        {
+            try
+            {
+                int moveState = Utils.MoveStateHelper.GetCurrentMoveState();
+                FFII_ScreenReaderMod.SpeakText(Utils.MoveStateHelper.GetMoveStateName(moveState));
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"Error announcing vehicle state: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// H key / battle mod-mode X: the active party member's HP, MP and statuses (FF1 parity —
+        /// the actor whose command is being chosen, tracked by BattleCommandPatches). Battle only.
+        /// </summary>
         public static void AnnounceCharacterStatus()
         {
             try
             {
-                var userDataManager = UserDataManager.Instance();
-                if (userDataManager == null)
+                if (!FFII_ScreenReaderMod.IsInBattle)
                 {
-                    FFII_ScreenReaderMod.SpeakText(T("Character data not available"));
+                    FFII_ScreenReaderMod.SpeakText(T("Party status only available in battle"), interrupt: true);
                     return;
                 }
 
-                var partyList = userDataManager.GetOwnedCharactersClone(false);
-                if (partyList == null || partyList.Count == 0)
+                var charData = Patches.BattleCommandPatches.CurrentActor;
+                if (charData == null)
                 {
-                    FFII_ScreenReaderMod.SpeakText(T("No party members"));
+                    FFII_ScreenReaderMod.SpeakText(T("No active character"), interrupt: true);
                     return;
                 }
 
-                var sb = new System.Text.StringBuilder();
-                foreach (var charData in partyList)
+                var param = charData.Parameter;
+                if (param == null)
                 {
-                    try
-                    {
-                        if (charData != null)
-                        {
-                            string name = charData.Name;
-                            var param = charData.Parameter;
-                            if (param != null)
-                            {
-                                int currentHp = param.CurrentHP;
-                                int maxHp = param.ConfirmedMaxHp();
-                                int currentMp = param.CurrentMP;
-                                int maxMp = param.ConfirmedMaxMp();
-
-                                sb.AppendLine($"{name}: HP {currentHp}/{maxHp}, MP {currentMp}/{maxMp}");
-                            }
-                        }
-                    }
-                    catch { }
+                    FFII_ScreenReaderMod.SpeakText(T("Character status not available"), interrupt: true);
+                    return;
                 }
 
-                string status = sb.ToString().Trim();
-                if (!string.IsNullOrEmpty(status))
-                    FFII_ScreenReaderMod.SpeakText(status);
-                else
-                    FFII_ScreenReaderMod.SpeakText(T("No character status available"));
+                string line = string.Format(T("{0}: HP {1}/{2}, MP {3}/{4}"),
+                    charData.Name, param.CurrentHP, param.ConfirmedMaxHp(), param.CurrentMP, param.ConfirmedMaxMp());
+                line += Patches.BattleCommandPatches.BuildStatusSuffix(param);
+                FFII_ScreenReaderMod.SpeakText(line, interrupt: true);
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"Error getting character status: {ex.Message}");
-                FFII_ScreenReaderMod.SpeakText(T("Character status not available"));
+                FFII_ScreenReaderMod.SpeakText(T("Character status not available"), interrupt: true);
             }
         }
     }

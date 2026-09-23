@@ -2,6 +2,7 @@ using Il2CppLast.Management;
 using Il2CppLast.Data.Master;
 using MelonLoader;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using Map = Il2CppLast.Data.Master.Map;
 using Area = Il2CppLast.Data.Master.Area;
 using FieldMap = Il2Cpp.FieldMap;
@@ -26,7 +27,7 @@ namespace FFII_ScreenReader.Field
             {
                 var userDataManager = UserDataManager.Instance();
                 if (userDataManager == null)
-                    return "Unknown";
+                    return T("Unknown");
 
                 int currentMapId = userDataManager.CurrentMapId;
                 string resolvedName = TryResolveMapNameById(currentMapId);
@@ -34,11 +35,11 @@ namespace FFII_ScreenReader.Field
                 if (!string.IsNullOrEmpty(resolvedName))
                     return resolvedName;
 
-                return $"Map {currentMapId}";
+                return string.Format(T("Map {0}"), currentMapId);
             }
             catch
             {
-                return "Unknown";
+                return T("Unknown");
             }
         }
 
@@ -58,7 +59,7 @@ namespace FFII_ScreenReader.Field
                 return resolvedName;
 
             // Fallback: Just show the map ID
-            return $"Map {mapId}";
+            return string.Format(T("Map {0}"), mapId);
         }
 
         /// <summary>

@@ -1,5 +1,4 @@
 using System;
-using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using MelonLoader;
@@ -54,6 +53,20 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.DownArrow, KeyModifier.Shift, KeyContext.Status, StatusNavigationReader.JumpToNextGroup, "Jump to next stat group");
             registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.Status, StatusNavigationReader.NavigateNext, "Next stat");
 
+            // --- Bestiary detail: navigation ---
+            registry.Register(KeyCode.UpArrow, KeyModifier.Ctrl, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToTop, "Jump to first stat (bestiary)");
+            registry.Register(KeyCode.UpArrow, KeyModifier.Shift, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToPreviousGroup, "Jump to previous group (bestiary)");
+            registry.Register(KeyCode.UpArrow, KeyModifier.None, KeyContext.BestiaryDetail, BestiaryNavigationReader.NavigatePrevious, "Previous stat (bestiary)");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToBottom, "Jump to last stat (bestiary)");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Shift, KeyContext.BestiaryDetail, BestiaryNavigationReader.JumpToNextGroup, "Jump to next group (bestiary)");
+            registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.BestiaryDetail, BestiaryNavigationReader.NavigateNext, "Next stat (bestiary)");
+
+            // --- Controls list (config Gamepad/Keyboard help): navigation (flat list, no groups) ---
+            registry.Register(KeyCode.UpArrow, KeyModifier.Ctrl, KeyContext.KeyHelp, KeyHelpReader.JumpToTop, "Jump to first control");
+            registry.Register(KeyCode.UpArrow, KeyModifier.None, KeyContext.KeyHelp, KeyHelpReader.NavigatePrevious, "Previous control");
+            registry.Register(KeyCode.DownArrow, KeyModifier.Ctrl, KeyContext.KeyHelp, KeyHelpReader.JumpToBottom, "Jump to last control");
+            registry.Register(KeyCode.DownArrow, KeyModifier.None, KeyContext.KeyHelp, KeyHelpReader.NavigateNext, "Next control");
+
             // --- Field: entity navigation (brackets + backslash) -- with battle feedback ---
             RegisterFieldOnly(KeyCode.LeftBracket, KeyModifier.Shift, mod.CyclePreviousCategory, "Previous entity category");
             RegisterFieldOnly(KeyCode.LeftBracket, KeyModifier.None, mod.CyclePrevious, "Previous entity");
@@ -107,14 +120,15 @@ namespace FFII_ScreenReader.Core
             registry.Register(KeyCode.G, KeyContext.Global, GameInfoAnnouncer.AnnounceGilAmount, "Announce Gil");
             registry.Register(KeyCode.M, KeyModifier.Shift, KeyContext.Global, mod.ToggleMapExitFilter, "Toggle map exit filter");
             registry.Register(KeyCode.M, KeyModifier.None, KeyContext.Global, GameInfoAnnouncer.AnnounceCurrentMap, "Announce current map");
-            registry.Register(KeyCode.V, KeyContext.Global, AnnounceVehicleState, "Announce vehicle state");
-            registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, KeyHelpReader.AnnounceKeyHelp, "Announce visible controls");
+            registry.Register(KeyCode.V, KeyContext.Global, GameInfoAnnouncer.AnnounceVehicleState, "Announce vehicle state");
+            registry.Register(KeyCode.I, KeyModifier.Shift, KeyContext.Global, ControllerRouter.AnnounceContextControls, "Announce controls");
             registry.Register(KeyCode.I, KeyModifier.None, KeyContext.Global, HandleItemDetailsKey, "Item details / config tooltip");
+            registry.Register(KeyCode.U, KeyContext.Global, AnnounceEquipRestrictions, "Who can equip");
+            registry.Register(KeyCode.Tab, KeyContext.Global, HandleTabKey, "Clear stale battle state");
             // R repeats the current dialogue page (silent when no message window is open).
             registry.Register(KeyCode.R, KeyModifier.None, KeyContext.Global, HandleRepeatDialogueKey, "Repeat dialogue");
-
-            // --- Battle-only: character status ---
-            registry.Register(KeyCode.H, KeyContext.Battle, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
+            // H: active character's status in battle; says so when pressed outside battle (FF1 parity).
+            registry.Register(KeyCode.H, KeyContext.Global, GameInfoAnnouncer.AnnounceCharacterStatus, "Announce character status");
 
             // --- Field-only toggles (blocked in battle with feedback) ---
             RegisterFieldOnly(KeyCode.Quote, KeyModifier.None, mod.ToggleFootsteps, "Toggle footsteps");
@@ -243,9 +257,17 @@ namespace FFII_ScreenReader.Core
 
         private KeyContext DetermineContext()
         {
+            // The config controls list takes priority while shown.
+            if (KeyHelpReader.IsScreenActive)
+                return KeyContext.KeyHelp;
+
             var tracker = StatusNavigationTracker.Instance;
             if (tracker.IsNavigationActive && tracker.ValidateState())
                 return KeyContext.Status;
+
+            var bestiaryTracker = BestiaryNavigationTracker.Instance;
+            if (bestiaryTracker.IsNavigationActive && bestiaryTracker.ValidateState())
+                return KeyContext.BestiaryDetail;
 
             if (FFII_ScreenReaderMod.IsInBattle)
                 return KeyContext.Battle;
@@ -261,9 +283,13 @@ namespace FFII_ScreenReader.Core
 
         private static bool IsOnValidMap()
         {
+            // Self-heal the cache (like every other FieldPlayerController reader) so a cleared or
+            // stale entry can't wedge the field context into Global and silently disable field hotkeys.
             try
             {
-                return GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>()?.fieldPlayer != null;
+                var pc = GameObjectCache.Get<Il2CppLast.Map.FieldPlayerController>()
+                         ?? GameObjectCache.Refresh<Il2CppLast.Map.FieldPlayerController>();
+                return pc?.fieldPlayer != null;
             }
             catch { return false; }
         }
@@ -279,12 +305,23 @@ namespace FFII_ScreenReader.Core
             return KeyModifier.None;
         }
 
+        private static bool IsBufferContext(KeyContext ctx)
+            => ctx == KeyContext.Status || ctx == KeyContext.BestiaryDetail || ctx == KeyContext.KeyHelp;
+
         private void DispatchRegisteredBindings(KeyContext activeContext, KeyModifier currentModifiers)
         {
             foreach (var key in registry.RegisteredKeys)
             {
                 if (GamepadManager.IsKeyCodePressed(key))
                     registry.TryExecute(key, currentModifiers, activeContext);
+            }
+
+            // W/S as alternative Up/Down arrows ONLY in navigation-buffer screens, so game WASD
+            // movement and letter hotkeys elsewhere are untouched. Modifiers carry (Shift+W = previous group).
+            if (IsBufferContext(activeContext))
+            {
+                if (GamepadManager.IsKeyCodePressed(KeyCode.W)) registry.TryExecute(KeyCode.UpArrow, currentModifiers, activeContext);
+                if (GamepadManager.IsKeyCodePressed(KeyCode.S)) registry.TryExecute(KeyCode.DownArrow, currentModifiers, activeContext);
             }
         }
 
@@ -297,14 +334,8 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
-            // F1 walk/run is announced by GameToggleAnnouncer.Poll() (handles F1 + config menu).
-
-            // F3 toggles encounters - announce after game processes it
-            if (GamepadManager.IsKeyCodePressed(KeyCode.F3))
-            {
-                CoroutineManager.StartManaged(AnnounceEncounterState());
-                return;
-            }
+            // F1 walk/run is announced by GameToggleAnnouncer.Poll() (handles F1 + config menu);
+            // F3 encounters by GameToggleAnnouncer's CheatSettingsClient.SetIsEnableEncount hook.
 
             // F5 cycles enemy HP display. Enemy HP Display is a battle feature, so gate on
             // in-battle (not IsFieldActive, which is false during battle).
@@ -316,8 +347,8 @@ namespace FFII_ScreenReader.Core
                     int next = (current + 1) % 3;
                     PreferencesManager.SetEnemyHPDisplay(next);
 
-                    string[] options = { "Numbers", "Percentage", "Hidden" };
-                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Enemy HP: {0}"), T(options[next])), interrupt: true);
+                    string[] options = { T("Numbers"), T("Percentage"), T("Hidden") };
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("Enemy HP: {0}"), options[next]), interrupt: true);
                 }
                 else
                 {
@@ -326,16 +357,26 @@ namespace FFII_ScreenReader.Core
             }
         }
 
-        private void AnnounceVehicleState()
+        /// <summary>
+        /// U key: FF2 has no class/job equip restrictions, so in the shop and equipment menus (where
+        /// FF1's U names the classes that can equip) it says so. Silent elsewhere.
+        /// </summary>
+        internal static void AnnounceEquipRestrictions()
         {
-            if (!mod.EnsureFieldContext())
-                return;
+            if (ShopMenuTracker.ValidateState() || EquipMenuState.IsActive)
+                FFII_ScreenReaderMod.SpeakText(T("Any character can equip this"), interrupt: true);
+        }
 
+        /// <summary>
+        /// Tab opens the field menu. If the in-battle flag is still set while no battle exists (an exit
+        /// path that skipped every battle-end hook), clear it so menus and field keys work again.
+        /// </summary>
+        private static void HandleTabKey()
+        {
             try
             {
-                int moveState = MoveStateHelper.GetCurrentMoveState();
-                string stateName = MoveStateHelper.GetMoveStateName(moveState);
-                FFII_ScreenReaderMod.SpeakText(stateName);
+                if (FFII_ScreenReaderMod.IsInBattle && Object.FindObjectOfType<Il2CppLast.Battle.BattleController>() == null)
+                    FFII_ScreenReaderMod.ClearBattleState();
             }
             catch { }
         }
@@ -382,6 +423,16 @@ namespace FFII_ScreenReader.Core
             else if (KeywordMenuState.IsActive || WordsMenuState.IsActive)
             {
                 // Keyword/Words entries have no live stats panel — the cached description is the detail.
+                string detail = MenuDetailCache.LastDetail;
+                FFII_ScreenReaderMod.SpeakText(
+                    string.IsNullOrWhiteSpace(detail) ? T("No details") : detail,
+                    interrupt: true);
+            }
+            else if (BattleMagicMenuState.ShouldSuppress() || BattleItemMenuState.ShouldSuppress())
+            {
+                // Battle spell/item lists (validated: the list is still on screen): the focused entry's
+                // description is cached on every cursor move — the only way to reach it in battle with
+                // AutoDetail off (FF1 parity).
                 string detail = MenuDetailCache.LastDetail;
                 FFII_ScreenReaderMod.SpeakText(
                     string.IsNullOrWhiteSpace(detail) ? T("No details") : detail,
@@ -520,25 +571,6 @@ namespace FFII_ScreenReader.Core
             {
                 return false;
             }
-        }
-
-        /// <summary>
-        /// Coroutine that announces encounter state after game processes F3 key.
-        /// </summary>
-        private static IEnumerator AnnounceEncounterState()
-        {
-            yield return null;
-            try
-            {
-                var userData = Il2CppLast.Management.UserDataManager.Instance();
-                if (userData?.CheatSettingsData != null)
-                {
-                    bool enabled = userData.CheatSettingsData.IsEnableEncount;
-                    string state = enabled ? T("Encounters on") : T("Encounters off");
-                    FFII_ScreenReaderMod.SpeakText(state, interrupt: true);
-                }
-            }
-            catch { }
         }
 
         /// <summary>

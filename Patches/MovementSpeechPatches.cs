@@ -127,10 +127,10 @@ namespace FFII_ScreenReader.Patches
                 if (!wasOnVehicle && isOnVehicle)
                 {
                     // Boarding a vehicle
-                    string vehicleName = GetTransportationName(transportationId);
-                    if (!string.IsNullOrEmpty(vehicleName))
+                    string boarding = GetBoardingAnnouncement(transportationId);
+                    if (!string.IsNullOrEmpty(boarding))
                     {
-                        announcement = string.Format(T("On {0}"), vehicleName);
+                        announcement = boarding;
                         MoveStateHelper.SetVehicleState(transportationId);
                     }
                 }
@@ -362,13 +362,12 @@ namespace FFII_ScreenReader.Patches
                 if (typeId == lastAnnouncedTransportId)
                     return;
 
-                string vehicleName = GetTransportationName(typeId);
-                if (!string.IsNullOrEmpty(vehicleName))
+                string announcement = GetBoardingAnnouncement(typeId);
+                if (!string.IsNullOrEmpty(announcement))
                 {
                     MoveStateHelper.SetVehicleState(typeId);
                     lastAnnouncedTransportId = typeId;
                     lastTransportationId = typeId;
-                    string announcement = string.Format(T("On {0}"), vehicleName);
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
@@ -390,13 +389,13 @@ namespace FFII_ScreenReader.Patches
                 if (lastAnnouncedTransportId == IL2CppOffsets.Transport.TRANSPORT_PLAYER)
                     return;
 
-                string vehicleName = GetTransportationName(typeId);
+                bool wasKnownVehicle = GetBoardingAnnouncement(typeId) != null;
                 MoveStateHelper.SetOnFoot();
                 lastAnnouncedTransportId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
                 lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
 
                 // Only announce "On foot" if we were on a known vehicle
-                if (!string.IsNullOrEmpty(vehicleName))
+                if (wasKnownVehicle)
                 {
                     FFII_ScreenReaderMod.SpeakText(T("On foot"), interrupt: false);
                 }
@@ -410,19 +409,19 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Get human-readable name for TransportationType.
         /// </summary>
-        private static string GetTransportationName(int typeId)
+        private static string GetBoardingAnnouncement(int typeId)
         {
             switch (typeId)
             {
-                case IL2CppOffsets.Transport.TRANSPORT_SHIP: return "ship";
-                case IL2CppOffsets.Transport.TRANSPORT_CONTENT: return "canoe";  // FF1 parity: canoe rides the Content slot
-                case IL2CppOffsets.Transport.TRANSPORT_PLANE: return "airship";
-                case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return "submarine";
-                case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING: return "airship";
-                case IL2CppOffsets.Transport.TRANSPORT_SPECIALPLANE: return "airship";
-                case IL2CppOffsets.Transport.TRANSPORT_YELLOWCHOCOBO: return "chocobo";
-                case IL2CppOffsets.Transport.TRANSPORT_BLACKCHOCOBO: return "chocobo";
-                case IL2CppOffsets.Transport.TRANSPORT_BOKO: return "chocobo";
+                case IL2CppOffsets.Transport.TRANSPORT_SHIP:
+                case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return T("On ship");
+                case IL2CppOffsets.Transport.TRANSPORT_CONTENT: return T("On canoe");  // FF1 parity: canoe rides the Content slot
+                case IL2CppOffsets.Transport.TRANSPORT_PLANE:
+                case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING:
+                case IL2CppOffsets.Transport.TRANSPORT_SPECIALPLANE: return T("On airship");
+                case IL2CppOffsets.Transport.TRANSPORT_YELLOWCHOCOBO:
+                case IL2CppOffsets.Transport.TRANSPORT_BLACKCHOCOBO:
+                case IL2CppOffsets.Transport.TRANSPORT_BOKO: return T("On chocobo");
                 default: return null;
             }
         }

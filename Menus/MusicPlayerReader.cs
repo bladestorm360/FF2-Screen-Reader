@@ -20,6 +20,7 @@ namespace FFII_ScreenReader.Menus
         // ExtraSoundListContentInfo field offsets
         private const int OFFSET_MUSIC_NAME = 0x10;     // musicName (Il2CppString*)
         private const int OFFSET_BGM_ID = 0x18;         // bgmId (int)
+        private const int OFFSET_PLAY_TIME = 0x1C;      // playTime (int, seconds; dump.cs:440997)
 
         // ExtraSoundController field offset (KeyInput namespace)
         private const int OFFSET_PLAYER_LIST = 0x50;    // <PlayerList>k__BackingField
@@ -28,11 +29,12 @@ namespace FFII_ScreenReader.Menus
         /// Read song data from an ExtraSoundListContentController pointer using unsafe field access.
         /// Returns false if any pointer is zero/null.
         /// </summary>
-        public static unsafe bool ReadContentFromPointer(IntPtr contentControllerPtr, out string musicName, out int bgmId, out int index)
+        public static unsafe bool ReadContentFromPointer(IntPtr contentControllerPtr, out string musicName, out int bgmId, out int index, out int playTime)
         {
             musicName = null;
             bgmId = 0;
             index = 0;
+            playTime = 0;
 
             if (contentControllerPtr == IntPtr.Zero)
                 return false;
@@ -48,6 +50,9 @@ namespace FFII_ScreenReader.Menus
             // Read bgmId (int) at +0x18 from ContentInfo
             bgmId = *(int*)((byte*)contentInfoPtr.ToPointer() + OFFSET_BGM_ID);
 
+            // Read playTime (int) at +0x1C from ContentInfo
+            playTime = *(int*)((byte*)contentInfoPtr.ToPointer() + OFFSET_PLAY_TIME);
+
             // Read musicName (Il2CppString*) at +0x10 from ContentInfo
             IntPtr musicNamePtr = *(IntPtr*)((byte*)contentInfoPtr.ToPointer() + OFFSET_MUSIC_NAME);
             if (musicNamePtr == IntPtr.Zero)
@@ -59,14 +64,15 @@ namespace FFII_ScreenReader.Menus
 
         /// <summary>
         /// Format a song entry announcement: "01: Main Theme of Final Fantasy II, 1:30"
-        /// Takes pre-extracted C# values (not IL2CPP references).
+        /// Takes pre-extracted C# values (not IL2CPP references). The duration is the content's own
+        /// playTime, falling back to the SoundPlayerList master data when it is unset.
         /// </summary>
-        public static string ReadSongEntry(string musicName, int bgmId, int index)
+        public static string ReadSongEntry(string musicName, int bgmId, int index, int playTime)
         {
             if (string.IsNullOrEmpty(musicName)) return null;
 
             string number = (index + 1).ToString("D2");
-            int durationSec = LookupDuration(bgmId);
+            int durationSec = playTime > 0 ? playTime : LookupDuration(bgmId);
             string duration = FormatPlayTime(durationSec);
             return $"{number}: {musicName}, {duration}";
         }

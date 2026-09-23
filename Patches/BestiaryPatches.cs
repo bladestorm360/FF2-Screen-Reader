@@ -166,7 +166,7 @@ namespace FFII_ScreenReader.Patches
                             {
                                 BestiaryStateTracker.CachedHabitatNames = new List<string>();
                                 for (int i = 0; i < habitatList.Count; i++)
-                                    BestiaryStateTracker.CachedHabitatNames.Add(habitatList[i] ?? "Unknown location");
+                                    BestiaryStateTracker.CachedHabitatNames.Add(habitatList[i] ?? T("Unknown location"));
                             }
                         }
                         CoroutineManager.StartManaged(AnnounceMapView());
@@ -325,8 +325,7 @@ namespace FFII_ScreenReader.Patches
                 var party = partyList[partyIndex];
                 string announcement = BestiaryReader.ReadFormation(partyIndex, party);
 
-                if (partyList.Count > 1)
-                    announcement += $" ({partyIndex + 1} of {partyList.Count})";
+                announcement = MenuPosition.Format(announcement, partyIndex, partyList.Count);
 
                 FFII_ScreenReaderMod.SpeakText(announcement, true);
             }
@@ -479,14 +478,9 @@ namespace FFII_ScreenReader.Patches
                 if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
                     yield break;
 
-                // Announce monster name
-                var pbData = data.pictureBookData;
-                string name = pbData != null && pbData.IsRelease ? pbData.MonsterName : "Unknown";
-                string announcement = string.Format(T("{0}. Details"), name);
-
-                FFII_ScreenReaderMod.SpeakText(announcement, true);
-
-                // Build stat buffer from UI
+                // Sole detail announcer (FF1 parity): the "Name: {monster}" buffer entry is read by
+                // BuildAndInitializeStatBuffer. SetData also fires for monster switches and page flips
+                // in the detail view, so those hooks only refresh CurrentMonsterData.
                 BuildAndInitializeStatBuffer();
             }
             catch (Exception ex)
@@ -511,6 +505,13 @@ namespace FFII_ScreenReader.Patches
 
                 var tracker = BestiaryNavigationTracker.Instance;
                 var entries = BestiaryReader.BuildStatBuffer(content, tracker.CurrentMonsterData);
+
+                // The monster name is the top navigable entry — auto-read below as the single
+                // "you're now viewing this monster" announcement.
+                var pbData = tracker.CurrentMonsterData?.pictureBookData;
+                string name = pbData != null && pbData.IsRelease ? pbData.MonsterName : T("Unknown");
+                entries.Insert(0, new BestiaryStatEntry(T("Name"), name, BestiaryStatGroup.MonsterData));
+
                 BestiaryNavigationReader.Initialize(entries);
 
                 tracker.IsNavigationActive = entries.Count > 0;
@@ -523,79 +524,6 @@ namespace FFII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Bestiary] Error building stat buffer: {ex.Message}");
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Patch 4: Page turns in detail view — rebuild stat buffer
-
-    // ─────────────────────────────────────────────────────────────────────────
-
-    [HarmonyPatch(typeof(Il2CppLast.Scene.ExtraLibraryInfo), "OnNextPageButton")]
-    public static class ExtraLibraryInfo_OnNextPageButton_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix()
-        {
-
-            try
-            {
-                if (!BestiaryStateTracker.IsInDetail) return;
-                CoroutineManager.StartManaged(PageRebuildHelper.Execute());
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Bestiary] Error in OnNextPageButton patch: {ex.Message}");
-            }
-        }
-    }
-
-    [HarmonyPatch(typeof(Il2CppLast.Scene.ExtraLibraryInfo), "OnPreviousPageButton")]
-    public static class ExtraLibraryInfo_OnPreviousPageButton_Patch
-    {
-        [HarmonyPostfix]
-        public static void Postfix()
-        {
-
-            try
-            {
-                if (!BestiaryStateTracker.IsInDetail) return;
-                CoroutineManager.StartManaged(PageRebuildHelper.Execute());
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Bestiary] Error in OnPreviousPageButton patch: {ex.Message}");
-            }
-        }
-    }
-
-    /// <summary>
-    /// Helper for page turn rebuild delay. Shared between next/previous patches.
-    /// </summary>
-    internal static class PageRebuildHelper
-    {
-        internal static IEnumerator Execute()
-        {
-            yield return null;
-            yield return null;
-
-            try
-            {
-                // Rebuild stat buffer from updated content
-                LibraryInfoController_SetData_Patch.BuildAndInitializeStatBuffer();
-
-                var tracker = BestiaryNavigationTracker.Instance;
-                var data = tracker.CurrentMonsterData;
-                string name = "Unknown";
-                if (data?.pictureBookData != null && data.pictureBookData.IsRelease)
-                    name = data.pictureBookData.MonsterName;
-
-                FFII_ScreenReaderMod.SpeakText(string.Format(T("{0}. Page changed"), name), true);
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Bestiary] Error rebuilding page: {ex.Message}");
             }
         }
     }
@@ -616,34 +544,13 @@ namespace FFII_ScreenReader.Patches
             {
                 if (data == null || !BestiaryStateTracker.IsInDetail) return;
 
-                // Update tracker
+                // Keep CurrentMonsterData fresh; the announce + buffer rebuild is driven solely by
+                // LibraryInfoController.SetData (fires on this monster change too).
                 BestiaryNavigationTracker.Instance.CurrentMonsterData = data;
-
-                // Delay to let UI update
-                CoroutineManager.StartManaged(DelayedMonsterChangeAnnouncement(data));
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Bestiary] Error in OnChangedMonster patch: {ex.Message}");
-            }
-        }
-
-        private static IEnumerator DelayedMonsterChangeAnnouncement(MonsterData data)
-        {
-            yield return null;
-            yield return null;
-
-            try
-            {
-                var pbData = data.pictureBookData;
-                string name = pbData != null && pbData.IsRelease ? pbData.MonsterName : "Unknown";
-                FFII_ScreenReaderMod.SpeakText(string.Format(T("{0}. Details"), name), true);
-
-                LibraryInfoController_SetData_Patch.BuildAndInitializeStatBuffer();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Bestiary] Error in monster change announcement: {ex.Message}");
             }
         }
     }
@@ -801,16 +708,21 @@ namespace FFII_ScreenReader.Patches
 
     // ─────────────────────────────────────────────────────────────────────────
     // Config menu bestiary state handler
-    // Maps SubSceneManagerMainGame states 17/18 to BestiaryStateTracker states
-    // so all existing bestiary patches (list nav, detail view, page turns) work.
+    // Maps SubSceneManagerMainGame states 18/19 to BestiaryStateTracker states
+    // so all existing bestiary patches (list nav, detail view) work.
     // ─────────────────────────────────────────────────────────────────────────
 
     internal static class ConfigBestiaryStateHandler
     {
+        // SubSceneManagerMainGame.State (dump.cs:363931): FieldHelp=17, MenuLibraryUi=18 (list),
+        // MenuLibraryInfo=19 (detail). Game-specific — FF1 uses 19/20.
+        internal const int STATE_MENU_LIBRARY_UI = 18;
+        internal const int STATE_MENU_LIBRARY_INFO = 19;
+
         private static int _previousState = -1;
 
         /// <summary>
-        /// True while we're in the config menu bestiary (states 17 or 18).
+        /// True while we're in the config menu bestiary (states 18 or 19).
         /// Used by GameStatePatches to detect exit.
         /// </summary>
         public static bool WasInConfigBestiary { get; private set; } = false;
@@ -821,7 +733,12 @@ namespace FFII_ScreenReader.Patches
             {
                 int previousBestiaryState = BestiaryStateTracker.CurrentState;
 
-                if (mainGameState == 17) // MenuLibraryUi = list
+                // Entering from the config menu: forget the config row that opened the bestiary so it
+                // re-speaks when GameStatePatches arms the config re-announce on exit.
+                if (!WasInConfigBestiary)
+                    ConfigMenuState.ClearDedup();
+
+                if (mainGameState == STATE_MENU_LIBRARY_UI) // list
                 {
                     WasInConfigBestiary = true;
                     BestiaryStateTracker.CurrentState = 1; // Map to extras List state
@@ -861,7 +778,7 @@ namespace FFII_ScreenReader.Patches
                         }
                     }
                 }
-                else if (mainGameState == 18) // MenuLibraryInfo = detail
+                else if (mainGameState == STATE_MENU_LIBRARY_INFO) // detail
                 {
                     WasInConfigBestiary = true;
                     BestiaryStateTracker.CurrentState = 4; // Map to extras Info state
@@ -912,32 +829,13 @@ namespace FFII_ScreenReader.Patches
             {
                 if (data == null || !BestiaryStateTracker.IsInDetail) return;
 
+                // Keep CurrentMonsterData fresh; the announce + buffer rebuild is driven solely by
+                // LibraryInfoController.SetData (fires for the config path too).
                 BestiaryNavigationTracker.Instance.CurrentMonsterData = data;
-
-                CoroutineManager.StartManaged(DelayedMonsterChangeAnnouncement(data));
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Bestiary] Error in config OnChangedMonster patch: {ex.Message}");
-            }
-        }
-
-        private static IEnumerator DelayedMonsterChangeAnnouncement(MonsterData data)
-        {
-            yield return null;
-            yield return null;
-
-            try
-            {
-                var pbData = data.pictureBookData;
-                string name = pbData != null && pbData.IsRelease ? pbData.MonsterName : "Unknown";
-                FFII_ScreenReaderMod.SpeakText(string.Format(T("{0}. Details"), name), true);
-
-                LibraryInfoController_SetData_Patch.BuildAndInitializeStatBuffer();
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Warning($"[Bestiary] Error in config monster change announcement: {ex.Message}");
             }
         }
     }

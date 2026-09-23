@@ -7,6 +7,7 @@ using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Menus;
 using FFII_ScreenReader.Utils;
 
 // FF2 Save/Load UI types
@@ -15,7 +16,7 @@ using TitleLoadController = Il2CppLast.UI.KeyInput.LoadGameWindowController;  //
 using MainMenuLoadController = Il2CppLast.UI.KeyInput.LoadWindowController;   // Main menu load (savePopup at 0x28)
 using MainMenuSaveController = Il2CppLast.UI.KeyInput.SaveWindowController;   // Main menu save (savePopup at 0x28)
 using InterruptionController = Il2CppLast.UI.KeyInput.InterruptionWindowController;  // QuickSave (savePopup at 0x38)
-using KeyInputSavePopup = Il2CppLast.UI.KeyInput.SavePopup;
+using SaveListController = Il2CppLast.UI.KeyInput.SaveListController;
 using GameCursor = Il2CppLast.UI.Cursor;
 
 namespace FFII_ScreenReader.Patches
@@ -58,14 +59,17 @@ namespace FFII_ScreenReader.Patches
     /// Hooks SetEnablePopup(bool isEnable) on:
     /// - InterruptionWindowController (QuickSave)
     ///
-    /// Hooks UpdateFocus() on SavePopup to read Yes/No buttons.
+    /// All use SavePopup with messageText at 0x40, selectCursor at 0x58, commandList at 0x60. The
+    /// popup's message is read with its focused choice appended; choice navigation flows through the
+    /// cursor patches (PopupState) — SavePopup has no UpdateFocus in FF2.
     ///
-    /// All use SavePopup with messageText at 0x40, commandList at 0x60.
+    /// Also hooks SaveListController.SetActive (shared by title load, field save/load and quicksave)
+    /// to read the initially-highlighted slot when the list opens (FF1 SaveListPatches port).
     /// </summary>
     public static class SaveLoadPatches
     {
-        // Track last announced button to avoid duplicates
-        private static int lastAnnouncedButtonIndex = -1;
+        // SaveListController.selectCursor (KeyInput, dump.cs SaveListController)
+        private const int OFFSET_SAVE_LIST_SELECT_CURSOR = 0x58;
 
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
@@ -79,8 +83,8 @@ namespace FFII_ScreenReader.Patches
                 // Patch SetEnablePopup(bool) on QuickSave controller
                 TryPatchInterruption(harmony);
 
-                // Patch SavePopup.UpdateFocus for button reading
-                TryPatchSavePopupUpdateFocus(harmony);
+                // Patch SaveListController.SetActive for the slot open-read
+                TryPatchSaveList(harmony);
             }
             catch (Exception ex)
             {
@@ -89,19 +93,29 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// NOTE: SavePopup does NOT have an UpdateFocus method (verified in dump.cs).
-        /// Button reading for save popups must use cursor navigation patches instead.
-        /// This method is disabled to prevent patching the wrong method.
+        /// Patches SaveListController.SetActive(bool isActive, bool isReset, bool isLoadGame).
         /// </summary>
-        private static void TryPatchSavePopupUpdateFocus(HarmonyLib.Harmony harmony)
+        private static void TryPatchSaveList(HarmonyLib.Harmony harmony)
         {
-            // DISABLED: SavePopup.UpdateFocus doesn't exist in FF2
-            // The previous implementation used AccessTools.Method which may have found
-            // a method from a parent class (MonoBehaviour) causing crashes.
-            //
-            // SavePopup button navigation should be handled through:
-            // 1. Cursor.NextIndex/PrevIndex patches (already in place)
-            // 2. Checking PopupState.IsConfirmationPopupActive in cursor patches
+            try
+            {
+                var method = AccessTools.Method(typeof(SaveListController), "SetActive",
+                    new Type[] { typeof(bool), typeof(bool), typeof(bool) });
+                if (method != null)
+                {
+                    var postfix = typeof(SaveLoadPatches).GetMethod(nameof(SaveListSetActive_Postfix),
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(method, postfix: new HarmonyMethod(postfix));
+                }
+                else
+                {
+                    MelonLogger.Error("[SaveLoad] SaveListController.SetActive not found");
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[SaveLoad] Error patching SaveListController.SetActive: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -203,86 +217,64 @@ namespace FFII_ScreenReader.Patches
         // ============ Postfix Methods ============
 
         /// <summary>
-        /// Postfix for SavePopup.UpdateFocus - reads and announces current button.
+        /// The save list opened (title load, field save/load, quicksave): read the initially-highlighted
+        /// slot one frame later — navigation is read by the generic cursor reader, but the initial
+        /// placement never fires it.
         /// </summary>
-        public static void SavePopup_UpdateFocus_Postfix(object __instance)
+        public static void SaveListSetActive_Postfix(SaveListController __instance, bool isActive)
+        {
+            if (!isActive || __instance == null) return;
+            CoroutineManager.StartManaged(DelayedReadSlot(__instance));
+        }
+
+        private static IEnumerator DelayedReadSlot(SaveListController controller)
+        {
+            yield return null;   // let the list populate + cursor settle
+            string announcement = null;
+            try
+            {
+                // The background autosave during a map load also activates a SaveListController while no
+                // menu is open — ShouldReadSaveSlot excludes it.
+                if (controller != null && controller.gameObject != null && controller.gameObject.activeInHierarchy
+                    && ShouldReadSaveSlot())
+                {
+                    IntPtr cursorPtr = Marshal.ReadIntPtr(controller.Pointer, OFFSET_SAVE_LIST_SELECT_CURSOR);
+                    if (cursorPtr != IntPtr.Zero)
+                    {
+                        var cursor = new GameCursor(cursorPtr);
+                        announcement = SaveSlotReader.TryReadSaveSlot(cursor.transform, cursor.Index, out int count);
+                        if (announcement != null)
+                            announcement = MenuPosition.Format(announcement, cursor.Index, count);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[SaveLoad] Error reading save slot: {ex.Message}");
+            }
+            if (!string.IsNullOrWhiteSpace(announcement))
+                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+        }
+
+        /// <summary>
+        /// True when save-slot content should be announced: a real in-game save/load menu is open
+        /// (MenuManager.IsOpen — false during a map load's scene construction), or the title Load screen
+        /// (not a MenuManager menu) is on-screen. Excludes the background autosave list.
+        /// </summary>
+        public static bool ShouldReadSaveSlot()
         {
             try
             {
-                if (__instance == null) return;
-
-                var popup = __instance as KeyInputSavePopup;
-                if (popup == null) return;
-
-                // Safety check: verify popup GameObject is still valid and active
-                // This prevents crashes during scene transitions when objects are being destroyed
-                try
-                {
-                    var gameObj = popup.gameObject;
-                    if (gameObj == null || !gameObj.activeInHierarchy)
-                        return;
-                }
-                catch
-                {
-                    // GameObject access failed - popup is being destroyed
-                    return;
-                }
-
-                IntPtr popupPtr = popup.Pointer;
-                if (popupPtr == IntPtr.Zero) return;
-
-                // Read selectCursor at offset 0x58
-                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_SELECT_CURSOR_OFFSET);
-                if (cursorPtr == IntPtr.Zero) return;
-
-                GameCursor cursor;
-                try
-                {
-                    cursor = new GameCursor(cursorPtr);
-                }
-                catch
-                {
-                    // Cursor creation failed - pointer is invalid
-                    return;
-                }
-
-                int cursorIndex = cursor.Index;
-
-                // Skip if same button as last announced
-                if (cursorIndex == lastAnnouncedButtonIndex)
-                    return;
-
-                lastAnnouncedButtonIndex = cursorIndex;
-
-                // Read commandList at offset 0x60
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
-                if (listPtr == IntPtr.Zero) return;
-
-                // IL2CPP List: _size at 0x18, _items at 0x10
-                int size = Marshal.ReadInt32(listPtr + 0x18);
-                if (cursorIndex < 0 || cursorIndex >= size) return;
-
-                IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
-                if (itemsPtr == IntPtr.Zero) return;
-
-                // Array elements start at 0x20, 8 bytes per pointer
-                IntPtr commandPtr = Marshal.ReadIntPtr(itemsPtr + 0x20 + (cursorIndex * 8));
-                if (commandPtr == IntPtr.Zero) return;
-
-                // Read text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.SaveLoad.COMMON_COMMAND_TEXT_OFFSET);
-                if (textPtr == IntPtr.Zero) return;
-
-                var textComponent = new UnityEngine.UI.Text(textPtr);
-                string buttonText = textComponent.text;
-
-                if (!string.IsNullOrWhiteSpace(buttonText))
-                {
-                    buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
-                }
+                var mm = Il2CppLast.UI.MenuManager.Instance;
+                if (mm != null && mm.IsOpen) return true;
             }
-            catch { }
+            catch { } // MenuManager not available yet
+            try
+            {
+                var title = UnityEngine.Object.FindObjectOfType<TitleLoadController>();
+                return title != null && title.gameObject != null && title.gameObject.activeInHierarchy;
+            }
+            catch { return false; }
         }
 
         public static void TitleLoadSetPopupActive_Postfix(object __instance, bool isEnable)
@@ -387,7 +379,6 @@ namespace FFII_ScreenReader.Patches
                     SaveLoadMenuState.IsActive = true;
                     SaveLoadMenuState.IsInConfirmation = true;
                     PopupState.SetActive($"{context}Popup", popupPtr, IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
-                    lastAnnouncedButtonIndex = -1;  // Reset button tracking for new popup
 
                     // Start coroutine to read text after delay (allows UI to populate)
                     CoroutineManager.StartManaged(ReadPopupTextDelayed(popupPtr, context));
@@ -419,8 +410,13 @@ namespace FFII_ScreenReader.Patches
 
                     if (!string.IsNullOrWhiteSpace(message))
                     {
-                        // Strip Unity rich text tags (like <color=#ff4040>...</color>)
+                        // Strip Unity rich text tags (like <color=#ff4040>...</color>), then append the
+                        // initially-focused choice (the cursor's initial placement is never announced
+                        // by navigation).
                         message = StripRichTextTags(message);
+                        string focused = ReadFocusedButton(popupPtr);
+                        if (!string.IsNullOrEmpty(focused))
+                            message = $"{message} {focused}";
                         FFII_ScreenReaderMod.SpeakText(message);
                     }
                 }
@@ -441,83 +437,40 @@ namespace FFII_ScreenReader.Patches
             return Regex.Replace(text, @"<[^>]+>", string.Empty);
         }
 
+        /// <summary>
+        /// The SavePopup's focused choice ("Yes, (1 of 2)"), read from its selectCursor (0x58) and
+        /// commandList (0x60); null when unavailable.
+        /// </summary>
+        private static string ReadFocusedButton(IntPtr popupPtr)
+        {
+            try
+            {
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_SELECT_CURSOR_OFFSET);
+                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
+                if (cursorPtr == IntPtr.Zero || listPtr == IntPtr.Zero) return null;
+                int cursorIndex = new GameCursor(cursorPtr).Index;
+
+                // IL2CPP List: _size at 0x18, _items at 0x10; array elements start at 0x20
+                int size = Marshal.ReadInt32(listPtr + 0x18);
+                if (cursorIndex < 0 || cursorIndex >= size) return null;
+                IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
+                if (itemsPtr == IntPtr.Zero) return null;
+                IntPtr commandPtr = Marshal.ReadIntPtr(itemsPtr + 0x20 + (cursorIndex * 8));
+                if (commandPtr == IntPtr.Zero) return null;
+                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.SaveLoad.COMMON_COMMAND_TEXT_OFFSET);
+                if (textPtr == IntPtr.Zero) return null;
+
+                string buttonText = new UnityEngine.UI.Text(textPtr).text;
+                if (string.IsNullOrWhiteSpace(buttonText)) return null;
+                return MenuPosition.Format(TextUtils.StripIconMarkup(buttonText.Trim()), cursorIndex, size);
+            }
+            catch { return null; }
+        }
+
         private static void ClearPopupState()
         {
             SaveLoadMenuState.ResetState();
             PopupState.Clear();
-            lastAnnouncedButtonIndex = -1;
-        }
-
-        /// <summary>
-        /// Reset button tracking state (called when popup opens).
-        /// </summary>
-        public static void ResetButtonTracking()
-        {
-            lastAnnouncedButtonIndex = -1;
-        }
-
-        /// <summary>
-        /// Reads and announces the current SavePopup button based on cursor index.
-        /// Called from CursorNavigation_Postfix when SavePopup is active.
-        /// </summary>
-        public static void ReadCurrentButton(GameCursor cursor)
-        {
-            try
-            {
-                if (cursor == null) return;
-
-                // Get popup pointer from PopupState
-                IntPtr popupPtr = PopupState.ActivePopupPtr;
-                if (popupPtr == IntPtr.Zero) return;
-
-                int cursorIndex = cursor.Index;
-
-                // Skip if same button as last announced
-                if (cursorIndex == lastAnnouncedButtonIndex)
-                    return;
-
-                lastAnnouncedButtonIndex = cursorIndex;
-
-                // Read commandList at offset 0x60
-                IntPtr listPtr = Marshal.ReadIntPtr(popupPtr + IL2CppOffsets.SaveLoad.SAVE_POPUP_COMMAND_LIST_OFFSET);
-                if (listPtr == IntPtr.Zero) return;
-
-                // IL2CPP List: _size at 0x18, _items at 0x10
-                int size = Marshal.ReadInt32(listPtr + 0x18);
-                if (cursorIndex < 0 || cursorIndex >= size) return;
-
-                IntPtr itemsPtr = Marshal.ReadIntPtr(listPtr + 0x10);
-                if (itemsPtr == IntPtr.Zero) return;
-
-                // Array elements start at 0x20, 8 bytes per pointer
-                IntPtr commandPtr = Marshal.ReadIntPtr(itemsPtr + 0x20 + (cursorIndex * 8));
-                if (commandPtr == IntPtr.Zero) return;
-
-                // Read text at offset 0x18
-                IntPtr textPtr = Marshal.ReadIntPtr(commandPtr + IL2CppOffsets.SaveLoad.COMMON_COMMAND_TEXT_OFFSET);
-                if (textPtr == IntPtr.Zero) return;
-
-                var textComponent = new UnityEngine.UI.Text(textPtr);
-                string buttonText = textComponent.text;
-
-                if (!string.IsNullOrWhiteSpace(buttonText))
-                {
-                    buttonText = TextUtils.StripIconMarkup(buttonText.Trim());
-                    FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(buttonText, cursorIndex, size), interrupt: true);
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Returns true if current popup is a SavePopup (for cursor navigation handling).
-        /// </summary>
-        public static bool IsSavePopupActive()
-        {
-            return SaveLoadMenuState.IsInConfirmation &&
-                   PopupState.IsConfirmationPopupActive &&
-                   PopupState.CurrentPopupType != null &&
-                   PopupState.CurrentPopupType.Contains("Popup");
         }
     }
 }

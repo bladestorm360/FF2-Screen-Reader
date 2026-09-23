@@ -37,7 +37,7 @@ namespace FFII_ScreenReader.Core
         public static int EnemyHPDisplay => prefEnemyHPDisplay?.Value ?? 0;
 
         // Multi-hit damage display (0=Total only, 1=With hit count "14x1552 damage")
-        public static int DamageDisplay => prefDamageDisplay?.Value ?? 0;
+        public static int DamageDisplay => prefDamageDisplay?.Value ?? 1;
 
         // Toggle states
         public static bool WallTonesEnabled => prefWallTones?.Value ?? false;
@@ -47,7 +47,7 @@ namespace FFII_ScreenReader.Core
         public static bool MapExitFilterEnabled => prefMapExitFilter?.Value ?? false;
         public static bool ToLayerFilterEnabled => prefToLayerFilter?.Value ?? false;
         public static bool StickClickNormalization => prefStickClickNormalization?.Value ?? false;
-        public static bool AutoDetailEnabled => prefAutoDetail?.Value ?? false;
+        public static bool AutoDetailEnabled => prefAutoDetail?.Value ?? true;
         public static bool AnnounceOnBeaconRestartEnabled => prefAnnounceOnBeaconRestart?.Value ?? false;
         public static bool MenuPositionAnnouncementsEnabled => prefMenuPositionAnnouncements?.Value ?? true;
 
@@ -61,7 +61,11 @@ namespace FFII_ScreenReader.Core
             prefFootsteps = prefsCategory.CreateEntry<bool>("Footsteps", false, "Footsteps", "Play click sound on each tile movement");
             prefAudioBeacons = prefsCategory.CreateEntry<bool>("AudioBeacons", false, "Audio Beacons", "Play ping toward selected entity");
             prefStickClickNormalization = prefsCategory.CreateEntry<bool>("StickClickNormalization", false, "Stick Click Normalization", "When enabled, L3/R3 fall through to game; mod toggles move to mod mode");
-            prefAutoDetail = prefsCategory.CreateEntry<bool>("AutoDetail", false, "Auto Detail", "Announce descriptions/stats on focus for items, magic, equipment, and shops (off = terse; use I/U keys on demand)");
+            // Stored as "AutoDetailOnFocus", not "AutoDetail": Auto Detail now gates the battle and list
+            // descriptions that used to be spoken unconditionally, and MelonPreferences had already
+            // written the old off-by-default "AutoDetail" into every install. A new entry gives
+            // everyone FF1's default (on) once; turning it off afterwards sticks as usual.
+            prefAutoDetail = prefsCategory.CreateEntry<bool>("AutoDetailOnFocus", true, "Auto Detail", "Announce descriptions/stats on focus for items, magic, equipment, and shops (off = terse; use the I key on demand)");
             prefAnnounceOnBeaconRestart = prefsCategory.CreateEntry<bool>("AnnounceOnBeaconRestart", false, "Beacon Destination Announcement", "Re-speak the current destination when the beacon is restarted");
             prefMenuPositionAnnouncements = prefsCategory.CreateEntry<bool>("MenuPositionAnnouncements", true, "Menu Position Announcements", "Append position (N of M) to list-item announcements in menus");
             prefWallBumpVolume = prefsCategory.CreateEntry<int>("WallBumpVolume", 50, "Wall Bump Volume", "Volume for wall bump sounds (0-100)");
@@ -69,7 +73,10 @@ namespace FFII_ScreenReader.Core
             prefWallToneVolume = prefsCategory.CreateEntry<int>("WallToneVolume", 50, "Wall Tone Volume", "Volume for wall proximity tones (0-100)");
             prefBeaconVolume = prefsCategory.CreateEntry<int>("BeaconVolume", 50, "Beacon Volume", "Volume for audio beacon pings (0-100)");
             prefEnemyHPDisplay = prefsCategory.CreateEntry<int>("EnemyHPDisplay", 0, "Enemy HP Display", "0=Numbers, 1=Percentage, 2=Hidden");
-            prefDamageDisplay = prefsCategory.CreateEntry<int>("DamageDisplay", 0, "Multi-hit Damage", "0=Total only, 1=With hit count (e.g. 14x1552 damage)");
+            // Stored as "MultiHitDamage" (default: with hit count) rather than the old off-by-default
+            // "DamageDisplay", which MelonPreferences had already written into every install, so the
+            // hit count is announced once after updating; choosing "Total only" afterwards sticks.
+            prefDamageDisplay = prefsCategory.CreateEntry<int>("MultiHitDamage", 1, "Multi-hit Damage", "0=Total only, 1=With hit count (e.g. 14x1552 damage)");
         }
 
         private static void SetIntPreference(MelonPreferences_Entry<int> pref, int value, int min, int max)

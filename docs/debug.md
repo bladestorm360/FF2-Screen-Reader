@@ -1,5 +1,192 @@
 # Implementation Details
 
+## Offline entity-label extraction + official-name pass (2026-09-23)
+
+Every map's entity labels are now translated, found offline instead of by walking maps with the
+0-key dump.
+
+- **`tools/extract_entities.py`** (Python + UnityPy, generalised from the FF5 mod's tool) reads
+  every `map_*_assets_all_*.bundle` under the game's `StreamingAssets/aa/StandaloneWindows64`,
+  walks the Tiled entity JSON (`entity_default` TextAssets + base64 `inline` groups in each map's
+  `package`), and keeps the Japanese `name` of every interactive object type. It contains a
+  Python mirror of **this mod's** `EntityTranslator.Translate` lookup (exact → `SC E NN:` prefix →
+  trailing ASCII/full-width digits → prefix+digits → leading ①-⑳ → leading 真), so `missing`
+  reports only labels the mod would really fail on, keyed on the most-reduced form the lookup
+  tries. `gamedict` builds a Japanese → {lang} dictionary from the game's own message tables
+  (`story_cha` speaker names + `system` names), which is how proper nouns follow the game's
+  localisation (ミンウ is "Minnwu" in French, "Min’U" in German, 敏武 in Chinese).
+- **`tools/apply_translations.py`** validates a batch (all 11 languages, script sanity per
+  language, no kana, no stray whitespace) and appends it textually before the closing brace, so
+  existing bytes (including the one `　`-escaped key) never change.
+- **Result:** 172 keys added (99 → 271). The sweep now reports 421 of 421 unique labels covered.
+  Labels carrying dev ids such as `sc_e_0044:海賊船` are keyed exactly: `EntityPrefixRegex` does not
+  match the underscore form, and the id is omitted from the spoken text.
+- **Official-name pass:** 29 existing entries whose key is itself a game string were aligned
+  with the game's text (116 values): e.g. リチャード → Ricard, レオンハルト → Leon, フィン王 → King of
+  Fynn, and several Traditional Chinese names that had been stored corrupted (乾達/乾武/乾德 →
+  希爾妲/敏武/希德). Shop words (武器屋 etc.) were deliberately left alone — their official strings
+  are menu headers ("Weapons"), not shop names.
+- Re-run after a game update: `python tools/extract_entities.py missing <out.json>`, translate the
+  keys, then `python tools/apply_translations.py apply <batch.json>`.
+
+## FF1-parity pass 2 (2026-09-23)
+
+Work list from the FF2-vs-FF1 audit. Offsets/methods below were confirmed in `dump.cs`; call graphs
+marked "(GameAssembly)" were confirmed by disassembling `GameAssembly.dll` (capstone, direct `call`
+xrefs) because a hook on an inlined or uncalled method never fires.
+
+**Bugs fixed**
+- **Config bestiary states** — `SubSceneManagerMainGame.State` has `FieldHelp=17, MenuLibraryUi=18,
+  MenuLibraryInfo=19`; the handler used 17/18. Constants now live on `ConfigBestiaryStateHandler`.
+- **Vehicle names** — `VehicleEntity.GetVehicleName` mapped `TransportationType` as 2 Canoe / 3 Ship /
+  4 Airship. Now Ship=2, Plane/LowFlying/SpecialPlane=Airship, Content=Canoe, chocobos=Chocobo (all
+  `T()`); unknown ids fall back to the scanned name. `EntityScanner.GetVehicleNameFromType` reuses it.
+- **Item command bar open-read** — `ITEM_COMMAND_ID_CACHE=0x18` was `OnKeyAction` on the KeyInput
+  `ItemCommandController`; now `contentList@0x40[selectCursor@0x50].Data.Id` (dump.cs:449265).
+- **Battle magic selected player** — KeyInput `BattleAbilityInfomationControllerBase` has
+  `selectedBattlePlayerData@0x30` (Touch base @0x28); `OFFSET_SELECTED_PLAYER_KEYINPUT/_TOUCH`.
+  `dataList/contentList` stay 0x70/0x78 on both.
+
+**Config menu** (`ConfigMenuPatches`) — one-shot `ReannounceFocusedConfigOption`: the arming event
+starts a deferred read (one frame later, retried per frame up to 120 frames) of the open config menu's
+focused row — the active KeyInput `ConfigController.detailsController` (@0x48) or title
+`OptionController.configActualDetailsController` (@0xA0), found with `FindObjectOfType`; nothing open →
+silent. Armed on config-bestiary exit (the dedup is cleared on bestiary entry), on closing a popup that
+opened over the config menu (`PopupPatches._openedOverConfig`) and on title `OptionController.ShowConfig`
+(prefix clears the dedup, postfix arms with its instance — whichever of SetFocus/deferred read reads first
+speaks, the other is deduplicated). Cancelled on `ConfigController.SetActive(false)`. (The per-frame
+`UpdateController` consumers were removed in the review fixes below.) Rows now carry "(X of Y)" from the parent details
+controller's `CommandList`; the arrow-value guard is per row (pointer + value). Controls help pop-up:
+`ConfigKeysSettingController.GamePadHelpInit/KeyboardHelpInit` render `HelpContentList` /
+`KeyboardHelpContentList` (0x58/0x60) into `KeyHelpReader`'s flat list (`KeyContext.KeyHelp`, arrows/W/S,
+D-pad); `GamePadSelectInit/KeyboardSelectInit/Close` tear it down. `BuildCommandAnnouncement` is the FF1
+version: help rows read `messageTexts`/`MessageId`, mouse rows map their glyph sprite, gamepad rows use
+the live remap binding or, for fixed buttons, the rendered glyph (`ControllerLabels.GetLeft/RightStickClickLabel`).
+
+**Field menu** (`MainMenuPatches.FieldMenuReader`, FF1 port) — `MainMenuController.Show` and `InitNone`
+(back-out from any sub-menu) read the live `commandMenuController.selectCursor` through
+`MenuTextDiscovery` one frame later, gated on `MenuManager.IsOpen`, generation-latched so Show+InitNone
+speak once; "(X of Y)" via `TryGetFieldCommandCount`. The old focusId read (the SELECTED command) and
+`GetMenuCommandName` are gone.
+
+**Bestiary** — detail keys: `KeyContext.BestiaryDetail` (arrows/W/S, Shift = group, Ctrl = ends; D-pad).
+`LibraryInfoController.SetData` is the only detail announcer: it prepends a `Name` entry and reads
+`entries[0]`; the monster-switch hooks only refresh `CurrentMonsterData` and the page-button patches
+("Page changed") are removed: page flips re-fire SetData (`OnNext/PreviousPageButton →
+LibraryInfoManager.NextPage/PreviousPage → ShowData → LibraryInfoController.SetData`, GameAssembly). Formation position uses
+`MenuPosition`. Bestiary, music player and gallery now suppress the generic cursor reader.
+
+**Battle results** (`BattleResultPatches`, rewritten; user-requested) — one hook per phase: `Show` resets
+(and `ClearBattleState`), `ResultPointController.ShowSkillLevels` → gil, then the per-character
+weapon-skill line ("Sword lv3, Shield +12 percent"), `ResultSkillController.SetLevelUpList` →
+per-character spell level-ups (before/after `OwnedAbilityList` exp through `ExpUtility.GetExpLevel`),
+`ResultStatusUpController.SetData` → that character's stat gains as each page appears (guarded per
+character), `ShowGetItemsInit` → drops. (Gil moved from `ShowPointList`, which never runs in FF2 — see
+"Battle Result Phases".) `ShowLevelUp` is not hooked: it has no caller —
+it is inlined into `ShowLevelUpAbilitysInit` (GameAssembly). `SetLevelUpList` logs each call
+(`[BattleResult] SetLevelUpList call N`) to confirm it fires once per result. No EXP counter / "Battle
+Results" mod-menu section: FF2 has no EXP, and no counting animation was confirmed without a game session.
+
+**Battle commands/targets** (`BattleCommandPatches`, FF1 model) — `SetCommandData` prefix closes the
+command window and resets the command dedup every turn; postfix opens it, tracks `CurrentActor`;
+`SetCursor` announces only inside the window, deduplicated on the command's `MesIdName` (page switches
+speak), with a one-frame `DeferredCommandReannounce` after backing out of targeting or the spell/item list
+(`NotifyCommandSubmenuActive`). Target selection: the per-index dedup (reset on every SelectContent) is
+gone; `EnemysInit/PlayerInit` prefix re-arms and postfix schedules a one-frame initial read
+(selectCursor 0xC0, lists 0x30/0x38, fallbacks 0x88/0x90) that stays silent if SelectContent already spoke —
+`EnemysInit` calls SelectContent itself, `PlayerInit` never does (GameAssembly). Targets get a status
+suffix (`BuildStatusSuffix`). `IsInBattle` is set in `StartPreeMptiveMes` and cleared by
+`FFII_ScreenReaderMod.ClearBattleState()` from `BattleController.EndWin/EndLose/EndFadeOut` callbacks,
+`EndEscapeFadeOut`, `Exit` (prefix) and the result `Show`; Tab clears a stale flag when no
+`BattleController` exists.
+
+**Battle messages** — the plain SetMessage dedup is removed (it swallowed a second identical message and
+left `_pendingActorName` stale; replaced by a short frame-window repeat guard in the review fixes below); `[DIAG-DMG]` and `[NavDiag]` logs removed; the synthetic
+"Preemptive strike!" etc. is removed — `StartPreeMptiveMes → SetCommandMessageAtKey →
+BattleUIManager.SetCommadnMessage → BattleCommandMessageController.SetMessage` (GameAssembly), which
+`SetMessage_Postfix` already speaks. Actions read "Actor: Action" with the game's localized name (no
+English command-word matching). Damage/heal strings, "Poison", "X's turn" and target HP go through `T()`.
+
+**I / H / U keys** — I in battle reads the focused spell/item description (`MenuDetailCache`); battle
+lists append descriptions only with AutoDetail. H (Global) reads the active actor's HP/MP/statuses and
+says "Party status only available in battle" elsewhere. U / right-stick-left says "Any character can
+equip this" in shops and the equipment menu (FF2 has no equip restrictions).
+
+**Controller** — mod mode A = vehicle; mod mode in menus now offers Gil/location/vehicle with a
+teleport-free help line; a disconnect drops mod mode; a keyboard-opened mod menu syncs the state machine;
+Shift+I = `ControllerRouter.AnnounceContextControls`.
+
+**Other ports** — encounter toggle via a `CheatSettingsClient.SetIsEnableEncount` prefix/postfix
+(unique RVA; `CheatSettingsData.set_IsEnableEncount` shares its body with 24 methods — never patch it),
+spoken only on real field changes; the F3 coroutine is gone. Map transitions announce the first map
+after loading a save and skip "Unknown". Title menus (`TitleMenuPatches`: `InitSelect/InitializeOption/
+InitializeExtra`) read their initial focus with "(X of Y)". Save list: `SaveListController.SetActive`
+reads the highlighted slot (`ShouldReadSaveSlot` also gates the generic reader); save/load confirmations
+append the focused choice. Item list / item-use targets re-read on (re)entry
+(`FieldItemReannouncePatches`: Init prefix arms, SelectContent disarms, Init postfix starts a deferred
+read one frame later, retried up to 30 frames).
+Name entry announces on `NewGameWindowController.InitNameInput`. Music tracks use
+`ExtraSoundListContentInfo.playTime@0x1C` before the master-data lookup. Scroll text is spoken line by
+line paced to the scroll; fade messages don't interrupt; the dead `LineFadeMessageManager.Play` hook
+(an `is IEnumerable` test on an IL2CPP list) is removed — `LineFadeMessageWindowController` covers it.
+`IsOnValidMap` self-heals the cache. K speaks "(N of M)" / "No {category} found". V works anywhere.
+Footstep volume 0.1436; wall bumps gated on `IsFieldActive`. Warp tiles (`PropertyTelepoPoint`) are
+events. Status stats give their position within their group. Item quantities read "Potion, 3".
+Speaker names are no longer filtered (the source only carries names). Mod menu: "Beacon Navigation".
+
+**Localization** — 148 new `mod_text.json` keys; every `T()` key used in code exists. Entity/type
+names, compass/steps, waypoints, movement states, status/bestiary labels, shop stats, equip slots,
+naming, save slots and battle strings are wrapped. `EventEntity` keeps its English type tag
+(`ToLayerFilter` matches "ToLayer") and localizes it on read.
+
+**Dead code removed** — `CharacterSelectionReader`, `GlobalBattleMessageTracker`, the SavePopup
+UpdateFocus/ReadCurrentButton paths, `NewGameNamingPatches.LogAvailableMethods`, the no-op
+`SystemIndicator.Show` hook, `MessageWindowPatches.ResetTracking`, `WaypointManager.GetNextWaypointName`,
+`FieldNavigationHelper.GetWalkableDirections/GetDirection/GetSimplePathDescription` (+ helpers),
+`FF2Constants.BattleStartStates`, `IL2CppOffsets.MainMenu`.
+
+**Not done** — "Press any button" on return to title (FF1 polls from scene load; no event hook
+confirmed), `InitSelectLanguage` open read, naming-screen generic-reader suppression (the start popup's
+choices may rely on the generic reader).
+
+**Review fixes (2026-09-23)** — from an adversarial review of this pass:
+- **Gil after battle** — `ShowPointList` never runs in FF2 (the result screen always starts at
+  `ShowLevelUpAbilitys`, see "Battle Result Phases"), so gil was never spoken. It is now spoken first in
+  `ShowSkillLevels_Postfix` under the `announcedGil` guard; the `ShowPointList` postfix stays as a fallback
+  sharing that guard.
+- **Back-attack wins** — `Show_Postfix` no longer skips `isReverse` (it is the back-attack layout flag
+  from `BattleController.StartWinResult`, not a close), so those wins reset the result guards and set
+  `BattleResultActive` too.
+- **Scan-message flood** — `ScanBattleFunction.IsFunctionEnd` (0x8C58D0) re-sends the current line
+  through `SetCommadnMessage → SetMessage` every frame. `SetMessage_Postfix` now swallows an identical text
+  seen within 20 frames, refreshing the stamp on each swallowed repeat (a stream speaks once; the same
+  text seconds later still speaks). Checked before the caster prefix, so a repeat never consumes
+  `_pendingActorName`; cleared in `ResetState`.
+- **No per-frame hooks (rule 3)** — the `ConfigController`/`OptionController` and KeyInput
+  `ItemListController`/`ItemUseController` `UpdateController` postfixes are gone. Config: the arming
+  event starts a deferred read (see "Config menu" above). Items: each state-entry Init (unique RVAs) keeps
+  its arming prefix and gains a postfix that starts a one-frame-later read, retried up to 30 frames.
+- **Shared ShowWindow body** — KeyInput `BattleTargetSelectController.ShowWindow` shares native 0x2CAE40
+  with nine other bool setters (`SetEnableCharacterContent`, `SetEnableSkillView`,
+  `ShopCharaStatusContentController.SetActive`, ...). The prefix now returns unless the object's IL2CPP
+  class is assignable to `BattleTargetSelectController` (`il2cpp_class_is_assignable_from`).
+- Small: `T(T("N/A"))` → `T("N/A")` in `StatusDetailsReader`; a duplicated `IsShopActive()` check in
+  `PopupOpen_Postfix` removed; readme's right-stick teleport now says "the tile next to the selected
+  entity" (the offset is 16 units = one tile), not "16 tiles".
+- Not changed: unnamed warp tiles do not read "NPC" — `GetEntityNameWithRaw` returns `(null, null)` for
+  an empty property name, so the "Warp Tile" fallback already runs (the "NPC" fallback belongs to
+  `GetNpcDisplayNameWithRaw`).
+
+**Multi-hit damage (2026-09-23)** — "Target: NxTotal damage" on weapon attacks, FF1 parity.
+- The game draws its ×N (`BattleBasicFunction.CreateHitCount` → `DamageViewUIManager.CreateHitCount`)
+  only when `SystemConfigData.GetBattleType()` is Command (FF1–FF3 return 1; FF4/FF5 return 0 = ATB)
+  and the acting ability's `TypeId` is 4 (weapon; the Fight command's ability 1). FF2 is turn-based,
+  so the captured ×N path works as in FF1.
+- Fallback when no ×N was paired with the damage view within a frame: the `CreateDamageView` postfix
+  reads the attack's own count from `__instance.ICalcResultDic[target].GetHitCount()` (weapon abilities
+  only). `battleActData` is a protected property, read at offset **0x38** in FF2 (0x28 in FF3–FF5).
+- Default is now "With hit count", stored as `MultiHitDamage` (the old `DamageDisplay` entry is ignored).
+
 ## Untranslated phrases + bug-fix pass (2026-07-09)
 
 Translation source of truth is **`translation.json`** (project root, embedded via `FFII_ScreenReader.csproj`).
@@ -46,8 +233,7 @@ Translation" section below are **stale** — ignore them.
   Recovery=4/MPHit=5/MPRecovery=6/RecoveryCondition=7): a **zero-damage hit** (`HitType.Zero`) reads
   "0 damage" (matching the game's on-screen "0") rather than being suppressed; `MPHit` reads
   "N MP damage"; `RecoveryCondition`/`Non` are suppressed (the condition is announced by
-  `ConditionAdd_Postfix`). A temporary `[DIAG-DMG]` log of each `CreateDamageView` (value/HitType/
-  isRecovery) is live to confirm which HitType buffs arrive as; remove once verified.
+  `ConditionAdd_Postfix`). (The temporary `[DIAG-DMG]` log was removed in the 2026-09-23 pass.)
 - **Bug 4 — canoe announced nothing → "On canoe"** (FF1 parity, ported directly): the canoe rides the
   `TRANSPORT_CONTENT` (5) slot and boards via `FieldPlayer.GetOn`, but FF2 dropped it (no case in
   `GetTransportationName`; `ChangeTransportation` treats Content as intermediate). Added
@@ -185,6 +371,11 @@ BattleItemInfomationController (KeyInput):
 
 BattleQuantityAbilityInfomationController:
   dataList: 0x70, contentList: 0x78, selectedCursorIndex: 0x88
+  selectedBattlePlayerData (base class): KeyInput 0x30, Touch 0x28
+
+BattleTargetSelectController (KeyInput):
+  playerDataList: 0x30, enemyDataList: 0x38, TargetPlayerList: 0x88, TargetEnamyList: 0x90,
+  selectCursor: 0xC0
 
 BattleAbilityInfomationContentController:
   commonGauge: 0x38
@@ -259,12 +450,22 @@ BattlePauseController.isActivePauseMenu: 0x71
 
 ## Battle Result Phases
 
+KeyInput result UI only; one hook per on-screen phase (see "FF1-parity pass 2" above).
+
+`ResultMenuController.Show` (0x5B9800) picks its first state as `data.IsSkillLevel ? ShowLevelUpAbilitys (6)
+: ShowPoints (1)`, and `BattleResultProvider.Genelate` (0x379320) always sets `IsSkillLevel` (data+0x10), so
+FF2 always starts at `ShowLevelUpAbilitysInit` (0x5B9020), which calls `ResultPointController.ShowSkillLevels`
+(vtable slot 7) and then `ResultSkillController.SetLevelUpList` (0x5BBC00) (GameAssembly). Nothing enters
+`ShowPoints`, so `ShowPointsInit` → `ShowPointList` never runs.
+
 | Phase | Method | Data |
 |-------|--------|------|
-| 1 | Show_Postfix | Gil |
-| 2 | ShowSkillLevelsInit / ShowLevelUpAbilitysInit | Weapon skills |
-| 3 | ShowStatusUpInit | Stat gains |
-| 4 | ShowGetItemsInit | Item drops |
+| 0 | `ResultMenuController.Show` | reset + `ClearBattleState` (no speech) |
+| 1 | `Serial.FF2.UI.KeyInput.ResultPointController.ShowSkillLevels` (from `ShowLevelUpAbilitysInit`) | Gil, then weapon skills (gain % / level-ups), per character |
+| 2 | `Last.UI.KeyInput.ResultSkillController.SetLevelUpList` (same Init, right after) | Spell level-ups, per character |
+| 3 | `Serial.FF2.UI.KeyInput.ResultStatusUpController.SetData` | Stat gains, per character page |
+| 4 | `ResultMenuController.ShowGetItemsInit` | Item drops |
+| — | `ResultPointController.ShowPointList` | Gil fallback only (never runs in FF2; shares the `announcedGil` guard) |
 
 ## Spell/Skill Calculations
 
@@ -291,25 +492,27 @@ reads `weaponType` per element and keys `weaponSkillCache` by it — order-indep
 `GetOn(TRANSPORT_PLAYER=1)` called when disembarking, NOT `GetOff()`. Handle typeId==1 as disembark.
 
 ### Controller Variants
-KeyInput and Touch often have different method names:
-- Touch: `ShowSkillLevelsInit` / KeyInput: `ShowLevelUpAbilitysInit`
-- Touch: targetData at 0x30 / KeyInput: targetData at 0x48
+KeyInput and Touch often have different method names and layouts:
+- Touch: `ShowSkillLevelsInit` / KeyInput: `ShowLevelUpAbilitysInit` (which calls
+  `ResultPointController.ShowSkillLevels` and, inlined, `ResultSkillController.ShowLevelUp`)
+- `ResultMenuController.targetData`: Touch 0x68 / KeyInput 0x58
+- `BattleAbilityInfomationControllerBase.selectedBattlePlayerData`: Touch 0x28 / KeyInput 0x30
 
 ## Field Navigation Hotkeys
 
 | Key | Action |
 |-----|--------|
 | J/[ | Previous entity (Shift: prev category) |
-| K | Repeat current |
+| K | Repeat current entity with "(N of M)" |
 | L/] | Next entity (Shift: next category) |
-| P/\ | Pathfinding (Shift: toggle filter) |
-| V | Current vehicle/movement mode |
+| P/\ | Pathfinding / restart beacon (Shift: pathfinding filter, Ctrl: layer filter) |
+| \` | Rescan entities |
+| V | Current vehicle/movement mode (works anywhere) |
 | Shift+K | Reset to All category |
 | =/- | Cycle category |
-| 0 | Dump untranslated entity names |
 | ; | Toggle wall tones |
 | ' | Toggle footsteps |
-| 9 | Toggle audio beacons |
+| F6 | Toggle audio beacons |
 
 ## Status Details Hotkeys
 
@@ -348,6 +551,10 @@ self-gated on first `STATE_COMMAND` entry (`MagicMenuState._cmdBarOpenRead`, res
 `Data.Name` and announces via the existing `ShouldAnnounceCommand` dedup. `CommandController_UpdateFocus_Postfix`
 (nav), `ShouldSuppress`, and the use/forget menus are untouched.
 **Shop** unchanged — `ShopPatches`/`ShopCommandReader` keep using `CommandBarReader.GetShopCommandName`.
+**Superseded (2026-09-23)**: the field `focusId` read was the SELECTED command, not the focused one —
+replaced by `MainMenuPatches.FieldMenuReader` (live cursor, FF1 port). The item offset 0x18 was
+`OnKeyAction` on the KeyInput controller (`<CommandIdCash>` exists only on Touch) — now
+`contentList@0x40[selectCursor@0x50].Data.Id`.
 
 ### East wall tone raised to B3 (FF1 parity) (2026-06-17)
 **Change**: `SoundConstants.WallToneFrequencies.EAST` 220 (A3) → 247 (B3). The four wall tones now
@@ -857,8 +1064,8 @@ target. The 8-tile adjacency fallback also fabricated a "North 1" when the playe
 - The crow-flies list distance (`FormatDescription`, 3D `Vector3.Distance`) is intentionally left
   unchanged — a stacked-layer target reads as distant in the `[`/`]` list while `\` gives its route.
 
-**`[NavDiag]`** (kept) — one line per `\` press from `GetPathToEntity`; `destCell.z` now reflects the
-target's real layer (`entityLayer - 9`), confirming the layer-aware route:
+**`[NavDiag]`** (removed 2026-09-23 once the route was confirmed) — was one line per `\` press from
+`GetPathToEntity`; `destCell.z` reflected the target's real layer (`entityLayer - 9`):
 ```
 [NavDiag] entity='<name>' playerPos=(x,y,z) playerLayer=L entityPos=(x,y,z) entityLayer=L
           crowDist=NN.N steps=N.N startCell=(cx,cy,cz) destCell=(cx,cy,cz) map=WxH

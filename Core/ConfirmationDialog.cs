@@ -45,12 +45,12 @@ namespace FFII_ScreenReader.Core
             if (!wasAlreadyOpen)
             {
                 // First open — announce prompt with a short delay so it settles cleanly.
-                CoroutineManager.StartManaged(DelayedPromptAnnouncement($"{prompt} {T("Yes or No")}"));
+                CoroutineManager.StartManaged(DelayedPromptAnnouncement(string.Format(T("{0} Yes or No"), prompt)));
             }
             else
             {
                 // Continuation — dialog already open, just announce the new prompt immediately.
-                FFII_ScreenReaderMod.SpeakText($"{prompt} {T("Yes or No")}", interrupt: true);
+                FFII_ScreenReaderMod.SpeakText(string.Format(T("{0} Yes or No"), prompt), interrupt: true);
             }
         }
 

@@ -71,6 +71,10 @@ namespace FFII_ScreenReader.Patches
                     hasLoggedPatchActive = true;
                 }
 
+                // No audio when menus or battle active (same gate as controller routing)
+                if (!Core.ControllerRouter.IsFieldActive)
+                    return;
+
                 // Only check if there's actual movement input
                 if (!HasMovementInput(axis))
                     return;

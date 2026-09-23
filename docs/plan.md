@@ -2,6 +2,13 @@
 
 Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is fully playable.**
 
+**Landed (2026-09-23):** FF1-parity pass 2 — see `docs/debug.md` (2026-09-23). Four bug fixes (config
+bestiary states 18/19, vehicle names, item command-bar offset, battle-magic player offset), phased
+battle results incl. spell level-ups, FF1 battle command/target model, bestiary detail keys + single
+announce, controls-list navigation, config/field/title/save/item open and back-out reads, battle I key
++ AutoDetail, active-actor H key, encounter toggle hook, controller fixes, 148 new translated strings.
+**Unverified in game** — all of it; see "Needs in-game confirmation" below.
+
 **Landed (2026-07-09):** untranslated-phrase + bug-fix pass — see `docs/debug.md` (2026-07-09).
 3 translations + `⑩`-prefix strip, double-spell-announce merge ("Caster: name level"), enemy-HP
 toggle, beacon result-screen gate, spell-list layout (name/level/percent), multi-hit damage count
@@ -16,19 +23,19 @@ confirmation.
 | Item Menu | ✓ | Item list, character target with MP |
 | Status Menu | ✓ | All stats, weapon skills (UI read), combat stats |
 | Magic Menu | ✓ | Spell list with level/percent, Use/Forget commands |
-| Config Menu | ✓ | Options with values, I key tooltip, Boost submenu |
+| Config Menu | ✓ | Options with values and "(X of Y)", I key tooltip, Boost submenu, re-read after bestiary/popup, controls list navigation |
 | Shop Menu | ✓ | Buy/sell with prices/stats |
 | Equipment Menu | ✓ | Slot/item selection, stat comparison |
 | Dialogue | ✓ | NPC dialogue, multi-line pages, fade/scroll messages |
-| Battle Commands | ✓ | Turn, command, target announcements |
-| Battle Items/Magic | ✓ | Item and spell selection |
-| Battle Messages | ✓ | Damage, healing, status, action names |
-| Battle Results | ✓ | Gil, weapon/magic level-ups, stat gains, items |
+| Battle Commands | ✓ | Turn, command (per-turn/page dedup, back-out re-read), targets with statuses, ally initial target |
+| Battle Items/Magic | ✓ | Item and spell selection; descriptions with AutoDetail or the I key |
+| Battle Messages | ✓ | Damage, healing, status, "Actor: Action" |
+| Battle Results | ✓ | Phased: gil + weapon skills, spell level-ups, stat gains per page, items (unverified in game) |
 | Field Navigation | ✓ | Entity scan, pathfinding, wall bump, vehicles, wall tones, footsteps, audio beacons |
 | Waypoint System | ✓ | Add/rename/delete waypoints, category filtering, single-confirm clear all (FF1 model) |
 | Mod Menu | ✓ | Windowless (no focus stealing); field-only gating; FF1 layout; Beacon Destination Announcement toggle |
-| Entity Translation | ✓ | Japanese→English name translation, circled number prefixes (①②③...), full-width trailing-digit strip/append (柵N→"Fence N") |
-| Title Menu | ✓ | New Game, Continue, Options |
+| Entity Translation | ✓ | Japanese→English name translation, circled number prefixes (①②③...), full-width trailing-digit strip/append (柵N→"Fence N"). All 421 map labels covered via the offline extractor (`tools/`, 2026-09-23); proper nouns use the game's official names per language |
+| Title Menu | ✓ | New Game, Continue, Options; initial focus read on entry (unverified in game) |
 | Popup Dialogs | ✓ | All types: confirmations, game over, title screen |
 | Save/Load | ✓ | Slot info, confirmations, quicksave |
 | Battle Pause | ✓ | Spacebar menu commands |
@@ -49,8 +56,25 @@ confirmation.
 ## Known Issues
 
 1. **Words menu description** - Main menu keyword list shows name only (NPC Ask/Learn works)
-2. **Spell level-up announcements** - Removed; needs `ExpUtility.GetExpLevel` reimplementation
-3. **Shop unaffordable items** - Game skips `SetFocus(true)` for these
+2. **Shop unaffordable items** - Game skips `SetFocus(true)` for these
+3. **"Press any button" on return to title** - spoken at boot only; FF1 polls from the scene load and
+   FF2 has no confirmed event hook for the return
+4. **No EXP counter / "Battle Results" mod-menu section** - FF2 has no EXP, and no result counting
+   animation was confirmed
+
+## Needs in-game confirmation (2026-09-23 pass)
+
+- Spell level-ups: `SetLevelUpList` fires once per result (check the `[BattleResult] SetLevelUpList call`
+  log line) and before/after ability exp differ as expected.
+- Stat-gain pages: one announcement per character page (`ResultStatusUpController.SetData`).
+- Config: re-read after leaving the config bestiary and after cancelling Quit/Return to Title; no stray
+  read on a confirmed Return to Title; title Configuration opens with one read.
+- Battle: command menu speaks every turn (incl. a single survivor), after page switches and after
+  backing out of targets/spells/items, never on a commit; ally targeting speaks its first target once.
+- Bestiary detail: one "Name: …" read on entry, monster switch and page flip.
+- Item menu: item list and item-use targets read on entry and on back-out, no double on single-target entry.
+- Save list and title menus: initial slot/command read once.
+- Encounter toggle speaks once on the field (not on config changes / loads).
 
 ## FF2-Specific
 

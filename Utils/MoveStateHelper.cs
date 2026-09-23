@@ -3,6 +3,7 @@ using Il2CppLast.Map;
 using Il2CppLast.Entity.Field;
 using MelonLoader;
 using FFII_ScreenReader.Core;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Utils
 {
@@ -108,25 +109,25 @@ namespace FFII_ScreenReader.Utils
 
             if (newState == MOVE_STATE_SHIP)
             {
-                announcement = "On ship";
+                announcement = T("On ship");
             }
             else if (newState == MOVE_STATE_CANOE)
             {
-                announcement = "On canoe";
+                announcement = T("On canoe");
             }
             else if (newState == MOVE_STATE_CHOCOBO)
             {
-                announcement = "On chocobo";
+                announcement = T("On chocobo");
             }
             else if (newState == MOVE_STATE_AIRSHIP || newState == MOVE_STATE_LOWFLYING)
             {
-                announcement = "On airship";
+                announcement = T("On airship");
             }
             else if ((previousState == MOVE_STATE_SHIP || previousState == MOVE_STATE_CHOCOBO ||
                       previousState == MOVE_STATE_AIRSHIP || previousState == MOVE_STATE_LOWFLYING) &&
                      (newState == MOVE_STATE_WALK || newState == MOVE_STATE_DUSH))
             {
-                announcement = "On foot";
+                announcement = T("On foot");
             }
 
             if (announcement != null)
@@ -244,16 +245,16 @@ namespace FFII_ScreenReader.Utils
         {
             switch (moveState)
             {
-                case MOVE_STATE_WALK: return "Walking";
-                case MOVE_STATE_DUSH: return "Dashing";
-                case MOVE_STATE_SHIP: return "Ship";
-                case MOVE_STATE_AIRSHIP: return "Airship";
-                case MOVE_STATE_LOWFLYING: return "Low Flying";
-                case MOVE_STATE_CHOCOBO: return "Chocobo";
-                case MOVE_STATE_CANOE: return "Canoe";
-                case MOVE_STATE_GIMMICK: return "Gimmick";
-                case MOVE_STATE_UNIQUE: return "Unique";
-                default: return "Unknown";
+                case MOVE_STATE_WALK: return T("Walking");
+                case MOVE_STATE_DUSH: return T("Dashing");
+                case MOVE_STATE_SHIP: return T("Ship");
+                case MOVE_STATE_AIRSHIP: return T("Airship");
+                case MOVE_STATE_LOWFLYING: return T("Low Flying");
+                case MOVE_STATE_CHOCOBO: return T("Chocobo");
+                case MOVE_STATE_CANOE: return T("Canoe");
+                case MOVE_STATE_GIMMICK: return T("Gimmick");
+                case MOVE_STATE_UNIQUE: return T("Unique");
+                default: return T("Unknown");
             }
         }
 

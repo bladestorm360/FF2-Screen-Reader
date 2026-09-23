@@ -843,7 +843,15 @@ namespace FFII_ScreenReader.Menus
             {
                 var stat = statList[index];
                 string value = stat.Reader(tracker.CurrentCharacterData);
-                value = MenuPosition.Format(value, index, statList.Count);
+
+                // Position within the stat's group ("Strength, (1 of 6)"), not the whole list (FF1 parity).
+                int groupStart = 0, groupEnd = statList.Count;
+                for (int i = 0; i < GroupStartIndices.Length && GroupStartIndices[i] <= index; i++)
+                {
+                    groupStart = GroupStartIndices[i];
+                    groupEnd = i + 1 < GroupStartIndices.Length ? GroupStartIndices[i + 1] : statList.Count;
+                }
+                value = MenuPosition.Format(value, index - groupStart, groupEnd - groupStart);
                 FFII_ScreenReaderMod.SpeakText(value, true);
             }
             catch (Exception ex)
@@ -859,13 +867,13 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data == null) return "N/A";
+                if (data == null) return T("N/A");
                 string name = data.Name;
-                return !string.IsNullOrWhiteSpace(name) ? $"Name: {name}" : "N/A";
+                return !string.IsNullOrWhiteSpace(name) ? $"{T("Name")}: {name}" : T("N/A");
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -879,14 +887,14 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 int current = data.Parameter.currentHP;
                 int max = data.Parameter.ConfirmedMaxHp();
-                return $"HP: {current} / {max}";
+                return $"{T("HP")}: {current} / {max}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -894,14 +902,14 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 int current = data.Parameter.currentMP;
                 int max = data.Parameter.ConfirmedMaxMp();
-                return $"MP: {current} / {max}";
+                return $"{T("MP")}: {current} / {max}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -913,12 +921,12 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Strength: {data.Parameter.ConfirmedPower()}";
+                if (data?.Parameter == null) return T("N/A");
+                return $"{T("Strength")}: {data.Parameter.ConfirmedPower()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -926,12 +934,12 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Agility: {data.Parameter.ConfirmedAgility()}";
+                if (data?.Parameter == null) return T("N/A");
+                return $"{T("Agility")}: {data.Parameter.ConfirmedAgility()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -939,12 +947,12 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Stamina: {data.Parameter.ConfirmedVitality()}";
+                if (data?.Parameter == null) return T("N/A");
+                return $"{T("Stamina")}: {data.Parameter.ConfirmedVitality()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -952,13 +960,13 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 // Displayed as "Intellect" on screen
-                return $"Intellect: {data.Parameter.ConfirmedIntelligence()}";
+                return $"{T("Intellect")}: {data.Parameter.ConfirmedIntelligence()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -966,12 +974,12 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Spirit: {data.Parameter.ConfirmedSpirit()}";
+                if (data?.Parameter == null) return T("N/A");
+                return $"{T("Spirit")}: {data.Parameter.ConfirmedSpirit()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -979,12 +987,12 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Magic: {data.Parameter.ConfirmedMagic()}";
+                if (data?.Parameter == null) return T("N/A");
+                return $"{T("Magic")}: {data.Parameter.ConfirmedMagic()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -996,14 +1004,14 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 // FF2: Just attack power, no attack count display
                 int attackPower = data.Parameter.ConfirmedAttack();
-                return $"Attack: {attackPower}";
+                return $"{T("Attack")}: {attackPower}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -1011,7 +1019,7 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "Accuracy: N/A";
+                if (data?.Parameter == null) return $"{T("Accuracy")}: {T("N/A")}";
                 // FF2: Accuracy displayed as "Nx Y%" (e.g., "12x 99%")
                 // Accuracy count comes from equipped weapons, not base stats.
                 // ConfirmedAccuracyCount() returns 0 because BaseAccuracyCount is never initialized.
@@ -1021,17 +1029,17 @@ namespace FFII_ScreenReader.Menus
 
                 if (count > 0)
                 {
-                    return $"Accuracy: {count}x {rate} percent";
+                    return $"{T("Accuracy")}: {count}x {string.Format(T("{0} percent"), rate)}";
                 }
                 else
                 {
                     // Fallback to just rate if count unavailable
-                    return $"Accuracy: {rate} percent";
+                    return $"{T("Accuracy")}: {string.Format(T("{0} percent"), rate)}";
                 }
             }
             catch (Exception ex)
             {
-                return "Accuracy: N/A";
+                return $"{T("Accuracy")}: {T("N/A")}";
             }
         }
 
@@ -1039,12 +1047,12 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
-                return $"Defense: {data.Parameter.ConfirmedDefense()}";
+                if (data?.Parameter == null) return T("N/A");
+                return $"{T("Defense")}: {data.Parameter.ConfirmedDefense()}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -1052,16 +1060,16 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "Evasion: N/A";
+                if (data?.Parameter == null) return $"{T("Evasion")}: {T("N/A")}";
                 // FF2: Evasion displayed as "Nx Y%" (e.g., "4x 17%")
                 // Use direct API calls like FF3 - simpler and more reliable than UI cache
                 int count = data.Parameter.ConfirmedEvasionCount();
                 int rate = data.Parameter.ConfirmedEvasionRate(false);
-                return $"Evasion: {count}x {rate} percent";
+                return $"{T("Evasion")}: {count}x {string.Format(T("{0} percent"), rate)}";
             }
             catch (Exception ex)
             {
-                return "Evasion: N/A";
+                return $"{T("Evasion")}: {T("N/A")}";
             }
         }
 
@@ -1069,17 +1077,17 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "Magic Defense: N/A";
+                if (data?.Parameter == null) return $"{T("Magic Defense")}: {T("N/A")}";
                 // FF2: Magic Defense displayed as "Nx Y%" (e.g., "7x 77%")
                 // Use direct API calls like FF3 - simpler and more reliable than UI cache
                 int count = data.Parameter.ConfirmedMagicDefenseCount();
                 // ConfirmedAbilityDefense() returns the rate value (confusing naming)
                 int rate = data.Parameter.ConfirmedAbilityDefense();
-                return $"Magic Defense: {count}x {rate} percent";
+                return $"{T("Magic Defense")}: {count}x {string.Format(T("{0} percent"), rate)}";
             }
             catch (Exception ex)
             {
-                return "Magic Defense: N/A";
+                return $"{T("Magic Defense")}: {T("N/A")}";
             }
         }
 
@@ -1087,16 +1095,16 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data?.Parameter == null) return "N/A";
+                if (data?.Parameter == null) return T("N/A");
                 // FF2: Magic Interference (spell success penalty from heavy armor)
                 // ConfirmedAbilityDisturbedRate(true) returns the displayed value
                 // (false) returns base value, (true) includes equipment
                 int interference = data.Parameter.ConfirmedAbilityDisturbedRate(true);
-                return $"Magic Interference: {interference}";
+                return $"{T("Magic Interference")}: {interference}";
             }
             catch (Exception ex)
             {
-                return "N/A";
+                return T("N/A");
             }
         }
 
@@ -1113,7 +1121,7 @@ namespace FFII_ScreenReader.Menus
         {
             try
             {
-                if (data == null) return $"{skillName}: N/A";
+                if (data == null) return $"{skillName}: {T("N/A")}";
 
                 // Try to read from UI cache first (matches visual display exactly)
                 var (uiLevel, uiPercentage) = GetWeaponSkillFromCache(skillType);
@@ -1123,18 +1131,18 @@ namespace FFII_ScreenReader.Menus
                     // Successfully read from UI
                     if (uiPercentage >= 0)
                     {
-                        return $"{skillName}: Level {uiLevel}, {uiPercentage} percent";
+                        return $"{skillName}: {string.Format(T("Level {0}"), uiLevel)}, {string.Format(T("{0} percent"), uiPercentage)}";
                     }
-                    return $"{skillName}: Level {uiLevel}";
+                    return $"{skillName}: {string.Format(T("Level {0}"), uiLevel)}";
                 }
 
                 // NO FALLBACK - incorrect data is worse than no data
                 // DO NOT re-implement fallback calculations without verifying they match visual display
-                return $"{skillName}: N/A";
+                return $"{skillName}: {T("N/A")}";
             }
             catch (Exception ex)
             {
-                return $"{skillName}: N/A";
+                return $"{skillName}: {T("N/A")}";
             }
         }
 

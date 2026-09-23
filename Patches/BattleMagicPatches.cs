@@ -6,6 +6,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using Il2CppLast.Management;
 using Il2CppLast.Battle;
 using Il2CppLast.Systems;
@@ -149,7 +150,7 @@ namespace FFII_ScreenReader.Patches
 
     /// <summary>
     /// Patch for battle magic selection.
-    /// FF2 format: "Spell Name, Level X (Y%), MP Z: Description"
+    /// FF2 format: "Spell Name lvX, Y percent" (+ ": Description" when AutoDetail is on).
     /// Gets spell proficiency from character's actual OwnedAbilityList for accuracy.
     /// </summary>
     public static class BattleMagicSelectContent_Patch
@@ -171,6 +172,8 @@ namespace FFII_ScreenReader.Patches
 
                 // Set active state and clear other menus
                 BattleMagicMenuState.SetActive();
+                // The spell list holds focus under the command menu: arm the command back-out re-announce.
+                BattleCommandPatches.NotifyCommandSubmenuActive();
 
                 announcement = MenuPosition.Format(announcement, cursorIndex, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -190,12 +193,24 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 IntPtr ptr = IntPtr.Zero;
+                int selectedPlayerOffset;
 
-                // Get pointer based on controller type
+                // Get pointer based on controller type (the selected-player field sits at a
+                // different offset on each variant's base class)
                 if (controller is BattleQuantityAbilityInfomationController_KeyInput keyInput)
+                {
                     ptr = keyInput.Pointer;
+                    selectedPlayerOffset = IL2CppOffsets.BattleMagic.OFFSET_SELECTED_PLAYER_KEYINPUT;
+                }
                 else if (controller is BattleQuantityAbilityInfomationController_Touch touch)
+                {
                     ptr = touch.Pointer;
+                    selectedPlayerOffset = IL2CppOffsets.BattleMagic.OFFSET_SELECTED_PLAYER_TOUCH;
+                }
+                else
+                {
+                    return null;
+                }
 
                 if (ptr == IntPtr.Zero)
                     return null;
@@ -216,13 +231,13 @@ namespace FFII_ScreenReader.Patches
 
                     var ability = dataList[cursorIndex];
                     if (ability == null)
-                        return "Empty";
+                        return T("Empty");
 
                     // Get the selected player's character data for accurate spell proficiency
                     OwnedCharacterData characterData = null;
                     try
                     {
-                        IntPtr playerPtr = *(IntPtr*)((byte*)ptr.ToPointer() + IL2CppOffsets.BattleMagic.OFFSET_SELECTED_PLAYER);
+                        IntPtr playerPtr = *(IntPtr*)((byte*)ptr.ToPointer() + selectedPlayerOffset);
                         if (playerPtr != IntPtr.Zero)
                         {
                             var battlePlayerData = new BattlePlayerData(playerPtr);
@@ -295,7 +310,7 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Format ability data into announcement string.
-        /// FF2 Format: "Spell Name, Level X (Y%), MP Z: Description"
+        /// FF2 Format: "Spell Name lvX, Y percent" (+ ": Description" when AutoDetail is on)
         /// Uses character's OwnedAbilityList for accurate proficiency when available.
         /// </summary>
         private static string FormatAbilityAnnouncement(OwnedAbility ability, OwnedCharacterData characterData, float gaugeProgress)
@@ -382,10 +397,7 @@ namespace FFII_ScreenReader.Patches
                 if (spellLevel > 16) spellLevel = 16;
 
                 // Add level
-                if (spellLevel > 0)
-                {
-                    announcement += $" lv{spellLevel}";
-                }
+                announcement = string.Format(T("{0} lv{1}"), announcement, spellLevel);
 
                 // Add spell-level completion percentage (mirrors the field magic menu). The level
                 // already conveys the MP cost (cost = spell level), so no separate MP-cost line.
@@ -394,36 +406,36 @@ namespace FFII_ScreenReader.Patches
                     int percentage = (int)(gaugeProgress * 100);
                     if (percentage < 0) percentage = 0;
                     if (percentage > 99) percentage = 99;
-                    announcement += $", {percentage} percent";
+                    announcement = string.Format(T("{0}, {1} percent"), announcement, percentage);
                 }
 
-                // Add description
-                try
-                {
-                    string mesIdDesc = ability.MesIdDescription;
-                    if (!string.IsNullOrEmpty(mesIdDesc))
-                    {
-                        var messageManager = MessageManager.Instance;
-                        if (messageManager != null)
-                        {
-                            string description = messageManager.GetMessage(mesIdDesc, false);
-                            if (!string.IsNullOrWhiteSpace(description))
-                            {
-                                description = TextUtils.StripIconMarkup(description);
-                                if (!string.IsNullOrWhiteSpace(description))
-                                {
-                                    announcement += ": " + description;
-                                }
-                            }
-                        }
-                    }
-                }
-                catch { }
+                // Description appended only when AutoDetail is on; cached for the I key.
+                string description = GetDescription(ability);
+                MenuDetailCache.Set(description);
+                if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(description))
+                    announcement += ": " + description;
 
                 return announcement;
             }
             catch { }
             return null;
+        }
+
+        /// <summary>Stripped spell description, or null if none.</summary>
+        private static string GetDescription(OwnedAbility ability)
+        {
+            try
+            {
+                string mesIdDesc = ability.MesIdDescription;
+                if (string.IsNullOrEmpty(mesIdDesc)) return null;
+                var messageManager = MessageManager.Instance;
+                if (messageManager == null) return null;
+                string description = messageManager.GetMessage(mesIdDesc, false);
+                if (string.IsNullOrWhiteSpace(description)) return null;
+                description = TextUtils.StripIconMarkup(description);
+                return string.IsNullOrWhiteSpace(description) ? null : description;
+            }
+            catch { return null; }
         }
     }
 }

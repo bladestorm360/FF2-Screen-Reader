@@ -24,13 +24,24 @@ REM   run_ghidra_analysis.bat status_ui             - Import + decompile status 
 
 setlocal enabledelayedexpansion
 
+call "%~dp0..\..\..\..\..\..\dev_env.bat"
+if not defined DEV_ROOT (
+    echo ERROR: dev_env.bat not found at %~dp0..\..\..\..\..\..\dev_env.bat
+    exit /b 1
+)
+
 REM ============================================================================
 REM Configuration - Edit these paths if needed
 REM ============================================================================
-set "GHIDRA_HOME=D:\Games\Dev\ghidra"
-set "PROJECT_DIR=D:\Games\Dev\ghidra\projects"
+set "PROJECT_DIR=%GHIDRA_HOME%\projects"
 set "PROJECT_NAME=FF2_Analysis"
-set "GAME_DIR=D:\Games\steamlibrary\steamapps\common\FINAL FANTASY II PR"
+call "%DEV_ROOT%\dev_env.bat" find_game "FINAL FANTASY II PR" GAME_ROOT
+if not defined GAME_ROOT (
+    echo ERROR: "FINAL FANTASY II PR" not found in any Steam library.
+    echo   Detected: %STEAM_LIBS%
+    exit /b 1
+)
+set "GAME_DIR=%GAME_ROOT%"
 set "GAME_ASSEMBLY=%GAME_DIR%\GameAssembly.dll"
 set "SCRIPT_DIR=%~dp0"
 set "LOG_FILE=%SCRIPT_DIR%ghidra_analysis.log"
@@ -98,7 +109,7 @@ echo FF2 Ghidra Headless Analysis
 echo ======================================================================
 echo.
 
-if not exist "%GHIDRA_HOME%\support\analyzeHeadless.bat" (
+if not exist "%GHIDRA_HEADLESS%" (
     echo ERROR: Ghidra not found at %GHIDRA_HOME%
     exit /b 1
 )
@@ -146,14 +157,14 @@ if "%MODE%"=="import" (
     echo.
 
     REM Import mode - all on one line to avoid CMD parsing issues
-    call "%GHIDRA_HOME%\support\analyzeHeadless.bat" "%PROJECT_DIR%" "%PROJECT_NAME%" -import "%GAME_ASSEMBLY%" -overwrite -scriptPath "%SCRIPT_DIR_CLEAN%" -postScript %SCRIPT_NAME% >> "%LOG_FILE%" 2>&1
+    call "%GHIDRA_HEADLESS%" "%PROJECT_DIR%" "%PROJECT_NAME%" -import "%GAME_ASSEMBLY%" -overwrite -scriptPath "%SCRIPT_DIR_CLEAN%" -postScript %SCRIPT_NAME% >> "%LOG_FILE%" 2>&1
 
 ) else (
     echo Running: Re-analyze existing project
     echo.
 
     REM Analyze mode - use -noanalysis since already analyzed, just run script
-    call "%GHIDRA_HOME%\support\analyzeHeadless.bat" "%PROJECT_DIR%" "%PROJECT_NAME%" -process "GameAssembly.dll" -noanalysis -scriptPath "%SCRIPT_DIR_CLEAN%" -postScript %SCRIPT_NAME% >> "%LOG_FILE%" 2>&1
+    call "%GHIDRA_HEADLESS%" "%PROJECT_DIR%" "%PROJECT_NAME%" -process "GameAssembly.dll" -noanalysis -scriptPath "%SCRIPT_DIR_CLEAN%" -postScript %SCRIPT_NAME% >> "%LOG_FILE%" 2>&1
 )
 
 set "EXIT_CODE=%ERRORLEVEL%"

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using MelonLoader;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Patches;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Menus
 {
@@ -198,12 +199,12 @@ namespace FFII_ScreenReader.Menus
         {
             switch (group)
             {
-                case BestiaryStatGroup.MonsterData: return "Monster Data";
-                case BestiaryStatGroup.Status: return "Status";
-                case BestiaryStatGroup.Options: return "Rewards";
-                case BestiaryStatGroup.Items: return "Items";
-                case BestiaryStatGroup.Properties: return "Properties";
-                default: return "Other";
+                case BestiaryStatGroup.MonsterData: return T("Monster Data");
+                case BestiaryStatGroup.Status: return T("Status");
+                case BestiaryStatGroup.Options: return T("Rewards");
+                case BestiaryStatGroup.Items: return T("Items");
+                case BestiaryStatGroup.Properties: return T("Properties");
+                default: return T("Other");
             }
         }
     }

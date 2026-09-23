@@ -6,6 +6,7 @@ using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using FFII_ScreenReader.Menus;
 using Il2CppLast.Management;
 
@@ -194,12 +195,12 @@ namespace FFII_ScreenReader.Patches
                         // HP
                         int currentHp = parameter.currentHP;
                         int maxHp = parameter.ConfirmedMaxHp();
-                        announcement += $", HP {currentHp}/{maxHp}";
+                        announcement += $", {T("HP")} {currentHp}/{maxHp}";
 
                         // MP (FF2 specific - unlike FF3 which uses spell charges)
                         int currentMp = parameter.currentMP;
                         int maxMp = parameter.ConfirmedMaxMp();
-                        announcement += $", MP {currentMp}/{maxMp}";
+                        announcement += $", {T("MP")} {currentMp}/{maxMp}";
 
                         // Add status conditions if any
                         var conditionList = parameter.CurrentConditionList;

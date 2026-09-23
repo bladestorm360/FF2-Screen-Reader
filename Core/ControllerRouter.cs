@@ -89,7 +89,19 @@ namespace FFII_ScreenReader.Core
                 && !FFII_ScreenReaderMod.IsInBattle;
 
             if (!GamepadManager.IsAvailable)
+            {
+                // Controller unplugged in mod mode (or its mod menu since closed from the keyboard):
+                // drop back to Normal so SuppressGameInput can't stay stuck on and lock the keyboard
+                // out of the game.
+                if (State == ControllerState.ModMode || (State == ControllerState.ModMenu && !ModMenu.IsOpen))
+                    Reset();
                 return;
+            }
+
+            // Keep the state machine in sync with the mod menu when it was opened/closed from the
+            // keyboard (F8 / Escape), so the controller can drive a keyboard-opened menu.
+            if (ModMenu.IsOpen && State != ControllerState.ModMenu)
+                State = ControllerState.ModMenu;
 
             // Track that controller is being used
             for (int i = 0; i < SDL3.SDL_GAMEPAD_BUTTON_COUNT; i++)
@@ -175,10 +187,12 @@ namespace FFII_ScreenReader.Core
             {
                 string west = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_WEST);
                 string north = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_NORTH);
-                FFII_ScreenReaderMod.SpeakText(
-                    string.Format(T("{0} for Gil. {1} for location. Right stick to teleport. {2} to cancel."),
-                    west, north, back),
-                    interrupt: true);
+                string south = ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_SOUTH);
+                // Teleport is field-only, so menus get the help without it.
+                string format = IsFieldActive
+                    ? T("{0} for Gil. {1} for location. {2} for vehicle. Right stick to teleport. {3} to cancel.")
+                    : T("{0} for Gil. {1} for location. {2} for vehicle. {3} to cancel.");
+                FFII_ScreenReaderMod.SpeakText(string.Format(format, west, north, south, back), interrupt: true);
             }
         }
 
@@ -351,13 +365,27 @@ namespace FFII_ScreenReader.Core
 
         private static void HandleNormalNonField(KeyContext context)
         {
-            // D-pad and left stick → virtual buffer navigation in Status
+            // D-pad and left stick → virtual buffer navigation in Status / Bestiary detail / Controls list
             if (context == KeyContext.Status)
             {
                 if (GamepadManager.DpadUpPressed || GamepadManager.LeftStickUpPressed)
                 { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_UP); StatusNavigationReader.NavigatePrevious(); }
                 if (GamepadManager.DpadDownPressed || GamepadManager.LeftStickDownPressed)
                 { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_DOWN); StatusNavigationReader.NavigateNext(); }
+            }
+            else if (context == KeyContext.BestiaryDetail)
+            {
+                if (GamepadManager.DpadUpPressed || GamepadManager.LeftStickUpPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_UP); BestiaryNavigationReader.NavigatePrevious(); }
+                if (GamepadManager.DpadDownPressed || GamepadManager.LeftStickDownPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_DOWN); BestiaryNavigationReader.NavigateNext(); }
+            }
+            else if (context == KeyContext.KeyHelp)
+            {
+                if (GamepadManager.DpadUpPressed || GamepadManager.LeftStickUpPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_UP); KeyHelpReader.NavigatePrevious(); }
+                if (GamepadManager.DpadDownPressed || GamepadManager.LeftStickDownPressed)
+                { ConsumeButton(SDL3.SDL_GAMEPAD_BUTTON_DPAD_DOWN); KeyHelpReader.NavigateNext(); }
             }
 
             // Right stick up → read the focused item's description/stats (gamepad equivalent
@@ -369,6 +397,10 @@ namespace FFII_ScreenReader.Core
             // Right stick isn't a game button so no ConsumeButton needed.
             if (GamepadManager.RStickDownPressed)
                 KeyHelpReader.AnnounceKeyHelp();
+
+            // Right stick left → equip restrictions (gamepad equivalent of U).
+            if (GamepadManager.RStickLeftPressed)
+                InputManager.AnnounceEquipRestrictions();
         }
 
         // =====================================================================
@@ -398,15 +430,22 @@ namespace FFII_ScreenReader.Core
                 if (GamepadManager.IsButtonPressed(SDL3.SDL_GAMEPAD_BUTTON_WEST))
                 { mod.AnnounceCharacterStatus(); State = ControllerState.Normal; return; }
             }
-            else if (IsFieldActive)
+            else
             {
-                // Field mod mode: X=Gil, Y=Location
+                // Field / menu mod mode: X=Gil, Y=Location, A=Vehicle (the keyboard G/M/V work
+                // everywhere too); the stick-click toggles and teleport below are field-only.
                 if (GamepadManager.IsButtonPressed(SDL3.SDL_GAMEPAD_BUTTON_WEST))
                 { mod.AnnounceGilAmount(); State = ControllerState.Normal; return; }
 
                 if (GamepadManager.IsButtonPressed(SDL3.SDL_GAMEPAD_BUTTON_NORTH))
                 { mod.AnnounceCurrentMap(); State = ControllerState.Normal; return; }
 
+                if (GamepadManager.IsButtonPressed(SDL3.SDL_GAMEPAD_BUTTON_SOUTH))
+                { GameInfoAnnouncer.AnnounceVehicleState(); State = ControllerState.Normal; return; }
+            }
+
+            if (IsFieldActive && !FFII_ScreenReaderMod.IsInBattle && !DialogueTracker.IsInDialogue)
+            {
                 // When Stick Click Normalization is on, the stick-click mod functions move
                 // here so the player can still reach them via mod button + R3/L3.
                 if (FFII_ScreenReaderMod.StickClickNormalizationEnabled)
@@ -430,12 +469,6 @@ namespace FFII_ScreenReader.Core
 
                 if (GamepadManager.RStickRightPressed)
                 { mod.TeleportInDirection(new Vector2(16, 0)); State = ControllerState.Normal; return; }
-            }
-            else
-            {
-                // A menu or other non-field overlay is active (not battle, not field).
-                // Field mod functions — especially teleport, which would move the player
-                // underneath the menu — are unavailable here. Do nothing field-specific.
             }
 
             // Right stick down → announce mod mode controls. In field, right stick down

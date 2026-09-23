@@ -144,13 +144,13 @@ namespace FFII_ScreenReader.Patches
 
             return slot switch
             {
-                EquipSlotType.Slot1 => "Right Hand",
-                EquipSlotType.Slot2 => "Left Hand",
-                EquipSlotType.Slot3 => "Head",
-                EquipSlotType.Slot4 => "Body",
-                EquipSlotType.Slot5 => "Accessory",
-                EquipSlotType.Slot6 => "Accessory 2",
-                _ => $"Slot {(int)slot}"
+                EquipSlotType.Slot1 => T("Right Hand"),
+                EquipSlotType.Slot2 => T("Left Hand"),
+                EquipSlotType.Slot3 => T("Head"),
+                EquipSlotType.Slot4 => T("Body"),
+                EquipSlotType.Slot5 => T("Accessory"),
+                EquipSlotType.Slot6 => T("Accessory 2"),
+                _ => string.Format(T("Slot {0}"), (int)slot)
             };
         }
 
@@ -348,7 +348,7 @@ namespace FFII_ScreenReader.Patches
                 }
                 else
                 {
-                    announcement += ": Empty";
+                    announcement += ": " + T("Empty");
                 }
 
                 if (string.IsNullOrWhiteSpace(announcement))
@@ -407,7 +407,7 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrWhiteSpace(itemName))
                 {
                     // This might be a "Remove" or empty entry
-                    itemName = "Remove";
+                    itemName = T("Remove");
                 }
 
                 // Strip icon markup from name

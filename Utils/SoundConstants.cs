@@ -71,7 +71,7 @@ namespace FFII_ScreenReader.Utils
         {
             public const int FREQUENCY = 500;
             public const int DURATION_MS = 25;
-            public const float VOLUME = 0.338f;
+            public const float VOLUME = 0.1436f; // FF1 parity: lowered ~57.5% from the original 0.338
         }
 
         /// <summary>

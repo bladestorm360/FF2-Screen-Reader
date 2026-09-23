@@ -18,12 +18,12 @@ namespace FFII_ScreenReader.Utils
 
         /// <summary>
         /// Command-bar controllers — private fields read by the initial-focus-on-open reader
-        /// (CommandBarPatches). Item uses its public CommandIdCash property, so it needs no offset.
+        /// (CommandBarPatches).
         /// </summary>
         internal static class CommandBar
         {
-            public const int FIELD_FOCUS_ID = 0x90;       // KeyInput.MainMenuController.focusId (MenuCommandId)
-            public const int ITEM_COMMAND_ID_CACHE = 0x18; // KeyInput.ItemCommandController.<CommandIdCash> (ItemCommandId)
+            public const int ITEM_CONTENT_LIST = 0x40;    // KeyInput.ItemCommandController.contentList (List<ItemCommandContentView>, dump.cs:449265)
+            public const int ITEM_SELECT_CURSOR = 0x50;   // KeyInput.ItemCommandController.selectCursor
             public const int EQUIP_SELECT_CURSOR = 0x38;  // KeyInput.EquipmentCommandController.selectCursor
             public const int EQUIP_CONTENTS = 0x30;       // KeyInput.EquipmentCommandController.contents (List<EquipmentCommandView>)
         }
@@ -51,11 +51,28 @@ namespace FFII_ScreenReader.Utils
         /// </summary>
         internal static class BattleMagic
         {
-            public const int OFFSET_SELECTED_PLAYER = 0x28;
+            // selectedBattlePlayerData differs by variant: the KeyInput base (dump.cs:286463) has
+            // stateMachine 0x28 / selectedBattlePlayerData 0x30; the Touch base (dump.cs:284575) 0x28.
+            public const int OFFSET_SELECTED_PLAYER_KEYINPUT = 0x30;
+            public const int OFFSET_SELECTED_PLAYER_TOUCH = 0x28;
+            // dataList / contentList: 0x70 / 0x78 on both (KeyInput derived class dump.cs:277855,
+            // Touch base dump.cs:284575).
             public const int OFFSET_DATA_LIST = 0x70;
             public const int OFFSET_CONTENT_LIST = 0x78;
             public const int OFFSET_CONTENT_GAUGE = 0x38;
             public const int OFFSET_GAUGE_IMAGE = 0x18;
+        }
+
+        /// <summary>
+        /// KeyInput BattleTargetSelectController (dump.cs:434914; same layout as FF1).
+        /// </summary>
+        internal static class BattleTarget
+        {
+            public const int PLAYER_DATA_LIST = 0x30;    // IEnumerable<BattlePlayerData> playerDataList
+            public const int ENEMY_DATA_LIST = 0x38;     // IEnumerable<BattleEnemyData> enemyDataList
+            public const int TARGET_PLAYER_LIST = 0x88;  // <TargetPlayerList>k__BackingField (fallback)
+            public const int TARGET_ENEMY_LIST = 0x90;   // <TargetEnamyList>k__BackingField (fallback)
+            public const int SELECT_CURSOR = 0xC0;       // Cursor selectCursor
         }
 
         /// <summary>
@@ -197,14 +214,6 @@ namespace FFII_ScreenReader.Utils
             // AbilityContentListController.selectCursor (KeyInput, dump.cs:278749) — used to
             // announce the initially-focused spell when the Use/Forget list activates.
             public const int OFFSET_LIST_SELECT_CURSOR = 0x38;
-        }
-
-        /// <summary>
-        /// MainMenuController offsets (KeyInput variant — the active controller for keyboard/gamepad on PC).
-        /// </summary>
-        internal static class MainMenu
-        {
-            public const int OFFSET_FOCUS_ID = 0x90;  // MenuCommandId focusId (KeyInput variant, dump.cs:443866)
         }
 
         /// <summary>

@@ -1,6 +1,7 @@
 using System;
 using UnityEngine;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Field
 {
@@ -64,20 +65,18 @@ namespace FFII_ScreenReader.Field
             switch (category)
             {
                 case WaypointCategory.Docks:
-                    return "Dock";
+                    return T("Dock");
                 case WaypointCategory.Landmarks:
-                    return "Landmark";
+                    return T("Landmark");
                 case WaypointCategory.AirshipLandings:
-                    return "Airship Landing";
-                case WaypointCategory.Miscellaneous:
-                    return "Waypoint";
+                    return T("Airship Landing");
                 default:
-                    return "Waypoint";
+                    return T("Waypoint");
             }
         }
 
         /// <summary>
-        /// Gets the category names for cycling announcements
+        /// Gets the category names for cycling announcements (English mod_text keys; callers translate)
         /// </summary>
         public static string[] GetCategoryNames()
         {

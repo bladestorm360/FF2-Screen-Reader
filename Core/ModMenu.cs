@@ -170,7 +170,7 @@ namespace FFII_ScreenReader.Core
                     () => PreferencesManager.FootstepsEnabled
                         ? T("On. A click plays for each tile of player movement.")
                         : T("Off. No per-tile movement sound.")),
-                new ToggleItem(T("Audio Beacons"),
+                new ToggleItem(T("Beacon Navigation"),
                     () => PreferencesManager.AudioBeaconsEnabled,
                     () => FFII_ScreenReaderMod.Instance?.ToggleAudioBeacons(),
                     () => PreferencesManager.AudioBeaconsEnabled

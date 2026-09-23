@@ -8,6 +8,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types - Base
 using BasePopup = Il2CppLast.UI.Popup;
@@ -228,8 +229,7 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Patch title screen "Press any button" using combination approach:
         /// 1. SplashController.InitializeTitle - stores text silently (fires early during loading)
-        /// 2. SystemIndicator.Show - tracks when title loading starts
-        /// 3. SystemIndicator.Hide - speaks stored text when loading completes (indicator hidden)
+        /// 2. SystemIndicator.Hide - speaks stored text when loading completes (indicator hidden)
         /// </summary>
         private static void TryPatchTitleScreen(HarmonyLib.Harmony harmony)
         {
@@ -250,7 +250,7 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("[Popup] SplashController.InitializeTitle method not found");
                 }
 
-                // Step 2 & 3: Patch SystemIndicator.Show and Hide
+                // Step 2: Patch SystemIndicator.Hide
                 Type systemIndicatorType = null;
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
@@ -271,19 +271,6 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                // Patch Show(Mode) to track when title loading starts
-                var showMethod = AccessTools.Method(systemIndicatorType, "Show");
-                if (showMethod != null)
-                {
-                    var postfix = typeof(PopupPatches).GetMethod(nameof(SystemIndicator_Show_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(showMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Error("[Popup] SystemIndicator.Show method not found");
-                }
-
                 // Patch Hide() to speak when loading completes
                 var hideMethod = AccessTools.Method(systemIndicatorType, "Hide");
                 if (hideMethod != null)
@@ -297,7 +284,7 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("[Popup] SystemIndicator.Hide method not found");
                 }
 
-                // Step 4: Patch TitleMenuCommandController.SetEnableMainMenu to clear state when title menu becomes active
+                // Step 3: Patch TitleMenuCommandController.SetEnableMainMenu to clear state when title menu becomes active
                 TryPatchTitleMenuCommand(harmony);
             }
             catch { }
@@ -422,7 +409,7 @@ namespace FFII_ScreenReader.Patches
         {
             // GameOverSelectPopup has no title/message, just buttons
             // Announce "Game Over" as context
-            return "Game Over";
+            return T("Game Over");
         }
 
         private static string ReadInfomationPopup(IntPtr ptr)
@@ -540,6 +527,12 @@ namespace FFII_ScreenReader.Patches
                 {
                     return;
                 }
+
+                // Remember a popup opened over the config menu (Quit / Return to Title): its close
+                // re-announces the focused config row. Captured before HandlePopupDetected, whose
+                // exclusive popup state clears the config state (and with it the config dedup).
+                _openedOverConfig = ConfigMenuState.IsActive;
+
                 if (IsShopActive())
                 {
                     return;
@@ -630,7 +623,6 @@ namespace FFII_ScreenReader.Patches
 
             // Reset button tracking to prevent stale state from previous popups
             BattlePausePatches.Reset();
-            SaveLoadPatches.ResetButtonTracking();
 
             CoroutineManager.StartManaged(DelayedPopupRead(ptr, typeName, readFunc));
         }
@@ -682,6 +674,9 @@ namespace FFII_ScreenReader.Patches
         private static int _lastGameOverButtonIndex = -1;
         private static int _lastGameOverLoadButtonIndex = -1;
 
+        // True while a popup opened over the config menu is up (see PopupOpen_Postfix).
+        private static bool _openedOverConfig = false;
+
         /// <summary>
         /// Postfix for base Popup.Close - clears state.
         /// </summary>
@@ -696,6 +691,14 @@ namespace FFII_ScreenReader.Patches
                 // Always reset button tracking on popup close to ensure fresh state for next popup
                 _lastGameOverButtonIndex = -1;
                 _lastGameOverLoadButtonIndex = -1;
+
+                // A cancelled popup over the config menu returns to the row without re-focusing it;
+                // re-announce it (read one frame later, only while the config menu is still open).
+                if (_openedOverConfig)
+                {
+                    _openedOverConfig = false;
+                    ConfigMenuPatches.ReannounceFocusedConfigOption();
+                }
             }
             catch { }
         }
@@ -970,7 +973,7 @@ namespace FFII_ScreenReader.Patches
                 else
                 {
                     // Fallback to hardcoded text
-                    pendingTitleText = "Press any button";
+                    pendingTitleText = T("Press any button");
                 }
 
                 // Set the guard flag - this ensures only title screen triggers speech
@@ -978,18 +981,9 @@ namespace FFII_ScreenReader.Patches
             }
             catch
             {
-                pendingTitleText = "Press any button";
+                pendingTitleText = T("Press any button");
                 isTitleScreenTextPending = true;
             }
-        }
-
-        /// <summary>
-        /// Postfix for SystemIndicator.Show(Mode).
-        /// Just logs for debugging.
-        /// </summary>
-        public static void SystemIndicator_Show_Postfix(int mode)
-        {
-            // No-op - kept for potential future debugging needs
         }
 
         /// <summary>

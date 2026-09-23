@@ -412,7 +412,7 @@ namespace FFII_ScreenReader.Patches
             if (string.IsNullOrEmpty(itemName))
             {
                 // Empty sell slot — announce but keep the last real item for the I key.
-                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format("Empty", index, count));
+                FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(T("Empty"), index, count));
                 return;
             }
 
@@ -538,22 +538,22 @@ namespace FFII_ScreenReader.Patches
 
                 int attack = weapon.Attack;
                 if (attack > 0)
-                    stats.Add($"Attack {attack}");
+                    stats.Add($"{T("Attack")} {attack}");
 
                 int accuracy = weapon.AccuracyRate;
                 if (accuracy > 0)
-                    stats.Add($"Accuracy {accuracy}");
+                    stats.Add($"{T("Accuracy")} {accuracy}");
 
                 int evasion = weapon.EvasionRate;
                 if (evasion > 0)
-                    stats.Add($"Evasion {evasion}");
+                    stats.Add($"{T("Evasion")} {evasion}");
 
-                if (weapon.Strength > 0) stats.Add($"Strength +{weapon.Strength}");
-                if (weapon.Vitality > 0) stats.Add($"Vitality +{weapon.Vitality}");
-                if (weapon.Agility > 0) stats.Add($"Agility +{weapon.Agility}");
-                if (weapon.Intelligence > 0) stats.Add($"Intelligence +{weapon.Intelligence}");
-                if (weapon.Spirit > 0) stats.Add($"Spirit +{weapon.Spirit}");
-                if (weapon.Magic > 0) stats.Add($"Magic +{weapon.Magic}");
+                if (weapon.Strength > 0) stats.Add($"{T("Strength")} +{weapon.Strength}");
+                if (weapon.Vitality > 0) stats.Add($"{T("Vitality")} +{weapon.Vitality}");
+                if (weapon.Agility > 0) stats.Add($"{T("Agility")} +{weapon.Agility}");
+                if (weapon.Intelligence > 0) stats.Add($"{T("Intelligence")} +{weapon.Intelligence}");
+                if (weapon.Spirit > 0) stats.Add($"{T("Spirit")} +{weapon.Spirit}");
+                if (weapon.Magic > 0) stats.Add($"{T("Magic")} +{weapon.Magic}");
 
                 return stats.Count > 0 ? string.Join(", ", stats) : null;
             }
@@ -575,26 +575,26 @@ namespace FFII_ScreenReader.Patches
 
                 int defense = armor.Defense;
                 if (defense > 0)
-                    stats.Add($"Defense {defense}");
+                    stats.Add($"{T("Defense")} {defense}");
 
                 int magicDefense = armor.AbilityDefense;
                 if (magicDefense > 0)
-                    stats.Add($"Magic Defense {magicDefense}");
+                    stats.Add($"{T("Magic Defense")} {magicDefense}");
 
                 int evasion = armor.EvasionRate;
                 if (evasion > 0)
-                    stats.Add($"Evasion {evasion}");
+                    stats.Add($"{T("Evasion")} {evasion}");
 
                 int magicEvasion = armor.AbilityEvasionRate;
                 if (magicEvasion > 0)
-                    stats.Add($"Magic Evasion {magicEvasion}");
+                    stats.Add($"{T("Magic Evasion")} {magicEvasion}");
 
-                if (armor.Strength > 0) stats.Add($"Strength +{armor.Strength}");
-                if (armor.Vitality > 0) stats.Add($"Vitality +{armor.Vitality}");
-                if (armor.Agility > 0) stats.Add($"Agility +{armor.Agility}");
-                if (armor.Intelligence > 0) stats.Add($"Intelligence +{armor.Intelligence}");
-                if (armor.Spirit > 0) stats.Add($"Spirit +{armor.Spirit}");
-                if (armor.Magic > 0) stats.Add($"Magic +{armor.Magic}");
+                if (armor.Strength > 0) stats.Add($"{T("Strength")} +{armor.Strength}");
+                if (armor.Vitality > 0) stats.Add($"{T("Vitality")} +{armor.Vitality}");
+                if (armor.Agility > 0) stats.Add($"{T("Agility")} +{armor.Agility}");
+                if (armor.Intelligence > 0) stats.Add($"{T("Intelligence")} +{armor.Intelligence}");
+                if (armor.Spirit > 0) stats.Add($"{T("Spirit")} +{armor.Spirit}");
+                if (armor.Magic > 0) stats.Add($"{T("Magic")} +{armor.Magic}");
 
                 return stats.Count > 0 ? string.Join(", ", stats) : null;
             }

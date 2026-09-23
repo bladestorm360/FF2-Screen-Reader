@@ -44,15 +44,6 @@ namespace FFII_ScreenReader.Patches
         public static bool IsInDialogue => isInDialogue;
 
         /// <summary>
-        /// Known invalid speaker names (locations, menu labels, etc.)
-        /// </summary>
-        private static readonly string[] InvalidSpeakers = new string[]
-        {
-            "Load", "Save", "New Game", "Continue", "Config", "Quit",
-            "Yes", "No", "OK", "Cancel"
-        };
-
-        /// <summary>
         /// Store messages and page breaks for per-page retrieval.
         /// Called from SetContent_Postfix with data read from instance.
         /// </summary>
@@ -97,39 +88,17 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Set the current speaker. Will be included in announcement if changed.
+        /// Set the current speaker. Will be included in announcement if changed. The source
+        /// (MessageWindowManager.SetSpeker / spekerValue) only ever carries speaker names, so no
+        /// name filtering (FF1 parity — the old English word list and "-" check rejected real
+        /// hyphenated names and did nothing in other languages).
         /// </summary>
         public static void SetSpeaker(string speaker)
         {
             if (string.IsNullOrWhiteSpace(speaker))
                 return;
 
-            string cleanSpeaker = speaker.Trim();
-
-            // Filter out invalid speakers (locations, menu labels)
-            if (!IsValidSpeaker(cleanSpeaker))
-                return;
-
-            currentSpeaker = cleanSpeaker;
-        }
-
-        /// <summary>
-        /// Check if a speaker name is valid (not a location or menu label).
-        /// </summary>
-        private static bool IsValidSpeaker(string speaker)
-        {
-            // Filter location names with separators
-            if (speaker.Contains("–") || speaker.Contains("-"))
-                return false;
-
-            // Filter known invalid strings
-            foreach (var invalid in InvalidSpeakers)
-            {
-                if (speaker.Equals(invalid, StringComparison.OrdinalIgnoreCase))
-                    return false;
-            }
-
-            return true;
+            currentSpeaker = speaker.Trim();
         }
 
         /// <summary>
@@ -586,14 +555,6 @@ namespace FFII_ScreenReader.Patches
                 DialogueTracker.AnnounceForPage(currentPage, speaker);
             }
             catch { }
-        }
-
-        /// <summary>
-        /// Resets the tracking state. Call when scene changes.
-        /// </summary>
-        public static void ResetTracking()
-        {
-            DialogueTracker.Reset();
         }
 
         /// <summary>

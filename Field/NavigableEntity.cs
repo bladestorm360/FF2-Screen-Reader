@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using FieldEntity = Il2CppLast.Entity.Field.FieldEntity;
 using FieldTresureBox = Il2CppLast.Entity.Field.FieldTresureBox;
 
@@ -179,13 +180,13 @@ namespace FFII_ScreenReader.Field
 
         protected override string GetDisplayName()
         {
-            string status = IsOpened ? "Opened" : "Unopened";
+            string status = IsOpened ? T("Opened") : T("Unopened");
             return $"{status} {Name}";
         }
 
         protected override string GetEntityTypeName()
         {
-            return "Treasure Chest";
+            return T("Treasure Chest");
         }
     }
 
@@ -231,7 +232,7 @@ namespace FFII_ScreenReader.Field
 
             if (IsShop)
             {
-                details.Add("shop");
+                details.Add(T("shop"));
             }
 
             string detailStr = details.Count > 0 ? $" ({string.Join(", ", details)})" : "";
@@ -240,7 +241,7 @@ namespace FFII_ScreenReader.Field
 
         protected override string GetEntityTypeName()
         {
-            return "NPC";
+            return T("NPC");
         }
     }
 
@@ -289,7 +290,7 @@ namespace FFII_ScreenReader.Field
 
         protected override string GetEntityTypeName()
         {
-            return "Map Exit";
+            return T("Map Exit");
         }
     }
 
@@ -322,7 +323,7 @@ namespace FFII_ScreenReader.Field
 
         protected override string GetEntityTypeName()
         {
-            return "Save Point";
+            return T("Save Point");
         }
     }
 
@@ -362,7 +363,8 @@ namespace FFII_ScreenReader.Field
 
         protected override string GetEntityTypeName()
         {
-            return eventTypeName;
+            // eventTypeName is an internal English tag (ToLayerFilter matches "ToLayer"); localize on read.
+            return T(eventTypeName);
         }
     }
 
@@ -397,24 +399,33 @@ namespace FFII_ScreenReader.Field
 
         protected override string GetDisplayName()
         {
-            return GetVehicleName(TransportationId);
+            return GetVehicleName(TransportationId) ?? Name;
         }
 
         protected override string GetEntityTypeName()
         {
-            return "Vehicle";
+            return T("Vehicle");
         }
 
+        /// <summary>
+        /// Localized vehicle name for a MapConstants.TransportationType value (dump.cs:257952:
+        /// Ship=2, Plane=3, Content=5 (canoe), Submarine=6, LowFlying=7, SpecialPlane=8,
+        /// YellowChocobo=9, BlackChocobo=10). Null for anything that isn't a vehicle, so callers
+        /// fall back to the scanned object name.
+        /// </summary>
         public static string GetVehicleName(int id)
         {
-            // FF2-specific vehicle names - adjust based on game
             switch (id)
             {
-                case 1: return "Player";
-                case 2: return "Canoe";
-                case 3: return "Ship";
-                case 4: return "Airship";
-                default: return $"Vehicle {id}";
+                case IL2CppOffsets.Transport.TRANSPORT_SHIP: return T("Ship");
+                case IL2CppOffsets.Transport.TRANSPORT_PLANE:
+                case IL2CppOffsets.Transport.TRANSPORT_LOWFLYING:
+                case IL2CppOffsets.Transport.TRANSPORT_SPECIALPLANE: return T("Airship");
+                case IL2CppOffsets.Transport.TRANSPORT_CONTENT: return T("Canoe");
+                case IL2CppOffsets.Transport.TRANSPORT_SUBMARINE: return T("Submarine");
+                case IL2CppOffsets.Transport.TRANSPORT_YELLOWCHOCOBO:
+                case IL2CppOffsets.Transport.TRANSPORT_BLACKCHOCOBO: return T("Chocobo");
+                default: return null;
             }
         }
     }

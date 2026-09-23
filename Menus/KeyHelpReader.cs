@@ -10,8 +10,13 @@ using static FFII_ScreenReader.Utils.ModTextTranslator;
 namespace FFII_ScreenReader.Menus
 {
     /// <summary>
-    /// Reads the visible key help tooltips displayed on screen (button icons + action labels).
-    /// Activated by Shift+I on any screen.
+    /// Reads the controls display. Two independent features:
+    ///   • Shift+I — reads the on-screen control-hint bar (the persistent KeyHelpController) at once
+    ///     (AnnounceKeyHelp). Works on the field, in menus, anywhere.
+    ///   • Arrows/W/S — step the config "Gamepad/Keyboard Controls" pop-up one entry at a time,
+    ///     gated to KeyContext.KeyHelp (FF1 port). The list is armed ONLY from that pop-up
+    ///     (ConfigKeysSettingController's Help state, fed by ConfigMenuPatches), never from the hint
+    ///     bar, so other menus' arrows are never hijacked.
     /// Uses GameObjectCache + transform navigation + GetComponentsInChildren<Text>()
     /// to avoid IL2CPP Cast constraint errors from array-based access on game-specific types.
     /// </summary>
@@ -19,6 +24,70 @@ namespace FFII_ScreenReader.Menus
     {
         // KeyHelpController.view (KeyHelpView) — private field, no public accessor
         private const int OFFSET_VIEW = 0x18;
+
+        // Controls pop-up entries (action + binding, pre-rendered) and the focused index. helpOwner
+        // validates the screen is still up (cheap, no scene scan) so a missed close can't leave
+        // KeyContext.KeyHelp stuck.
+        private static List<string> helpEntries = null;
+        private static int helpIndex = 0;
+        private static ConfigKeysSettingController helpOwner = null;
+
+        /// <summary>
+        /// Called by ConfigMenuPatches when the Gamepad/Keyboard Controls pop-up opens, with the rendered
+        /// entries. Announces the first entry as the initial focus.
+        /// </summary>
+        public static void OpenControlsHelp(ConfigKeysSettingController owner, List<string> entries)
+        {
+            helpOwner = owner;
+            helpEntries = entries;
+            helpIndex = 0;
+            SpeakHelpEntry();
+        }
+
+        /// <summary>Called when the pop-up closes / returns to the controls list.</summary>
+        public static void CloseControlsHelp()
+        {
+            helpEntries = null;
+            helpOwner = null;
+            helpIndex = 0;
+        }
+
+        /// <summary>True while the controls pop-up is on-screen — drives KeyContext.KeyHelp.</summary>
+        public static bool IsScreenActive
+        {
+            get
+            {
+                if (helpEntries == null || helpEntries.Count == 0) return false;
+                try
+                {
+                    if (helpOwner != null && helpOwner.gameObject != null && helpOwner.gameObject.activeInHierarchy)
+                        return true;
+                }
+                catch { }
+                CloseControlsHelp();
+                return false;
+            }
+        }
+
+        public static void NavigateNext() => MoveTo(helpIndex + 1);
+        public static void NavigatePrevious() => MoveTo(helpIndex - 1);
+        public static void JumpToTop() => MoveTo(0);
+        public static void JumpToBottom() => MoveTo(helpEntries == null ? 0 : helpEntries.Count - 1);
+
+        // Wraps at both ends, like the other navigation lists.
+        private static void MoveTo(int index)
+        {
+            if (helpEntries == null || helpEntries.Count == 0) return;
+            int count = helpEntries.Count;
+            helpIndex = ((index % count) + count) % count;
+            SpeakHelpEntry();
+        }
+
+        private static void SpeakHelpEntry()
+        {
+            if (helpEntries == null || helpEntries.Count == 0) return;
+            FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(helpEntries[helpIndex], helpIndex, helpEntries.Count), interrupt: true);
+        }
 
         /// <summary>
         /// Public entry point — reads all visible key help controls and speaks them.

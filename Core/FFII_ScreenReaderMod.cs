@@ -197,6 +197,9 @@ namespace FFII_ScreenReader.Core
             // Patch main field menu for initial-focus announcement
             MainMenuPatches.ApplyPatches(harmony);
 
+            // Patch title menus (main / Options / Extras) for initial-focus announcement
+            TitleMenuPatches.ApplyPatches(harmony);
+
             // Centralized command-bar initial-focus readers (field / item / equip command bars)
             CommandBarPatches.ApplyPatches(harmony);
 
@@ -218,7 +221,8 @@ namespace FFII_ScreenReader.Core
             // Map transition fade detection (suppress wall tones during screen fades)
             MapTransitionPatches.ApplyPatches(harmony);
 
-            // Walk/run is tracked read-only by GameToggleAnnouncer.Poll() — no patch needed.
+            // Encounter toggle announcements (walk/run is tracked read-only by GameToggleAnnouncer.Poll()).
+            Handlers.GameToggleAnnouncer.ApplyPatches(harmony);
 
             // Patch InputSystemManager for SDL controller passthrough and mod input suppression
             InputPassthroughPatches.ApplyPatches(harmony);
@@ -356,14 +360,7 @@ namespace FFII_ScreenReader.Core
                 if (IsInBattle)
                 {
                     LoggerInstance.Msg("[Scene] Clearing battle state on scene transition");
-                    ClearBattleActive();
-                    BattleCommandState.ClearState();
-                    BattleTargetPatches.SetTargetSelectionActive(false);
-                    BattleCommandPatches.ResetTurnState();
-                    BattleCommandPatches.ResetCommandCursorState();
-                    BattleMagicMenuState.Reset();
-                    BattleItemMenuState.Reset();
-                    BattleMessagePatches.ResetState();
+                    ClearBattleState();
                 }
 
                 // Delay entity scan for scene initialization
@@ -538,26 +535,6 @@ namespace FFII_ScreenReader.Core
                     targetLayer
                 );
 
-                // [NavDiag] one line per \ press: player/entity positions + layers, crow-flies 3D
-                // distance, the real-layer dest cell (destCell.z now = entityLayer-9), and the path
-                // result. Logging only; announcement behavior is unchanged.
-                try
-                {
-                    int playerLayer = playerController.fieldPlayer.gameObject.layer;
-                    float crowDist = Vector3.Distance(playerPos, targetPos);
-                    LoggerInstance.Msg(
-                        $"[NavDiag] entity='{entity.Name}' " +
-                        $"playerPos=({playerPos.x:F1},{playerPos.y:F1},{playerPos.z:F1}) playerLayer={playerLayer} " +
-                        $"entityPos=({targetPos.x:F1},{targetPos.y:F1},{targetPos.z:F1}) entityLayer={targetLayer?.ToString() ?? "?"} " +
-                        $"crowDist={crowDist:F1} steps={crowDist / 16f:F1} " +
-                        $"startCell=({pathInfo.StartCell.x},{pathInfo.StartCell.y},{pathInfo.StartCell.z}) " +
-                        $"destCell=({pathInfo.DestCell.x},{pathInfo.DestCell.y},{pathInfo.DestCell.z}) " +
-                        $"map={pathInfo.MapWidth}x{pathInfo.MapHeight} " +
-                        $"success={pathInfo.Success} stepCount={pathInfo.StepCount} points={pathInfo.WorldPath?.Count ?? 0} " +
-                        $"err='{pathInfo.ErrorMessage}' desc='{pathInfo.Description}'");
-                }
-                catch { }
-
                 if (pathInfo.Success && !string.IsNullOrEmpty(pathInfo.Description))
                 {
                     return pathInfo.Description;
@@ -644,26 +621,30 @@ namespace FFII_ScreenReader.Core
             }
         }
 
+        /// <summary>
+        /// K key / beacon-restart re-speak: the selected entity with its list position (FF1 parity),
+        /// or "No {category} found" when the category is empty.
+        /// </summary>
         internal void AnnounceEntityOnly()
         {
+            if (!EnsureFieldContext())
+                return;
+
             try
             {
+                RefreshEntitiesIfNeeded();
+
                 var entity = entityScanner.CurrentEntity;
                 if (entity == null)
                 {
-                    SpeakText(T("No entity selected"));
+                    SpeakText(entityScanner.Entities.Count == 0
+                        ? string.Format(T("No {0} found"), GetCategoryName(currentCategory))
+                        : T("No entity selected"));
                     return;
                 }
 
-                var playerPos = GetPlayerPosition();
-                if (playerPos.HasValue)
-                {
-                    SpeakText(entity.FormatDescription(playerPos.Value));
-                }
-                else
-                {
-                    SpeakText(entity.Name);
-                }
+                NavigationTargetTracker.MarkEntity();
+                SpeakText(FormatEntityListAnnouncement(entity));
             }
             catch (Exception ex)
             {
@@ -1037,10 +1018,7 @@ namespace FFII_ScreenReader.Core
         public static void ClearAllMenuStates()
         {
             // Clear battle state
-            ClearBattleActive();
-            BattleCommandPatches.ResetTurnState();
-            BattleCommandPatches.ResetCommandCursorState();
-            BattleMessagePatches.ResetState();
+            ClearBattleState();
 
             // Clear all menu flags via centralized registry
             MenuStateRegistry.ResetAll();
@@ -1049,13 +1027,30 @@ namespace FFII_ScreenReader.Core
             // (These methods also call MenuStateRegistry.Reset internally but handle local cleanup)
             MagicMenuState.ResetState();       // Has multiple sub-flags
             ShopMenuTracker.ClearState();      // Has item tracking data
-            BattleTargetPatches.ResetState();  // Has index tracking
+        }
+
+        /// <summary>
+        /// Clears every battle-scoped flag and tracker: the in-battle flag, battle menu states,
+        /// command/target trackers and battle-message state. Shared by the battle-end hooks, the
+        /// result screen, field transitions, scene loads and title return. BattleResultActive is
+        /// left to the field transition (the result screen may still be up).
+        /// </summary>
+        public static void ClearBattleState()
+        {
+            ClearBattleActive();
+            BattleCommandState.ClearState();
+            BattleTargetPatches.SetTargetSelectionActive(false);
+            BattleCommandPatches.ResetTurnState();
+            BattleMagicMenuState.Reset();
+            BattleItemMenuState.Reset();
+            BattleMessagePatches.ResetState();
         }
 
         /// <summary>
         /// Explicit flag tracking if we're in active battle.
-        /// Set by BattleCommandPatches.SetCommandData_Postfix when a turn starts.
-        /// Cleared by BattleResultPatches.Show_Postfix when battle ends.
+        /// Set at battle start (BattleMessagePatches.StartPreeMptiveMes_Postfix; also re-asserted by
+        /// BattleCommandPatches.SetCommandData_Postfix). Cleared when the result screen shows
+        /// (BattleResultPatches) and on every battle exit (BattleController fade-out callbacks / Exit).
         /// </summary>
         public static bool IsInBattle { get; set; } = false;
 
@@ -1078,7 +1073,7 @@ namespace FFII_ScreenReader.Core
         }
 
         /// <summary>
-        /// Called when battle starts (first turn command).
+        /// Called when battle starts.
         /// </summary>
         public static void SetBattleActive()
         {
@@ -1331,6 +1326,7 @@ namespace FFII_ScreenReader.Core
             if (!isActive)
             {
                 ConfigMenuState.ResetState();
+                ConfigMenuPatches.CancelReannounce();
             }
         }
 

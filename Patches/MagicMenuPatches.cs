@@ -883,11 +883,11 @@ namespace FFII_ScreenReader.Patches
                         {
                             int currentHp = parameter.currentHP;
                             int maxHp = parameter.ConfirmedMaxHp();
-                            announcement += $", HP {currentHp}/{maxHp}";
+                            announcement += $", {T("HP")} {currentHp}/{maxHp}";
 
                             int currentMp = parameter.currentMP;
                             int maxMp = parameter.ConfirmedMaxMp();
-                            announcement += $", MP {currentMp}/{maxMp}";
+                            announcement += $", {T("MP")} {currentMp}/{maxMp}";
 
                             // Add status conditions
                             var conditionList = parameter.CurrentConditionList;
@@ -1015,7 +1015,7 @@ namespace FFII_ScreenReader.Patches
                 int proficiency = MagicMenuState.GetSpellProficiency(ability);
                 if (proficiency > 0)
                 {
-                    announcement += $" lv{proficiency}";
+                    announcement = string.Format(T("{0} lv{1}"), announcement, proficiency);
                 }
 
                 // Try to read percentage from gauge (FF2 specific: spell level progress)
@@ -1058,7 +1058,7 @@ namespace FFII_ScreenReader.Patches
                 // Add percentage if available
                 if (percentage >= 0)
                 {
-                    announcement += $", {percentage} percent";
+                    announcement = string.Format(T("{0}, {1} percent"), announcement, percentage);
                 }
 
                 // Spell list reads name + level + percentage only; the level already conveys the

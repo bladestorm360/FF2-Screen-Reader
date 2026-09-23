@@ -137,6 +137,8 @@ namespace FFII_ScreenReader.Patches
                     return;
 
                 BattleItemMenuState.SetActive();
+                // The item list holds focus under the command menu: arm the command back-out re-announce.
+                BattleCommandPatches.NotifyCommandSubmenuActive();
 
                 announcement = MenuPosition.Format(announcement, cursorIndex, count);
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
@@ -231,23 +233,23 @@ namespace FFII_ScreenReader.Patches
                 if (string.IsNullOrEmpty(name))
                     return null;
 
-                // Add quantity if more than 1
+                // Add quantity if more than 1 (comma, not parentheses, so it can't merge with the
+                // "(X of Y)" position suffix)
                 int quantity = data.Count;
-                string announcement = quantity > 1 ? $"{name} ({quantity})" : name;
+                string announcement = quantity > 1 ? $"{name}, {quantity}" : name;
 
+                // Description appended only when AutoDetail is on; cached for the I key.
+                string description = null;
                 try
                 {
-                    string description = data.Description;
+                    description = data.Description;
                     if (!string.IsNullOrWhiteSpace(description))
-                    {
                         description = TextUtils.StripIconMarkup(description);
-                        if (!string.IsNullOrWhiteSpace(description))
-                        {
-                            announcement += ": " + description;
-                        }
-                    }
                 }
                 catch { }
+                MenuDetailCache.Set(description);
+                if (PreferencesManager.AutoDetailEnabled && !string.IsNullOrWhiteSpace(description))
+                    announcement += ": " + description;
 
                 return announcement;
             }

@@ -4,6 +4,7 @@ using HarmonyLib;
 using MelonLoader;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using NewGameWindowController = Il2CppSerial.FF2.UI.KeyInput.NewGameWindowController;
 // Use KeyInput versions - Touch versions have different methods that aren't called during keyboard navigation
 using CharacterContentListController = Il2CppLast.UI.KeyInput.CharacterContentListController;
@@ -68,6 +69,19 @@ namespace FFII_ScreenReader.Patches
                 else
                 {
                     MelonLogger.Error("InitSelect method not found via AccessTools");
+                }
+
+                // Patch InitNameInput - called when entering free-text name entry (real-bodied, unique RVA)
+                var initNameInputMethod = AccessTools.Method(controllerType, "InitNameInput");
+                if (initNameInputMethod != null)
+                {
+                    var postfix = typeof(NewGameNamingPatches).GetMethod("InitNameInput_Postfix",
+                        BindingFlags.Public | BindingFlags.Static);
+                    harmony.Patch(initNameInputMethod, postfix: new HarmonyMethod(postfix));
+                }
+                else
+                {
+                    MelonLogger.Error("InitNameInput method not found via AccessTools");
                 }
 
                 // Patch InitStartPopup - called when "Start game with these settings?" popup opens
@@ -138,17 +152,6 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Logs available methods on a type for debugging IL2CPP reflection issues.
-        /// Only logs during initial setup, not during gameplay.
-        /// </summary>
-        private static void LogAvailableMethods(Type type)
-        {
-            // Debug logging removed - type discovery working correctly
-        }
-
-        // FindType method removed - using typeof() directly is much faster
-
-        /// <summary>
         /// Postfix for InitSelect - announces entering character selection and current slot.
         /// Also stores controller reference for event-driven hooks.
         /// </summary>
@@ -169,10 +172,29 @@ namespace FFII_ScreenReader.Patches
                 lastTargetIndex = -1;
 
                 // Only announce mode entry - slot will be announced on first navigation
-                string announcement = "Character selection";
+                string announcement = T("Character selection");
                 FFII_ScreenReaderMod.SpeakText(announcement);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Postfix for InitNameInput - the keyboard name-entry field opened (FF1 parity).
+        /// </summary>
+        public static void InitNameInput_Postfix(object __instance)
+        {
+            try
+            {
+                string characterName = GetCurrentCharacterName(__instance);
+                string announcement = !string.IsNullOrEmpty(characterName)
+                    ? string.Format(T("Enter name for {0}. Type using keyboard."), characterName)
+                    : T("Enter name using keyboard");
+                FFII_ScreenReaderMod.SpeakText(announcement);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error in InitNameInput_Postfix: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -263,40 +285,40 @@ namespace FFII_ScreenReader.Patches
                 var listProp = AccessTools.Property(controller.GetType(), "SelectedDataList");
                 if (listProp == null)
                 {
-                    return $"Character {displayIndex}: unnamed";
+                    return string.Format(T("Character {0}: unnamed"), displayIndex);
                 }
 
                 var list = listProp.GetValue(controller);
                 if (list == null)
                 {
-                    return $"Character {displayIndex}: unnamed";
+                    return string.Format(T("Character {0}: unnamed"), displayIndex);
                 }
 
                 // Get count and item at index
                 var countProp = list.GetType().GetProperty("Count");
                 if (countProp == null)
                 {
-                    return $"Character {displayIndex}: unnamed";
+                    return string.Format(T("Character {0}: unnamed"), displayIndex);
                 }
 
                 int count = (int)countProp.GetValue(list);
                 if (index < 0 || index >= count)
                 {
                     // Index beyond character list is the Done button
-                    return index >= count ? "Done" : null;
+                    return index >= count ? T("Done") : null;
                 }
 
                 // Get item at index using indexer
                 var indexer = list.GetType().GetProperty("Item");
                 if (indexer == null)
                 {
-                    return $"Character {displayIndex}: unnamed";
+                    return string.Format(T("Character {0}: unnamed"), displayIndex);
                 }
 
                 var item = indexer.GetValue(list, new object[] { index });
                 if (item == null)
                 {
-                    return $"Character {displayIndex}: unnamed";
+                    return string.Format(T("Character {0}: unnamed"), displayIndex);
                 }
 
                 // Get CharacterName from NewGameSelectData
@@ -306,16 +328,16 @@ namespace FFII_ScreenReader.Patches
                     string name = nameProp.GetValue(item) as string;
                     if (string.IsNullOrEmpty(name))
                     {
-                        return $"Character {displayIndex}: unnamed";
+                        return string.Format(T("Character {0}: unnamed"), displayIndex);
                     }
-                    return $"Character {displayIndex}: {name}";
+                    return string.Format(T("Character {0}: {1}"), displayIndex, name);
                 }
 
-                return $"Character {displayIndex}: unnamed";
+                return string.Format(T("Character {0}: unnamed"), displayIndex);
             }
             catch
             {
-                return $"Character {displayIndex}: unnamed";
+                return string.Format(T("Character {0}: unnamed"), displayIndex);
             }
         }
 
@@ -344,16 +366,16 @@ namespace FFII_ScreenReader.Patches
                 string announcement;
                 if (!string.IsNullOrEmpty(characterName))
                 {
-                    announcement = $"Select name for {characterName}";
+                    announcement = string.Format(T("Select name for {0}"), characterName);
                 }
                 else
                 {
-                    announcement = "Select name";
+                    announcement = T("Select name");
                 }
 
                 if (!string.IsNullOrEmpty(suggestedName))
                 {
-                    announcement += $". Current: {suggestedName}";
+                    announcement += ". " + string.Format(T("Current: {0}"), suggestedName);
                     _lastNameAnnounced = suggestedName;
                 }
 

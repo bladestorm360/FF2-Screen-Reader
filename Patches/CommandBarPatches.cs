@@ -5,18 +5,17 @@ using MelonLoader;
 using FFII_ScreenReader.Menus;
 using FFII_ScreenReader.Utils;
 
-using MainMenuController = Il2CppLast.UI.KeyInput.MainMenuController;
 using ItemCommandController = Il2CppLast.UI.KeyInput.ItemCommandController;
+using ItemCommandContentView = Il2CppLast.UI.KeyInput.ItemCommandContentView;
 using EquipmentCommandController = Il2CppLast.UI.KeyInput.EquipmentCommandController;
 using EquipmentCommandView = Il2CppLast.UI.KeyInput.EquipmentCommandView;
-using MenuCommandId = Il2CppLast.Defaine.MenuCommandId;
-using ItemCommandId = Il2CppLast.Defaine.UI.ItemCommandId;
 using GameCursor = Il2CppLast.UI.Cursor;
 
 namespace FFII_ScreenReader.Patches
 {
     /// <summary>
-    /// Announces the INITIALLY-focused command when the field / item / equipment command bar opens.
+    /// Announces the INITIALLY-focused command when the item / equipment command bar opens (the field
+    /// menu's open read is MainMenuPatches' FieldMenuReader).
     /// Purely additive: each controller's per-frame <c>UpdateController</c> is patched, but it only
     /// reads while the bar's arm flag is set (one read per open) and clears the flag ONLY after a
     /// successful read — so it polls harmlessly until the focused command's ID is set, then announces
@@ -28,18 +27,15 @@ namespace FFII_ScreenReader.Patches
     {
         private static bool isPatched = false;
 
-        private static bool _fieldArmed = false;
         private static bool _itemArmed = false;
         private static bool _equipArmed = false;
 
         // Armed when a command bar (re)opens; cleared on leave / a successful read.
-        public static void ArmField() => _fieldArmed = true;
         public static void ArmItem() => _itemArmed = true;
         public static void ArmEquip() => _equipArmed = true;
-        public static void ClearField() => _fieldArmed = false;
         public static void ClearItem() => _itemArmed = false;
         public static void ClearEquip() => _equipArmed = false;
-        public static void ClearAll() { _fieldArmed = false; _itemArmed = false; _equipArmed = false; }
+        public static void ClearAll() { _itemArmed = false; _equipArmed = false; }
 
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
@@ -48,7 +44,6 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                TryPatch(harmony, typeof(MainMenuController), nameof(Field_UpdateController_Postfix));
                 TryPatch(harmony, typeof(ItemCommandController), nameof(Item_UpdateController_Postfix));
                 TryPatch(harmony, typeof(EquipmentCommandController), nameof(Equip_UpdateController_Postfix));
                 isPatched = true;
@@ -80,27 +75,8 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        // Field menu: focusId (MenuCommandId) @ 0x90 on MainMenuController.
-        public static void Field_UpdateController_Postfix(object __instance)
-        {
-            if (!_fieldArmed)
-                return;
-            try
-            {
-                IntPtr p = (__instance as MainMenuController)?.Pointer ?? IntPtr.Zero;
-                if (p == IntPtr.Zero)
-                    return;
-                var id = (MenuCommandId)Marshal.ReadInt32(p, IL2CppOffsets.CommandBar.FIELD_FOCUS_ID);
-                string name = CommandBarReader.GetMenuCommandName(id);
-                if (string.IsNullOrEmpty(name))
-                    return;   // focus not set yet — stay armed, retry next frame
-                _fieldArmed = false;
-                CommandBarReader.Announce(name);
-            }
-            catch { }
-        }
-
-        // Item command bar: the controller caches the focused command in CommandIdCash (public).
+        // Item command bar: contentList[selectCursor.Index].Data.Id (ItemCommandId). The KeyInput
+        // controller has no command-id cache (<CommandIdCash> exists only on the Touch variant).
         public static void Item_UpdateController_Postfix(object __instance)
         {
             if (!_itemArmed)
@@ -110,12 +86,22 @@ namespace FFII_ScreenReader.Patches
                 IntPtr p = (__instance as ItemCommandController)?.Pointer ?? IntPtr.Zero;
                 if (p == IntPtr.Zero)
                     return;
-                var id = (ItemCommandId)Marshal.ReadInt32(p, IL2CppOffsets.CommandBar.ITEM_COMMAND_ID_CACHE);
-                string name = CommandBarReader.GetItemCommandName(id);
+                IntPtr cursorPtr = Marshal.ReadIntPtr(p, IL2CppOffsets.CommandBar.ITEM_SELECT_CURSOR);
+                IntPtr listPtr = Marshal.ReadIntPtr(p, IL2CppOffsets.CommandBar.ITEM_CONTENT_LIST);
+                if (cursorPtr == IntPtr.Zero || listPtr == IntPtr.Zero)
+                    return;
+                int index = new GameCursor(cursorPtr).Index;
+                var contents = new Il2CppSystem.Collections.Generic.List<ItemCommandContentView>(listPtr);
+                if (index < 0 || index >= contents.Count)
+                    return;
+                var data = contents[index]?.Data;
+                if (data == null)
+                    return;   // focus not set yet — stay armed, retry next frame
+                string name = CommandBarReader.GetItemCommandName(data.Id);
                 if (string.IsNullOrEmpty(name))
                     return;
                 _itemArmed = false;
-                CommandBarReader.Announce(name);
+                CommandBarReader.Announce(name, index, contents.Count);
             }
             catch { }
         }

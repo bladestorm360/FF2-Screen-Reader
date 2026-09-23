@@ -1,10 +1,13 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
 using UnityEngine;
 using FFII_ScreenReader.Core;
+using FFII_ScreenReader.Menus;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 // Type aliases for IL2CPP types
 using ConfigCommandController = Il2CppLast.UI.KeyInput.ConfigCommandController;
@@ -16,6 +19,7 @@ using ConfigKeysSettingController = Il2CppLast.UI.KeyInput.ConfigKeysSettingCont
 using ConfigControllCommandController = Il2CppLast.UI.KeyInput.ConfigControllCommandController;
 using ConfigKeyIconController = Il2CppLast.UI.KeyInput.ConfigKeyIconController;
 using OptionController = Il2CppLast.UI.KeyInput.OptionController;
+using ConfigController = Il2CppLast.UI.KeyInput.ConfigController;
 
 namespace FFII_ScreenReader.Patches
 {
@@ -31,7 +35,7 @@ namespace FFII_ScreenReader.Patches
 
         static ConfigMenuState()
         {
-            _helper.RegisterResetHandler(() => { lastAnnouncedText = ""; lastAnnouncedSettingName = ""; });
+            _helper.RegisterResetHandler(ClearDedup);
         }
 
         public static bool IsActive => _helper.IsActive;
@@ -41,6 +45,13 @@ namespace FFII_ScreenReader.Patches
         public static bool ShouldSuppress() => IsActive;
 
         public static void ResetState() => _helper.IsActive = false;
+
+        /// <summary>Forgets the last spoken row so the focused row speaks again on its next read.</summary>
+        public static void ClearDedup()
+        {
+            lastAnnouncedText = "";
+            lastAnnouncedSettingName = "";
+        }
 
         /// <summary>
         /// Checks if announcement should proceed (deduplication).
@@ -234,9 +245,24 @@ namespace FFII_ScreenReader.Patches
     public static class ConfigMenuPatches
     {
         private static bool isPatched = false;
+        // Last arrow value spoken, per row: a different row reaching the same value text ("On") must
+        // still speak, so the value guard is keyed on the row's native pointer.
+        private static IntPtr lastArrowRow = IntPtr.Zero;
         private static string lastArrowValue = "";
         private static string lastSliderPercentage = "";
         private static ConfigCommandController lastController = null;
+
+        // One-shot re-announce of the focused row, armed when the config menu regains focus from a
+        // context that does not re-focus a row: returning from the config bestiary (GameStatePatches),
+        // closing a popup opened over the config menu (PopupPatches) or opening the title
+        // Configuration (ShowConfig). The arming event starts a deferred read (one frame later,
+        // bounded retry) of the open config menu's focused row; cleared when the config menu closes
+        // so it can't leak into the next open. No per-frame hook (CLAUDE.md rule 3).
+        private static bool _pendingConfigReannounce = false;
+        // Bumped on every arm; an older deferred read exits when a newer arm superseded it.
+        private static int _reannounceGen = 0;
+        // Retry cap for the deferred read (~2 s at 60 fps) while the focused row isn't readable yet.
+        private const int MAX_REANNOUNCE_FRAMES = 120;
 
         /// <summary>
         /// Applies config menu patches using manual Harmony patching.
@@ -258,6 +284,9 @@ namespace FFII_ScreenReader.Patches
                 // Controls (keyboard/gamepad remap) navigation + assign flow, and the
                 // title-screen language dropdown.
                 TryPatchControlsAndLanguage(harmony);
+
+                // Focused-row re-announce (bestiary return, popup cancel, title Configuration open).
+                TryPatchReannounce(harmony);
 
                 isPatched = true;
             }
@@ -349,6 +378,16 @@ namespace FFII_ScreenReader.Patches
             PatchKeysSetting("KeyboardSettingInit", nameof(KeyboardSettingInit_Postfix));
             PatchKeysSetting("GamePadSettingInit", nameof(GamePadSettingInit_Postfix));
 
+            // Gamepad/Keyboard "Controls" pop-up (read-only list of every control) → navigation list.
+            // Entering the GamePad/Keyboard Help state shows helpContentList/keyboardHelpContentList
+            // (dump: 0x58/0x60); render it once and hand it to KeyHelpReader so arrows/W/S step it.
+            PatchKeysSetting("GamePadHelpInit", nameof(GamePadHelpInit_Postfix));
+            PatchKeysSetting("KeyboardHelpInit", nameof(KeyboardHelpInit_Postfix));
+            // Leaving the help state (back to the select list, or closing the controls screen) clears it.
+            PatchKeysSetting("GamePadSelectInit", nameof(ControlsHelpClose_Postfix));
+            PatchKeysSetting("KeyboardSelectInit", nameof(ControlsHelpClose_Postfix));
+            PatchKeysSetting("Close", nameof(ControlsHelpClose_Postfix));
+
             // ChangeKeySetting is overloaded — patch every overload with the same __instance-only
             // postfix (avoids AmbiguousMatchException without needing an exact Type[]).
             try
@@ -364,6 +403,29 @@ namespace FFII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"[Config Menu] Error patching ChangeKeySetting: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Patches OptionController.ShowConfig (unique RVA 0x2FD2D0), which opens the title
+        /// Configuration screen and arms the focused-row re-announce. The other arming events
+        /// (bestiary return, popup close) live in GameStatePatches / PopupPatches.
+        /// </summary>
+        private static void TryPatchReannounce(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var showConfig = AccessTools.Method(typeof(OptionController), "ShowConfig", Type.EmptyTypes);
+                if (showConfig != null)
+                    harmony.Patch(showConfig,
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), nameof(ShowConfig_Prefix))),
+                        postfix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), nameof(ShowConfig_Postfix))));
+                else
+                    MelonLogger.Warning("[Config Menu] OptionController.ShowConfig not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Config Menu] Error patching re-announce hooks: {ex.Message}");
             }
         }
 
@@ -425,57 +487,181 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
-                // Set active state when config menu is in use
-                if (isFocus)
-                {
-                    ConfigMenuState.SetActive();
-                }
-
                 // Only announce when gaining focus
                 if (!isFocus)
                     return;
+
+                // Set active state when config menu is in use
+                ConfigMenuState.SetActive();
 
                 if (__instance == null || !__instance.gameObject.activeInHierarchy)
                     return;
 
                 // Note: Removed SelectedCommand verification check that failed with multiple
                 // ConfigActualDetailsControllerBase instances (regular config + boost menu).
-                // The isFocus parameter and activeInHierarchy check are sufficient.
+                // The isFocus parameter and activeInHierarchy check are sufficient; the owning
+                // details controller (for the row position) is the row's nearest parent.
+                AnnounceCommand(__instance, __instance.GetComponentInParent<ConfigActualDetailsControllerBase_KeyInput>());
+            }
+            catch { }
+        }
 
-                var view = __instance.view;
-                if (view == null)
-                    return;
+        /// <summary>
+        /// Speaks a focused config row as "Name: Value, (X of Y)" unless it is the row last spoken
+        /// (SetFocus can re-fire for the focused row) or only its value changed (the arrow/slider
+        /// postfixes speak value changes). Returns false only when the row isn't readable yet, so the
+        /// one-shot re-announce consumer retries next frame; true once spoken or already spoken.
+        /// </summary>
+        private static bool AnnounceCommand(ConfigCommandController command, ConfigActualDetailsControllerBase_KeyInput details)
+        {
+            var view = command.view;
+            if (view == null)
+                return false;
 
-                var nameText = view.NameText;
-                if (nameText == null || string.IsNullOrWhiteSpace(nameText.text))
-                    return;
+            var nameText = view.NameText;
+            if (nameText == null || string.IsNullOrWhiteSpace(nameText.text))
+                return false;
 
-                string menuText = nameText.text.Trim();
+            string menuText = nameText.text.Trim();
 
-                // Filter out template values
-                if (!ConfigMenuReader.IsValidConfigValue(menuText))
-                    return;
+            // Filter out template values
+            if (!ConfigMenuReader.IsValidConfigValue(menuText))
+                return false;
 
-                // Get the current value
-                string configValue = ConfigMenuReader.FindConfigValueFromController(__instance);
+            // Get the current value
+            string configValue = ConfigMenuReader.FindConfigValueFromController(command);
 
-                string announcement = menuText;
-                if (!string.IsNullOrWhiteSpace(configValue))
+            string announcement = menuText;
+            if (!string.IsNullOrWhiteSpace(configValue))
+            {
+                announcement = $"{menuText}: {configValue}";
+            }
+
+            // Check for duplicates; a value-only change is spoken by the arrow/slider postfixes.
+            if (!ConfigMenuState.ShouldAnnounce(announcement, out bool isValueChangeOnly) || isValueChangeOnly)
+                return true;
+
+            // Row position within the details controller's command list (best-effort: -1 → no suffix).
+            int index = -1, count = -1;
+            try
+            {
+                var list = details?.CommandList;
+                if (list != null)
                 {
-                    announcement = $"{menuText}: {configValue}";
+                    count = list.Count;
+                    for (int i = 0; i < count; i++)
+                    {
+                        var c = list[i];
+                        if (c != null && c.Pointer == command.Pointer) { index = i; break; }
+                    }
                 }
+            }
+            catch { }
 
-                // Check for duplicates
-                bool isValueChangeOnly;
-                if (!ConfigMenuState.ShouldAnnounce(announcement, out isValueChangeOnly))
-                    return;
+            FFII_ScreenReaderMod.SpeakText(MenuPosition.Format(announcement, index, count), interrupt: true);
+            return true;
+        }
 
-                // If only value changed (same setting), don't announce here
-                // The SwitchArrowSelectType_Postfix and SwitchSliderType_Postfix patches handle value changes
-                if (isValueChangeOnly)
-                    return;
+        /// <summary>
+        /// Arms the one-shot re-announce of the focused config row (see _pendingConfigReannounce) and
+        /// starts its deferred read. Callers make sure the dedup no longer holds that row, so whichever
+        /// of SetFocus or the deferred read reads it first speaks and the other is deduplicated.
+        /// <paramref name="option"/> is the title OptionController when the caller has it (ShowConfig);
+        /// otherwise the open config menu is looked up when the read runs.
+        /// </summary>
+        public static void ReannounceFocusedConfigOption(OptionController option = null)
+        {
+            _pendingConfigReannounce = true;
+            int gen = ++_reannounceGen;
+            try { CoroutineManager.StartManaged(DeferredReannounce(option, gen)); }
+            catch (Exception ex) { MelonLogger.Warning($"[Config Menu] Error scheduling focused-row read: {ex.Message}"); }
+        }
 
-                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+        /// <summary>Drops a pending re-announce (config menu closed).</summary>
+        public static void CancelReannounce() => _pendingConfigReannounce = false;
+
+        /// <summary>
+        /// Reads the focused row one frame after the arming event, retrying each frame (capped) while
+        /// no config menu is open or its focused row isn't readable yet. Stops as soon as the row is
+        /// spoken, the re-announce is cancelled (config menu closed) or a newer arm superseded it.
+        /// </summary>
+        private static IEnumerator DeferredReannounce(OptionController option, int gen)
+        {
+            for (int frame = 0; frame < MAX_REANNOUNCE_FRAMES; frame++)
+            {
+                yield return null; // yield stays outside the try (yield-in-try-with-catch is illegal)
+
+                if (!_pendingConfigReannounce || gen != _reannounceGen)
+                    yield break;
+
+                if (TryConsumeReannounce(FindOpenDetailsController(option)))
+                {
+                    _pendingConfigReannounce = false;
+                    yield break;
+                }
+            }
+
+            if (gen == _reannounceGen)
+                _pendingConfigReannounce = false;
+        }
+
+        /// <summary>
+        /// Details controller of the open config menu: the given title OptionController, else the
+        /// active in-game ConfigController (detailsController, dump.cs:446198 @0x48), else the active
+        /// title OptionController (configActualDetailsController, dump.cs:456168 @0xA0). Null while no
+        /// config menu is open, so an exit that really left the menu stays silent.
+        /// </summary>
+        private static ConfigActualDetailsControllerBase_KeyInput FindOpenDetailsController(OptionController option)
+        {
+            try
+            {
+                if (option == null)
+                {
+                    var config = UnityEngine.Object.FindObjectOfType<ConfigController>();
+                    if (config != null && config.gameObject.activeInHierarchy)
+                        return config.detailsController;
+                    option = UnityEngine.Object.FindObjectOfType<OptionController>();
+                }
+                if (option != null && option.gameObject.activeInHierarchy)
+                    return option.configActualDetailsController;
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// Speaks the given details controller's focused row. Returns true once spoken (or already
+        /// spoken); false while it isn't readable yet, so the deferred read retries next frame.
+        /// </summary>
+        private static bool TryConsumeReannounce(ConfigActualDetailsControllerBase_KeyInput details)
+        {
+            try
+            {
+                var selected = details?.SelectedCommand;
+                if (selected == null || !selected.gameObject.activeInHierarchy)
+                    return false; // not ready yet — retry next frame
+
+                ConfigMenuState.SetActive();
+                return AnnounceCommand(selected, details);
+            }
+            catch
+            {
+                return false; // best-effort; retry next frame
+            }
+        }
+
+        /// <summary>
+        /// Title Configuration opened: forget any row spoken before (prefix) and arm the focused-row
+        /// read (postfix), so the initial row speaks exactly once whether or not ShowConfig's own
+        /// SetFocus fires.
+        /// </summary>
+        public static void ShowConfig_Prefix() => ConfigMenuState.ClearDedup();
+
+        public static void ShowConfig_Postfix(OptionController __instance)
+        {
+            try
+            {
+                ReannounceFocusedConfigOption(__instance);
             }
             catch { }
         }
@@ -507,9 +693,10 @@ namespace FFII_ScreenReader.Patches
                             string textValue = text.text.Trim();
                             if (ConfigMenuReader.IsValidConfigValue(textValue))
                             {
-                                if (textValue == lastArrowValue)
+                                if (controller.Pointer == lastArrowRow && textValue == lastArrowValue)
                                     return;
 
+                                lastArrowRow = controller.Pointer;
                                 lastArrowValue = textValue;
                                 FFII_ScreenReaderMod.SpeakText(textValue, interrupt: true);
                                 return;
@@ -592,21 +779,84 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Builds the controls-screen announcement for one command: action name + keyboard binding
-        /// (readable key names) + gamepad binding. The gamepad icon is an unreadable controller glyph,
-        /// so we translate the LIVE bound button (from the screen's KeyConfigData) to family-aware text
-        /// via ControllerLabels, falling back to nothing if that can't be resolved.
-        /// Shared by the navigation read (SelectContent) and the rebind read (ChangeKeySetting).
+        /// Builds the controls-screen announcement for one command: action name + binding. Keyboard rows
+        /// carry readable key names; mouse rows and gamepad rows render glyphs, so those are translated
+        /// (mouse sprite → text; gamepad → the LIVE bound button via ControllerLabels, falling back to
+        /// the rendered glyph for the fixed, non-remappable buttons). Shared by the navigation read
+        /// (SelectContent), the rebind read (ChangeKeySetting) and the Controls help list.
         /// </summary>
         private static string BuildCommandAnnouncement(
             ConfigKeysSettingController owner,
-            ConfigControllCommandController command)
+            ConfigControllCommandController command,
+            bool isHelpList = false)
         {
             if (command == null) return null;
 
             var textParts = new System.Collections.Generic.List<string>();
 
-            // Action name from the view's nameTexts
+            AppendCommandName(textParts, command, isHelpList);
+
+            if (command.IsMouseKey)
+            {
+                string mouse = ResolveMouseButtonText(command);
+                if (!string.IsNullOrEmpty(mouse))
+                    textParts.Add($"({mouse})");
+            }
+            else
+            {
+                AppendIconTexts(textParts, command.keyboardIconController);
+            }
+
+            // Gamepad binding — only when this row actually shows a gamepad binding icon
+            // (gamePadIconsRoot active), which excludes keyboard-section rows and non-binding rows.
+            var gpRoot = command.view != null ? command.view.gamePadIconsRoot : null;
+            if (gpRoot != null && gpRoot.activeSelf)
+            {
+                // Face buttons are remappable → the LIVE binding; the fixed buttons (shoulders,
+                // triggers, sticks, Start, movement) aren't in the remap dictionary → the rendered glyph.
+                string btn = ResolveGamepadButtonText(owner, command);
+                if (string.IsNullOrEmpty(btn))
+                    btn = GetGamepadGlyphLabel(command);
+                if (!string.IsNullOrEmpty(btn))
+                    textParts.Add($"({btn})");
+            }
+
+            return textParts.Count == 0 ? null : string.Join(" ", textParts);
+        }
+
+        /// <summary>
+        /// Appends a command's action name. Remap rows carry it in the view's nameTexts; Controls help
+        /// rows leave nameTexts as a "New Text" placeholder and render the name into the controller's
+        /// messageTexts instead (falling back to resolving MessageId).
+        /// </summary>
+        private static void AppendCommandName(
+            System.Collections.Generic.List<string> textParts,
+            ConfigControllCommandController command,
+            bool isHelpList)
+        {
+            if (isHelpList)
+            {
+                var msgTexts = command.messageTexts;
+                if (msgTexts != null)
+                {
+                    for (int i = 0; i < msgTexts.Count; i++)
+                    {
+                        var t = msgTexts[i];
+                        if (t != null && IsRealName(t.text))
+                        {
+                            string s = t.text.Trim();
+                            if (!textParts.Contains(s)) textParts.Add(s);
+                        }
+                    }
+                }
+                if (textParts.Count == 0)
+                {
+                    string loc = TryGetMessage(command.MessageId);
+                    if (IsRealName(loc)) textParts.Add(loc.Trim());
+                }
+                return;
+            }
+
             if (command.view != null && command.view.nameTexts != null && command.view.nameTexts.Count > 0)
             {
                 foreach (var textComp in command.view.nameTexts)
@@ -619,35 +869,121 @@ namespace FFII_ScreenReader.Patches
                     }
                 }
             }
-
-            // Keyboard binding — already readable key names.
-            AppendIconTexts(textParts, command.keyboardIconController);
-
-            // Gamepad binding — the icon is a sprite glyph carrying NO readable text (iconTextList is
-            // empty), so reading it never worked. The keyboard and gamepad remap sections are mutually
-            // exclusive per row: keyboard rows carry a key name, gamepad rows don't. So when the keyboard
-            // icon is empty we're on the gamepad section — translate the LIVE bound button via
-            // ControllerLabels (the keyboard binding above already handled keyboard-section rows).
-            if (ResolveGamepadButtonText(owner, command) is string btn && !string.IsNullOrEmpty(btn)
-                && !IconHasContent(command.keyboardIconController))
-            {
-                textParts.Add($"({btn})");
-            }
-
-            return textParts.Count == 0 ? null : string.Join(" ", textParts);
         }
 
-        /// <summary>True if an icon controller is currently showing readable binding text.</summary>
-        private static bool IconHasContent(ConfigKeyIconController icon)
+        /// <summary>True if the text is a usable name (not blank or an editor placeholder).</summary>
+        private static bool IsRealName(string s)
         {
-            var iconView = icon?.view;
-            if (iconView == null || iconView.iconTextList == null) return false;
-            for (int i = 0; i < iconView.iconTextList.Count; i++)
+            if (string.IsNullOrWhiteSpace(s)) return false;
+            string t = s.Trim();
+            return t != "New Text" && t != "NewText" && t != "Text" && t != "Name" && t != "Label";
+        }
+
+        /// <summary>Resolves a message id to its localized text via the game's MessageManager.</summary>
+        private static string TryGetMessage(string messageId)
+        {
+            if (string.IsNullOrWhiteSpace(messageId)) return null;
+            try
             {
-                var t = iconView.iconTextList[i];
-                if (t != null && !string.IsNullOrWhiteSpace(t.text)) return true;
+                var mm = Il2CppLast.Management.MessageManager.Instance;
+                string text = mm?.GetMessage(messageId, false);
+                return string.IsNullOrWhiteSpace(text) ? null : TextUtils.StripIconMarkup(text);
             }
-            return false;
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Reads a row's rendered gamepad glyph (under view.gamePadIconsRoot) and maps it to a
+        /// controller-aware label. Used only for the fixed buttons the live remap read can't resolve.
+        /// </summary>
+        private static string GetGamepadGlyphLabel(ConfigControllCommandController command)
+        {
+            try
+            {
+                var gpRoot = command?.view != null ? command.view.gamePadIconsRoot : null;
+                if (gpRoot == null || !gpRoot.activeSelf) return null;
+                var images = gpRoot.GetComponentsInChildren<UnityEngine.UI.Image>(true);
+                if (images == null) return null;
+                for (int i = 0; i < images.Length; i++)
+                {
+                    var img = images[i];
+                    if (img == null || !img.gameObject.activeInHierarchy || img.sprite == null) continue;
+                    string label = GamepadGlyphSpriteToLabel(img.sprite.name);
+                    if (!string.IsNullOrEmpty(label)) return label;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// Maps a controls-screen glyph sprite name ("UI_Common_&lt;Button&gt;button01") to a label for the
+        /// FIXED buttons only; the remappable face buttons and unknowns return null so they are never
+        /// locked to a static glyph.
+        /// </summary>
+        private static string GamepadGlyphSpriteToLabel(string spriteName)
+        {
+            if (string.IsNullOrEmpty(spriteName)) return null;
+
+            if (Has(spriteName, "LBbutton")) return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+            if (Has(spriteName, "RBbutton")) return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+            if (Has(spriteName, "LTbutton")) return ControllerLabels.GetLeftTriggerLabel();
+            if (Has(spriteName, "RTbutton")) return ControllerLabels.GetRightTriggerLabel();
+            // Stick clicks are phrased as a click ("L3"), not "LS", which sounds like moving the stick.
+            if (Has(spriteName, "L3button")) return ControllerLabels.GetLeftStickClickLabel();
+            if (Has(spriteName, "R3button")) return ControllerLabels.GetRightStickClickLabel();
+            // The Menu (Start) button opens the mod menu and can't be remapped.
+            if (Has(spriteName, "Menubutton")) return T("used for mod menu");
+            if (Has(spriteName, "Backbutton") || Has(spriteName, "Selectbutton") || Has(spriteName, "Viewbutton"))
+                return ControllerLabels.GetButtonLabel(SDL3.SDL_GAMEPAD_BUTTON_BACK);
+            // The movement glyph: the mod repurposes the D-pad, so only the left stick moves the character.
+            if (Has(spriteName, "Tenkeybutton") || Has(spriteName, "Dpadbutton")
+                || Has(spriteName, "Crossbutton") || Has(spriteName, "Directionbutton"))
+                return T("Left Stick");
+
+            return null;
+        }
+
+        private static bool Has(string s, string token)
+            => s.IndexOf(token, StringComparison.OrdinalIgnoreCase) >= 0;
+
+        /// <summary>
+        /// Resolves a mouse row's bound button/scroll from its rendered glyph sprite (under
+        /// keyboardIconsRoot), which tracks the live binding. Null on failure.
+        /// </summary>
+        private static string ResolveMouseButtonText(ConfigControllCommandController command)
+        {
+            try
+            {
+                var root = command.view != null ? command.view.keyboardIconsRoot : null;
+                UnityEngine.UI.Image[] imgs = root != null
+                    ? root.GetComponentsInChildren<UnityEngine.UI.Image>(true)
+                    : (command.gameObject != null ? command.gameObject.GetComponentsInChildren<UnityEngine.UI.Image>(true) : null);
+                if (imgs == null) return null;
+                for (int i = 0; i < imgs.Length; i++)
+                {
+                    var img = imgs[i];
+                    if (img == null || !img.gameObject.activeInHierarchy || img.sprite == null) continue;
+                    string label = MouseSpriteToLabel(img.sprite.name);
+                    if (!string.IsNullOrEmpty(label)) return label;
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        /// <summary>
+        /// Maps a mouse glyph sprite name to text. "mouse_rad" (wheel) contains "mouse_r", so the wheel
+        /// is checked before the right button.
+        /// </summary>
+        private static string MouseSpriteToLabel(string s)
+        {
+            if (string.IsNullOrEmpty(s) || !Has(s, "mouse")) return null;
+            if (Has(s, "mouse_rad") || Has(s, "wheel") || Has(s, "scroll")) return T("Mouse Wheel");
+            if (Has(s, "mouse_l")) return T("Left Mouse Button");
+            if (Has(s, "mouse_r")) return T("Right Mouse Button");
+            if (Has(s, "mouse_c") || Has(s, "mouse_m")) return T("Middle Mouse Button");
+            return T("Mouse Button");
         }
 
         /// <summary>
@@ -715,7 +1051,8 @@ namespace FFII_ScreenReader.Patches
                 if (iconText != null && !string.IsNullOrWhiteSpace(iconText.text))
                 {
                     string text = iconText.text.Trim();
-                    if (!textParts.Contains(text))
+                    // Gamepad-help rows leave the keyboard icon text as a "New Text" placeholder; skip it.
+                    if (IsRealName(text) && !textParts.Contains(text))
                         textParts.Add(text);
                 }
             }
@@ -785,12 +1122,64 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 if (inst == null) return;
-                FFII_ScreenReaderMod.SpeakText(gamepad ? "Press a button." : "Press a key.", interrupt: true);
+                FFII_ScreenReaderMod.SpeakText(gamepad ? T("Press a button.") : T("Press a key."), interrupt: true);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"Error in assign-prompt patch: {ex.Message}");
             }
+        }
+
+        // ── Gamepad/Keyboard Controls pop-up (read-only controls list) → navigation list ──
+
+        public static void GamePadHelpInit_Postfix(ConfigKeysSettingController __instance)
+            => OpenControlsHelp(__instance, gamepad: true);
+
+        public static void KeyboardHelpInit_Postfix(ConfigKeysSettingController __instance)
+            => OpenControlsHelp(__instance, gamepad: false);
+
+        /// <summary>Returning to the controls list (Select state) or closing the screen tears the list down.</summary>
+        public static void ControlsHelpClose_Postfix() => KeyHelpReader.CloseControlsHelp();
+
+        private static void OpenControlsHelp(ConfigKeysSettingController inst, bool gamepad)
+        {
+            if (inst == null) return;
+            // One-frame delay so each row's binding text is populated before it is rendered.
+            CoroutineManager.StartManaged(DelayedOpenControlsHelp(inst, gamepad));
+        }
+
+        private static IEnumerator DelayedOpenControlsHelp(ConfigKeysSettingController inst, bool gamepad)
+        {
+            yield return null;
+            System.Collections.Generic.List<string> entries = null;
+            try
+            {
+                // The state machine can cycle its Help-state Init during scene construction while the
+                // controls screen isn't shown — only build/announce when it's genuinely on-screen.
+                if (inst == null || inst.gameObject == null || !inst.gameObject.activeInHierarchy)
+                {
+                    KeyHelpReader.CloseControlsHelp();
+                }
+                else
+                {
+                    var list = gamepad ? inst.HelpContentList : inst.KeyboardHelpContentList;
+                    entries = new System.Collections.Generic.List<string>();
+                    if (list != null)
+                    {
+                        for (int i = 0; i < list.Count; i++)
+                        {
+                            string ann = BuildCommandAnnouncement(inst, list[i], isHelpList: true);
+                            if (!string.IsNullOrWhiteSpace(ann)) entries.Add(ann);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"Error reading controls help list: {ex.Message}");
+            }
+            if (entries != null && entries.Count > 0)
+                KeyHelpReader.OpenControlsHelp(inst, entries);
         }
 
         /// <summary>

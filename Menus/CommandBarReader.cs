@@ -5,7 +5,6 @@ using static FFII_ScreenReader.Utils.ModTextTranslator;
 using ShopCommandId = Il2CppLast.Defaine.ShopCommandId;
 using ItemCommandId = Il2CppLast.Defaine.UI.ItemCommandId;
 using EquipmentCommandId = Il2CppLast.UI.EquipmentCommandId;
-using MenuCommandId = Il2CppLast.Defaine.MenuCommandId;
 
 namespace FFII_ScreenReader.Menus
 {
@@ -54,24 +53,6 @@ namespace FFII_ScreenReader.Menus
             EquipmentCommandId.Equip => T("Equip"),
             EquipmentCommandId.Strongest => T("Strongest"),
             EquipmentCommandId.RemoveEverything => T("Remove All"),
-            _ => null
-        };
-
-        public static string GetMenuCommandName(MenuCommandId id) => id switch
-        {
-            MenuCommandId.Item => T("Item"),
-            MenuCommandId.Magic => T("Magic"),
-            MenuCommandId.Equipment => T("Equipment"),
-            MenuCommandId.Status => T("Status"),
-            MenuCommandId.Sort => T("Sort"),
-            MenuCommandId.Words => T("Words"),
-            MenuCommandId.Config => T("Config"),
-            MenuCommandId.Interruption => T("Interruption"),
-            MenuCommandId.Save => T("Save"),
-            MenuCommandId.Back => T("Back"),
-            MenuCommandId.Job => T("Job"),
-            MenuCommandId.Ability => T("Ability"),
-            MenuCommandId.Load => T("Load"),
             _ => null
         };
     }

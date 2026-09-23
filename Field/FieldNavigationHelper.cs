@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using MelonLoader;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using Il2CppLast.Entity.Field;
 using Il2CppLast.Map;
 using FieldMap = Il2Cpp.FieldMap;
@@ -190,41 +191,6 @@ namespace FFII_ScreenReader.Field
         }
 
         /// <summary>
-        /// Gets walkable directions from the current position.
-        /// </summary>
-        public static string GetWalkableDirections(FieldPlayer player, IMapAccessor mapHandle)
-        {
-            if (player == null || mapHandle == null)
-                return "Cannot check directions";
-
-            Vector3 currentPos = player.transform.position;
-            float stepSize = 16f;
-
-            var directions = new List<string>();
-
-            Vector3 northPos = currentPos + new Vector3(0, stepSize, 0);
-            if (CheckPositionWalkable(player, northPos))
-                directions.Add("North");
-
-            Vector3 southPos = currentPos + new Vector3(0, -stepSize, 0);
-            if (CheckPositionWalkable(player, southPos))
-                directions.Add("South");
-
-            Vector3 eastPos = currentPos + new Vector3(stepSize, 0, 0);
-            if (CheckPositionWalkable(player, eastPos))
-                directions.Add("East");
-
-            Vector3 westPos = currentPos + new Vector3(-stepSize, 0, 0);
-            if (CheckPositionWalkable(player, westPos))
-                directions.Add("West");
-
-            if (directions.Count == 0)
-                return "STUCK - No walkable directions!";
-
-            return string.Join(", ", directions);
-        }
-
-        /// <summary>
         /// Result structure for wall proximity detection.
         /// Distance values: -1 = no wall within range, 0 = adjacent/blocked
         /// </summary>
@@ -347,23 +313,6 @@ namespace FFII_ScreenReader.Field
             }
 
             return false;
-        }
-
-        private static bool CheckPositionWalkable(FieldPlayer player, Vector3 position)
-        {
-            try
-            {
-                var fieldMap = GameObjectCache.Get<FieldMap>();
-                if (fieldMap?.fieldController != null)
-                {
-                    return fieldMap.fieldController.IsCanMoveToDestPosition(player, ref position);
-                }
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
         }
 
         // 8 neighbouring tile offsets (game units) used when the exact target tile is unwalkable.
@@ -555,7 +504,7 @@ namespace FFII_ScreenReader.Field
         private static string DescribePath(List<Vector3> worldPath)
         {
             if (worldPath == null || worldPath.Count < 2)
-                return "No movement needed";
+                return T("No movement needed");
 
             var segments = new List<string>();
             Vector3 currentDir = Vector3.zero;
@@ -599,75 +548,22 @@ namespace FFII_ScreenReader.Field
         {
             if (Mathf.Abs(dir.x) > 0.4f && Mathf.Abs(dir.y) > 0.4f)
             {
-                if (dir.y > 0 && dir.x > 0) return "Northeast";
-                if (dir.y > 0 && dir.x < 0) return "Northwest";
-                if (dir.y < 0 && dir.x > 0) return "Southeast";
-                if (dir.y < 0 && dir.x < 0) return "Southwest";
+                if (dir.y > 0 && dir.x > 0) return T("Northeast");
+                if (dir.y > 0 && dir.x < 0) return T("Northwest");
+                if (dir.y < 0 && dir.x > 0) return T("Southeast");
+                if (dir.y < 0 && dir.x < 0) return T("Southwest");
             }
 
             if (Mathf.Abs(dir.y) > Mathf.Abs(dir.x))
             {
-                return dir.y > 0 ? "North" : "South";
+                return dir.y > 0 ? T("North") : T("South");
             }
             else if (Mathf.Abs(dir.x) > 0.1f)
             {
-                return dir.x > 0 ? "East" : "West";
+                return dir.x > 0 ? T("East") : T("West");
             }
 
-            return "Unknown";
-        }
-
-        /// <summary>
-        /// Gets the cardinal/intercardinal direction from source to target.
-        /// </summary>
-        public static string GetDirection(Vector3 from, Vector3 to)
-        {
-            Vector3 diff = to - from;
-            float angle = Mathf.Atan2(diff.x, diff.y) * Mathf.Rad2Deg;
-
-            // Normalize to 0-360
-            if (angle < 0) angle += 360;
-
-            // Convert to cardinal/intercardinal directions
-            if (angle >= 337.5 || angle < 22.5) return "North";
-            else if (angle >= 22.5 && angle < 67.5) return "Northeast";
-            else if (angle >= 67.5 && angle < 112.5) return "East";
-            else if (angle >= 112.5 && angle < 157.5) return "Southeast";
-            else if (angle >= 157.5 && angle < 202.5) return "South";
-            else if (angle >= 202.5 && angle < 247.5) return "Southwest";
-            else if (angle >= 247.5 && angle < 292.5) return "West";
-            else if (angle >= 292.5 && angle < 337.5) return "Northwest";
-            else return "Unknown";
-        }
-
-        /// <summary>
-        /// Calculates the distance between two positions in game units.
-        /// </summary>
-        public static float GetDistance(Vector3 from, Vector3 to)
-        {
-            return Vector3.Distance(from, to);
-        }
-
-        /// <summary>
-        /// Converts game distance units to steps.
-        /// One step = 16 game units.
-        /// </summary>
-        public static float DistanceToSteps(float distance)
-        {
-            return distance / 16f;
-        }
-
-        /// <summary>
-        /// Gets a simple path description with direction and step count.
-        /// </summary>
-        public static string GetSimplePathDescription(Vector3 from, Vector3 to)
-        {
-            float distance = GetDistance(from, to);
-            string direction = GetDirection(from, to);
-            float steps = DistanceToSteps(distance);
-            string stepLabel = Math.Abs(steps - 1f) < 0.1f ? "step" : "steps";
-
-            return $"{steps:F0} {stepLabel} {direction}";
+            return T("Unknown");
         }
     }
 }

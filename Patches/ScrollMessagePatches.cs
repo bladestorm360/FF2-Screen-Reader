@@ -1,7 +1,9 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using HarmonyLib;
 using MelonLoader;
+using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 
@@ -96,13 +98,15 @@ namespace FFII_ScreenReader.Patches
 
     /// <summary>
     /// Patches for scrolling intro/outro messages and fade messages.
-    /// The intro uses ScrollMessageManager which displays scrolling text.
-    /// Auto-advancing text is handled by FadeMessageManager and LineFadeMessageManager.
+    /// The intro uses ScrollMessageManager, whose lines are spoken one by one on the visual scroll's
+    /// timing (FF1 parity). Auto-advancing text is handled by FadeMessageManager, and
     /// LineFadeMessageWindowController provides per-line announcements for story text.
+    /// All are game events, so none interrupt.
     /// </summary>
     public static class ScrollMessagePatches
     {
         private static string lastScrollMessage = "";
+        private static IEnumerator activeScrollCoroutine = null;
 
         /// <summary>
         /// Applies scroll message patches using manual Harmony patching.
@@ -127,33 +131,6 @@ namespace FFII_ScreenReader.Patches
                 else
                 {
                     MelonLogger.Error("FadeMessageManager type not found");
-                }
-
-                // Patch LineFadeMessageManager.Play and AsyncPlay - receives List<string> messages
-                Type lineFadeManagerType = FindType("Il2CppLast.Message.LineFadeMessageManager");
-                if (lineFadeManagerType != null)
-                {
-                    // Patch Play method
-                    var playMethod = AccessTools.Method(lineFadeManagerType, "Play");
-                    if (playMethod != null)
-                    {
-                        var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeManagerPlay_Postfix",
-                            BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(playMethod, postfix: new HarmonyMethod(postfix));
-                    }
-
-                    // Patch AsyncPlay method
-                    var asyncPlayMethod = AccessTools.Method(lineFadeManagerType, "AsyncPlay");
-                    if (asyncPlayMethod != null)
-                    {
-                        var postfix = typeof(ScrollMessagePatches).GetMethod("LineFadeManagerPlay_Postfix",
-                            BindingFlags.Public | BindingFlags.Static);
-                        harmony.Patch(asyncPlayMethod, postfix: new HarmonyMethod(postfix));
-                    }
-                }
-                else
-                {
-                    MelonLogger.Error("LineFadeMessageManager type not found");
                 }
 
                 // Patch ScrollMessageManager.Play - receives scroll message string
@@ -269,63 +246,7 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                FFII_ScreenReaderMod.SpeakText(cleanMessage);
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Postfix for LineFadeMessageManager.Play and AsyncPlay - captures the messages list parameter.
-        /// LineFadeMessageManager.Play(List<string> messages, Color32 color, float fadeinTime, float fadeoutTime, float waitTime)
-        /// Note: This reads ALL lines at once. For per-line announcements, use LineFadeMessageWindowController patches.
-        /// </summary>
-        public static void LineFadeManagerPlay_Postfix(object __0)
-        {
-            try
-            {
-                // __0 is the first parameter (List<string> messages)
-                if (__0 == null)
-                {
-                    return;
-                }
-
-                string combinedMessage = "";
-
-                // Try to iterate the list
-                if (__0 is System.Collections.IEnumerable enumerable)
-                {
-                    foreach (var item in enumerable)
-                    {
-                        if (item != null)
-                        {
-                            string line = item.ToString();
-                            if (!string.IsNullOrEmpty(line))
-                            {
-                                if (combinedMessage.Length > 0)
-                                    combinedMessage += " ";
-                                combinedMessage += line;
-                            }
-                        }
-                    }
-                }
-
-                if (string.IsNullOrEmpty(combinedMessage))
-                {
-                    return;
-                }
-
-                // Avoid duplicate announcements
-                if (combinedMessage == lastScrollMessage)
-                {
-                    return;
-                }
-
-                lastScrollMessage = combinedMessage;
-
-                // Clean up the message
-                string cleanMessage = CleanMessage(combinedMessage);
-
-                FFII_ScreenReaderMod.SpeakText(cleanMessage);
+                FFII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: false);
             }
             catch { }
         }
@@ -333,8 +254,10 @@ namespace FFII_ScreenReader.Patches
         /// <summary>
         /// Postfix for ScrollMessageManager.Play - captures the message parameter.
         /// ScrollMessageManager.Play(ScrollMessageClient.ScrollType type, string message, float scrollTime, int fontSize, Color32 color, TextAnchor anchor, Rect margin)
+        /// __1 = message (string), __2 = scrollTime (float). Lines are spoken one at a time, paced to
+        /// the linear visual scroll, instead of as one block.
         /// </summary>
-        public static void ScrollManagerPlay_Postfix(object __1)
+        public static void ScrollManagerPlay_Postfix(object __1, object __2)
         {
             try
             {
@@ -353,12 +276,43 @@ namespace FFII_ScreenReader.Patches
 
                 lastScrollMessage = message;
 
-                // Clean up the message
-                string cleanMessage = CleanMessage(message);
+                // A new scroll replaces any one still being read.
+                if (activeScrollCoroutine != null)
+                {
+                    CoroutineManager.StopManaged(activeScrollCoroutine);
+                    activeScrollCoroutine = null;
+                }
 
-                FFII_ScreenReaderMod.SpeakText(cleanMessage);
+                float scrollTime = __2 is float st ? st : 30f;
+                string[] lines = message.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+                activeScrollCoroutine = SpeakScrollLinesWithTiming(lines, scrollTime);
+                CoroutineManager.StartManaged(activeScrollCoroutine);
             }
             catch { }
+        }
+
+        /// <summary>
+        /// Speaks scroll lines spaced evenly across the scroll's duration (the visual scroll is linear).
+        /// </summary>
+        private static IEnumerator SpeakScrollLinesWithTiming(string[] lines, float totalScrollTime)
+        {
+            float delayPerLine = totalScrollTime / (lines.Length + 1);
+            float nextSpeakTime = Time.time;
+
+            foreach (string line in lines)
+            {
+                string cleanLine = line.Trim();
+                if (string.IsNullOrEmpty(cleanLine)) continue;
+
+                while (Time.time < nextSpeakTime)
+                    yield return null;
+
+                FFII_ScreenReaderMod.SpeakText(cleanLine, interrupt: false);
+                nextSpeakTime = Time.time + delayPerLine;
+            }
+
+            activeScrollCoroutine = null;
         }
 
         /// <summary>

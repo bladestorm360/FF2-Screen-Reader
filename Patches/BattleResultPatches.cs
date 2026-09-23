@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using HarmonyLib;
 using MelonLoader;
-using UnityEngine;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
 using static FFII_ScreenReader.Utils.ModTextTranslator;
@@ -11,11 +10,12 @@ using static FFII_ScreenReader.Utils.ModTextTranslator;
 using BattleResultData = Il2CppLast.Data.BattleResultData;
 using BattleResultCharacterData = Il2CppLast.Data.BattleResultData.BattleResultCharacterData;
 using ResultMenuController = Il2CppLast.UI.KeyInput.ResultMenuController;
+using ResultPointController = Il2CppSerial.FF2.UI.KeyInput.ResultPointController;
+using ResultStatusUpController = Il2CppSerial.FF2.UI.KeyInput.ResultStatusUpController;
+using ResultSkillController = Il2CppLast.UI.KeyInput.ResultSkillController;
 using ListItemFormatter = Il2CppLast.Management.ListItemFormatter;
 using MessageManager = Il2CppLast.Management.MessageManager;
 using OwnedAbility = Il2CppLast.Data.User.OwnedAbility;
-using OwnedCharacterData = Il2CppLast.Data.User.OwnedCharacterData;
-using PlayerCharacterParameter = Il2CppLast.Data.PlayerCharacterParameter;
 using SkillLevelTarget = Il2CppLast.Defaine.SkillLevelTarget;
 using ExpUtility = Il2CppLast.Systems.ExpUtility;
 using ExpTableType = Il2CppLast.Defaine.Master.ExpTableType;
@@ -24,366 +24,235 @@ using BattleUtility = Il2CppLast.Battle.BattleUtility;
 namespace FFII_ScreenReader.Patches
 {
     /// <summary>
-    /// Patches for battle result announcements (XP, gil, items, stat gains, ability/skill exp).
-    /// FF2-specific implementation:
-    /// - Stats grow through use (HP/MP from damage, weapon skills from use)
-    /// - Abilities level up through casting (Fire, Cure, etc.)
-    /// - Weapon skills level up through weapon use (Sword, Axe, etc.)
+    /// Battle result announcements, one hook per on-screen phase so each is spoken as it appears
+    /// (KeyInput result UI; FF2 has no EXP, stats and skills grow through use):
+    ///   ResultMenuController.Show                → reset + battle-state clear (no speech)
+    ///   ResultPointController.ShowSkillLevels    → gil, then weapon-skill gains / level-ups, per character
+    ///   ResultSkillController.SetLevelUpList     → spell level-ups, per character (same Init, right after)
+    ///   ResultStatusUpController.SetData         → that character's stat gains, per page
+    ///   ResultMenuController.ShowGetItemsInit    → item drops
+    /// Show always starts at state ShowLevelUpAbilitys (BattleResultData.IsSkillLevel is always set),
+    /// whose Init calls ShowSkillLevels then SetLevelUpList. ResultPointController.ShowPointList
+    /// (ShowPoints state) never runs in FF2; its postfix is a gil fallback sharing the same guard.
+    /// ResultSkillController.ShowLevelUp is NOT hooked: it has no direct caller in GameAssembly (its
+    /// body is inlined into ResultMenuController.ShowLevelUpAbilitysInit, which calls SetLevelUpList).
+    /// The Touch ResultMenuController is not hooked (its EndWaitInit is a shared empty stub).
     /// </summary>
     public static class BattleResultPatches
     {
-        // Track what we've announced to prevent duplicates
-        private static BattleResultData lastAnnouncedData = null;
-        private static bool announcedPoints = false;
+        // Per-result guards (reset when a new BattleResultData is shown / a new battle starts).
+        private static IntPtr lastResultPtr = IntPtr.Zero;
+        private static bool announcedGil = false;
+        private static bool announcedSkillLevels = false;
         private static bool announcedItems = false;
-        private static bool announcedWeaponSkills = false;
-        private static bool announcedStatGains = false;
+        private static bool announcedSpellLevels = false;
+        private static int spellLevelUpCalls = 0;
+        private static readonly HashSet<IntPtr> announcedStatusUps = new HashSet<IntPtr>();
 
         /// <summary>
         /// Apply all battle result patches manually.
         /// </summary>
         public static void ApplyPatches(HarmonyLib.Harmony harmony)
         {
+            PatchPostfix(harmony, typeof(ResultMenuController), "Show", null, nameof(Show_Postfix));
+            PatchPostfix(harmony, typeof(ResultPointController), "ShowPointList", null, nameof(ShowPointList_Postfix));
+            PatchPostfix(harmony, typeof(ResultPointController), "ShowSkillLevels", null, nameof(ShowSkillLevels_Postfix));
+            PatchPostfix(harmony, typeof(ResultStatusUpController), "SetData", null, nameof(StatusUpSetData_Postfix));
+            PatchPostfix(harmony, typeof(ResultMenuController), "ShowGetItemsInit", Type.EmptyTypes, nameof(ShowGetItemsInit_Postfix));
+            PatchPostfix(harmony, typeof(ResultSkillController), "SetLevelUpList", null, nameof(SetLevelUpList_Postfix));
+        }
+
+        private static void PatchPostfix(HarmonyLib.Harmony harmony, Type type, string method, Type[] args, string postfixName)
+        {
             try
             {
-                // Patch BOTH KeyInput and Touch variants of ResultMenuController
-                PatchResultMenuController(harmony, typeof(ResultMenuController), "KeyInput");
-
-                var touchResultMenuType = AccessTools.TypeByName("Il2CppLast.UI.Touch.ResultMenuController");
-                if (touchResultMenuType != null)
-                {
-                    PatchResultMenuControllerByType(harmony, touchResultMenuType, "Touch");
-                }
+                var target = AccessTools.DeclaredMethod(type, method, args);
+                if (target != null)
+                    harmony.Patch(target, postfix: new HarmonyMethod(AccessTools.Method(typeof(BattleResultPatches), postfixName)));
                 else
-                {
-                    MelonLogger.Error("[BattleResult] Could not find Touch.ResultMenuController");
-                }
+                    MelonLogger.Error($"[BattleResult] {type.Name}.{method} not found");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"[BattleResult] Error applying patches: {ex.Message}");
+                MelonLogger.Error($"[BattleResult] Error patching {type.Name}.{method}: {ex.Message}");
             }
         }
 
-        /// <summary>
-        /// Patch ResultMenuController methods using the type alias (KeyInput).
-        /// </summary>
-        private static void PatchResultMenuController(HarmonyLib.Harmony harmony, Type controllerType, string variant)
+        /// <summary>Forgets the previous result so the next battle's phases all announce.</summary>
+        public static void ResetForNewBattle()
         {
-            PatchResultMenuControllerByType(harmony, controllerType, variant);
+            lastResultPtr = IntPtr.Zero;
         }
 
-        /// <summary>
-        /// Patch ResultMenuController methods by type.
-        /// </summary>
-        private static void PatchResultMenuControllerByType(HarmonyLib.Harmony harmony, Type controllerType, string variant)
+        /// <summary>Resets the per-phase guards when a different result object is shown.</summary>
+        private static void ResetTracking(BattleResultData data)
         {
-            // Patch ShowPointsInit
-            var showPointsInitMethod = AccessTools.Method(controllerType, "ShowPointsInit");
-            if (showPointsInitMethod != null)
-            {
-                var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowPointsInit_Postfix_Generic));
-                harmony.Patch(showPointsInitMethod, postfix: new HarmonyMethod(postfix));
-            }
-            else
-            {
-                MelonLogger.Error($"[BattleResult] Could not find ShowPointsInit on {variant}");
-            }
-
-            // Patch ShowGetItemsInit
-            var showGetItemsInitMethod = AccessTools.Method(controllerType, "ShowGetItemsInit");
-            if (showGetItemsInitMethod != null)
-            {
-                var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowGetItemsInit_Postfix_Generic));
-                harmony.Patch(showGetItemsInitMethod, postfix: new HarmonyMethod(postfix));
-            }
-
-            // Patch Show
-            var showMethod = AccessTools.Method(controllerType, "Show");
-            if (showMethod != null)
-            {
-                var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(Show_Postfix));
-                harmony.Patch(showMethod, postfix: new HarmonyMethod(postfix));
-            }
-
-            // Patch ShowSkillLevelsInit - Weapon skill level-ups (State = 3)
-            var showSkillLevelsInitMethod = AccessTools.Method(controllerType, "ShowSkillLevelsInit");
-            if (showSkillLevelsInitMethod != null)
-            {
-                var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowSkillLevelsInit_Postfix_Generic));
-                harmony.Patch(showSkillLevelsInitMethod, postfix: new HarmonyMethod(postfix));
-            }
-
-            // Patch ShowStatusUpInit - Stat gains (HP, Evasion, Magic Evasion, etc.)
-            var showStatusUpInitMethod = AccessTools.Method(controllerType, "ShowStatusUpInit");
-            if (showStatusUpInitMethod != null)
-            {
-                var postfix = AccessTools.Method(typeof(BattleResultPatches), nameof(ShowStatusUpInit_Postfix_Generic));
-                harmony.Patch(showStatusUpInitMethod, postfix: new HarmonyMethod(postfix));
-            }
+            IntPtr ptr = data.Pointer;
+            if (ptr == lastResultPtr) return;
+            lastResultPtr = ptr;
+            announcedGil = false;
+            announcedSkillLevels = false;
+            announcedItems = false;
+            announcedSpellLevels = false;
+            spellLevelUpCalls = 0;
+            announcedStatusUps.Clear();
         }
 
-        /// <summary>
-        /// Reset tracking when a new battle result starts
-        /// </summary>
-        public static void ResetTracking(BattleResultData data)
-        {
-            if (data != lastAnnouncedData)
-            {
-                lastAnnouncedData = data;
-                announcedPoints = false;
-                announcedItems = false;
-                announcedWeaponSkills = false;
-                announcedStatGains = false;
-            }
-        }
-
-        #region Generic Postfix Methods (work with both Touch and KeyInput)
+        #region Show - reset
 
         /// <summary>
-        /// Generic ShowPointsInit postfix that works with any ResultMenuController variant.
+        /// The result screen opened: the battle is over. Clears battle state and latches the
+        /// beacon-only BattleResultActive gate (the screen is still up over the field; cleared by the
+        /// field transition / OnSceneLoaded). Speaks nothing — each phase speaks as it appears.
+        /// isReverse is ignored: it is the back-attack layout flag (BattleController.StartWinResult),
+        /// not a close, so back-attack wins must reset too.
         /// </summary>
-        public static void ShowPointsInit_Postfix_Generic(object __instance)
+        public static void Show_Postfix(BattleResultData data)
         {
             try
             {
-                dynamic controller = __instance;
-                BattleResultData data = controller.targetData;
+                if (data == null) return;
 
-                if (data != null)
-                {
-                    AnnouncePointsGained(data);
-                }
+                FFII_ScreenReaderMod.ClearBattleState();
+                FFII_ScreenReaderMod.BattleResultActive = true;
+                ResetTracking(data);
             }
-            catch { }
-        }
-
-        /// <summary>
-        /// Generic ShowGetItemsInit postfix.
-        /// </summary>
-        public static void ShowGetItemsInit_Postfix_Generic(object __instance)
-        {
-            try
+            catch (Exception ex)
             {
-                dynamic controller = __instance;
-                BattleResultData data = controller.targetData;
-
-                if (data != null)
-                    AnnounceItemsDropped(data);
+                MelonLogger.Error($"[BattleResult] Error in Show postfix: {ex.Message}");
             }
-            catch { }
-        }
-
-        /// <summary>
-        /// Generic ShowSkillLevelsInit postfix - announces weapon skill progress.
-        /// This fires when the weapon skill level-up phase begins (State = 3).
-        /// At this point, GrouthWeaponSkillList is populated with skills that gained exp.
-        /// </summary>
-        public static void ShowSkillLevelsInit_Postfix_Generic(object __instance)
-        {
-            try
-            {
-                // Prevent double announcements
-                if (announcedWeaponSkills)
-                {
-                    return;
-                }
-                announcedWeaponSkills = true;
-
-                dynamic controller = __instance;
-                BattleResultData data = controller.targetData;
-
-                if (data != null)
-                {
-                    AnnounceAllWeaponSkills(data);
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Generic ShowStatusUpInit postfix - announces stat gains (HP, Evasion, Magic Evasion, etc.).
-        /// This fires when the stat gain phase begins (IsStatusUp characters show their gains).
-        /// </summary>
-        public static void ShowStatusUpInit_Postfix_Generic(object __instance)
-        {
-            try
-            {
-                // Prevent double announcements
-                if (announcedStatGains)
-                {
-                    return;
-                }
-                announcedStatGains = true;
-
-                dynamic controller = __instance;
-                BattleResultData data = controller.targetData;
-
-                if (data != null)
-                {
-                    AnnounceAllStatGains(data);
-                }
-            }
-            catch { }
         }
 
         #endregion
 
-        #region ShowPointsInit - Experience, Gil, Skill Exp
+        #region Gil
 
-        public static void ShowPointsInit_Postfix(ResultMenuController __instance)
+        /// <summary>
+        /// Fallback only: ShowPointList never runs in FF2 (ShowPointsInit is its only caller and the
+        /// result screen always starts at ShowLevelUpAbilitys, never at ShowPoints). Gil is spoken
+        /// from ShowSkillLevels_Postfix; this shares its announcedGil guard.
+        /// </summary>
+        public static void ShowPointList_Postfix(BattleResultData __0)
         {
             try
             {
-                // IL2CppInterop exposes private fields as public properties - access directly
-                var data = __instance.targetData;
-                if (data != null)
-                {
-                    AnnouncePointsGained(data);
-                }
+                var data = __0;
+                if (data == null) return;
+                ResetTracking(data);
+                AnnounceGil(data);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleResult] Error announcing gil: {ex.Message}");
+            }
         }
 
-        private static void AnnouncePointsGained(BattleResultData data)
+        /// <summary>"Gained N gil", once per result (announcedGil guard).</summary>
+        private static void AnnounceGil(BattleResultData data)
         {
-            if (data == null || announcedPoints) return;
+            if (announcedGil) return;
+            announcedGil = true;
 
-            ResetTracking(data);
-            announcedPoints = true;
+            int gil = data.GetGil;
+            if (gil > 0)
+                FFII_ScreenReaderMod.SpeakText(string.Format(T("Gained {0} gil"), gil.ToString("N0")), interrupt: true);
+        }
+
+        #endregion
+
+        #region ShowSkillLevels - gil + weapon skills
+
+        /// <summary>
+        /// First on-screen phase (KeyInput ResultMenuController.Show always starts at
+        /// ShowLevelUpAbilitys, whose Init calls this): gil first, then per character every weapon
+        /// skill that gained exp — "Sword lv3" when it leveled up, otherwise "Shield +12 percent"
+        /// (gauge growth). Evasion / magic defense have no exp bar; their gains are part of the
+        /// stat-gain pages.
+        /// </summary>
+        public static void ShowSkillLevels_Postfix(BattleResultData __0)
+        {
+            try
+            {
+                var data = __0;
+                if (data == null) return;
+                ResetTracking(data);
+                try
+                {
+                    AnnounceGil(data);
+                }
+                catch (Exception ex)
+                {
+                    MelonLogger.Error($"[BattleResult] Error announcing gil: {ex.Message}");
+                }
+                if (announcedSkillLevels) return;
+                announcedSkillLevels = true;
+
+                var characterList = data.CharacterList;
+                if (characterList == null) return;
+
+                foreach (var charResult in characterList)
+                {
+                    if (charResult == null) continue;
+                    string line = BuildWeaponSkillLine(charResult);
+                    if (!string.IsNullOrEmpty(line))
+                        FFII_ScreenReaderMod.SpeakText(line, interrupt: false);
+                }
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleResult] Error announcing weapon skills: {ex.Message}");
+            }
+        }
+
+        /// <summary>"Firion: Sword lv3, Shield +12 percent", or null when no skill gained exp.</summary>
+        private static string BuildWeaponSkillLine(BattleResultCharacterData charResult)
+        {
+            var afterData = charResult.AfterData;
+            var beforeData = charResult.BeforData;
+            if (afterData == null) return null;
+
+            string charName = afterData.Name;
+            var afterSkills = afterData.SkillLevelTargets;
+            if (string.IsNullOrEmpty(charName) || afterSkills == null) return null;
+            var beforeSkills = beforeData?.SkillLevelTargets;
 
             var parts = new List<string>();
-
-            // Gil gained - this is the total shown in phase 1
-            try
+            foreach (var kvp in afterSkills)
             {
-                int gil = data.GetGil;
-                if (gil > 0)
+                try
                 {
-                    parts.Add(string.Format(T("Gained {0} gil"), gil.ToString("N0")));
-                }
-            }
-            catch { }
+                    var skillTarget = kvp.Key;
+                    if (skillTarget == SkillLevelTarget.PhysicalAvoidance || skillTarget == SkillLevelTarget.AbilityAvoidance)
+                        continue;
 
-            if (parts.Count > 0)
-            {
-                string announcement = string.Join(", ", parts);
-                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-            }
+                    int afterExp = kvp.Value;
+                    int beforeExp = beforeSkills != null && beforeSkills.ContainsKey(skillTarget) ? beforeSkills[skillTarget] : 0;
+                    if (afterExp <= beforeExp) continue;
 
-            // NOTE: Weapon skills are announced in ShowSkillLevelsInit_Postfix_Generic
-            // because GrouthWeaponSkillList is not populated until that phase
-        }
+                    string skillName = GetWeaponSkillName(skillTarget);
+                    int beforeLevel = beforeData != null ? BattleUtility.GetSkillLevel(beforeData, skillTarget) : 1;
+                    int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
 
-        /// <summary>
-        /// Announce weapon skills that gained exp, showing percentage delta (bar growth) and level-ups.
-        /// Format for exp gain: "Firion Sword: 30 percent"
-        /// Format for level up: "Firion Sword leveled up to 3"
-        ///
-        /// NOTE: GrouthWeaponSkillList only contains skills that LEVELED UP, not all skills that gained exp.
-        /// So we compare BeforData vs AfterData SkillLevelTargets to find ALL skills that gained exp.
-        /// Uses BattleUtility.GetSkillLevel for accurate level calculation.
-        /// </summary>
-        private static void AnnounceWeaponSkillProgress(BattleResultCharacterData charResult)
-        {
-            try
-            {
-                var afterData = charResult.AfterData;
-                var beforeData = charResult.BeforData;
-                if (afterData == null)
-                {
-                    return;
-                }
-
-                string charName = afterData.Name;
-                if (string.IsNullOrEmpty(charName)) return;
-
-                var afterSkills = afterData.SkillLevelTargets;
-                var beforeSkills = beforeData?.SkillLevelTargets;
-
-                if (afterSkills == null)
-                {
-                    return;
-                }
-
-                // Iterate through all skills in afterData and compare with beforeData
-                foreach (var kvp in afterSkills)
-                {
-                    try
+                    if (afterLevel > beforeLevel)
                     {
-                        var skillTarget = kvp.Key;
-
-                        // Skip evasion skills - they don't have exp bars, only stat gains
-                        // Evasion gains are announced separately in ShowStatusUpInit phase
-                        if (skillTarget == SkillLevelTarget.PhysicalAvoidance ||
-                            skillTarget == SkillLevelTarget.AbilityAvoidance)
-                        {
-                            continue;
-                        }
-
-                        int afterExp = kvp.Value;
-                        int beforeExp = 0;
-
-                        if (beforeSkills != null && beforeSkills.ContainsKey(skillTarget))
-                        {
-                            beforeExp = beforeSkills[skillTarget];
-                        }
-
-                        // Only announce if exp actually increased
-                        if (afterExp <= beforeExp) continue;
-
-                        string skillName = GetWeaponSkillName(skillTarget);
-
-                        // Use BattleUtility.GetSkillLevel for accurate level calculation
-                        int beforeLevel = beforeData != null ? BattleUtility.GetSkillLevel(beforeData, skillTarget) : 1;
-                        int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
-
-                        // Calculate percentage using ExpUtility (same as game's gauge display)
-                        int beforePercent = CalculatePercentInLevel(beforeExp);
-                        int afterPercent = CalculatePercentInLevel(afterExp);
-
-                        // Check if level increased
-                        bool leveledUp = afterLevel > beforeLevel;
-
-                        if (!leveledUp)
-                        {
-                            // No level up - announce percentage gained
-                            int percentDelta = afterPercent - beforePercent;
-                            if (percentDelta > 0)
-                            {
-                                string announcement = $"{charName} {skillName}: {percentDelta} percent";
-                                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
-                            }
-                        }
+                        parts.Add(string.Format(T("{0} lv{1}"), skillName, afterLevel));
                     }
-                    catch { }
+                    else
+                    {
+                        int percentDelta = CalculatePercentInLevel(afterExp) - CalculatePercentInLevel(beforeExp);
+                        if (percentDelta > 0)
+                            parts.Add(string.Format(T("{0} +{1} percent"), skillName, percentDelta));
+                    }
                 }
+                catch { }
             }
-            catch { }
+
+            return parts.Count > 0 ? $"{charName}: {string.Join(", ", parts)}" : null;
         }
 
         /// <summary>
-        /// Format a percentage announcement with appropriate precision.
-        /// Uses integer for >= 1%, one decimal for smaller values.
-        /// </summary>
-        private static string FormatPercentAnnouncement(string charName, string skillName, float percent)
-        {
-            if (percent >= 1f)
-            {
-                // Round to nearest integer for 1% or higher
-                return $"{charName} {skillName}: {(int)Math.Round(percent)} percent";
-            }
-            else
-            {
-                // Use one decimal place for sub-1% gains
-                return $"{charName} {skillName}: {percent:F1} percent";
-            }
-        }
-
-        /// <summary>
-        /// Calculate percentage progress within a level using ExpUtility.
-        /// Uses game's actual exp table for accurate gauge fill calculation.
-        /// Formula: progress = 1 - (expToNext / expDifference)
+        /// Percentage progress within a level from the game's exp table (same as its gauge):
+        /// progress = 1 - (expToNext / expDifference).
         /// </summary>
         private static int CalculatePercentInLevel(int exp)
         {
@@ -393,11 +262,8 @@ namespace FFII_ScreenReader.Patches
                 int expDiff = ExpUtility.GetExpDifference(1, exp, ExpTableType.LevelExp);
                 if (expDiff > 0)
                 {
-                    float fillAmount = 1.0f - ((float)expToNext / (float)expDiff);
-                    int progress = (int)(fillAmount * 100);
-                    if (progress < 0) progress = 0;
-                    if (progress > 99) progress = 99;
-                    return progress;
+                    int progress = (int)((1.0f - ((float)expToNext / expDiff)) * 100);
+                    return Math.Clamp(progress, 0, 99);
                 }
             }
             catch { }
@@ -406,381 +272,236 @@ namespace FFII_ScreenReader.Patches
             return exp % 100;
         }
 
-        private static string GetWeaponSkillName(SkillLevelTarget target)
+        internal static string GetWeaponSkillName(SkillLevelTarget target)
         {
             return target switch
             {
-                SkillLevelTarget.WeaponSword => "Sword",
-                SkillLevelTarget.WeaponKnife => "Knife",
-                SkillLevelTarget.WeaponSpear => "Spear",
-                SkillLevelTarget.WeaponAxe => "Axe",
-                SkillLevelTarget.WeaponCane => "Staff",
-                SkillLevelTarget.WeaponBow => "Bow",
-                SkillLevelTarget.WeaponShield => "Shield",
-                SkillLevelTarget.WeaponWrestle => "Unarmed",
-                SkillLevelTarget.PhysicalAvoidance => "Evasion",
-                SkillLevelTarget.AbilityAvoidance => "Magic Defense",
+                SkillLevelTarget.WeaponSword => T("Sword"),
+                SkillLevelTarget.WeaponKnife => T("Knife"),
+                SkillLevelTarget.WeaponSpear => T("Spear"),
+                SkillLevelTarget.WeaponAxe => T("Axe"),
+                SkillLevelTarget.WeaponCane => T("Staff"),
+                SkillLevelTarget.WeaponBow => T("Bow"),
+                SkillLevelTarget.WeaponShield => T("Shield"),
+                SkillLevelTarget.WeaponWrestle => T("Unarmed"),
+                SkillLevelTarget.PhysicalAvoidance => T("Evasion"),
+                SkillLevelTarget.AbilityAvoidance => T("Magic Defense"),
                 _ => target.ToString()
             };
         }
 
         #endregion
 
-        #region ShowGetItemsInit - Item Drops
+        #region ResultStatusUpController.SetData - stat gains per page
+
+        /// <summary>
+        /// One stat-gain page per character (StatusUpInit shows the first, StatusUpUpdate / the click
+        /// handler each next one). Announces that character's gains as the page appears; guarded per
+        /// character so a re-render of the same page doesn't repeat.
+        /// </summary>
+        public static void StatusUpSetData_Postfix(BattleResultCharacterData __0)
+        {
+            try
+            {
+                var charResult = __0;
+                if (charResult == null) return;
+                if (!announcedStatusUps.Add(charResult.Pointer)) return;
+
+                string line = BuildStatGainLine(charResult);
+                if (!string.IsNullOrEmpty(line))
+                    FFII_ScreenReaderMod.SpeakText(line, interrupt: false);
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleResult] Error announcing stat gains: {ex.Message}");
+            }
+        }
+
+        /// <summary>"Firion: HP +5, Strength +1", or null when nothing changed.</summary>
+        private static string BuildStatGainLine(BattleResultCharacterData charResult)
+        {
+            var beforeParam = charResult.BeforData?.Parameter;
+            var afterData = charResult.AfterData;
+            var afterParam = afterData?.Parameter;
+            if (beforeParam == null || afterParam == null) return null;
+
+            string charName = afterData.Name;
+            if (string.IsNullOrEmpty(charName)) return null;
+
+            var changes = new List<string>();
+            // Base stats
+            CheckStatChange(changes, T("HP"), beforeParam.AddtionalMaxHp, afterParam.AddtionalMaxHp);
+            CheckStatChange(changes, T("MP"), beforeParam.AddtionalMaxMp, afterParam.AddtionalMaxMp);
+            CheckStatChange(changes, T("Strength"), beforeParam.AddtionalPower, afterParam.AddtionalPower);
+            CheckStatChange(changes, T("Vitality"), beforeParam.AddtionalVitality, afterParam.AddtionalVitality);
+            CheckStatChange(changes, T("Agility"), beforeParam.AddtionalAgility, afterParam.AddtionalAgility);
+            CheckStatChange(changes, T("Intelligence"), beforeParam.AddtionalIntelligence, afterParam.AddtionalIntelligence);
+            CheckStatChange(changes, T("Spirit"), beforeParam.AddtionalSpirit, afterParam.AddtionalSpirit);
+
+            // Derived combat stats
+            CheckStatChange(changes, T("Accuracy"), beforeParam.AddtionalAccuracyRate, afterParam.AddtionalAccuracyRate);
+            CheckStatChange(changes, T("Defense"), beforeParam.AddtionalDefense, afterParam.AddtionalDefense);
+
+            // Evasion / magic defense use "Nx Y%" on the victory screen - track both count and rate
+            CheckStatChange(changes, T("Evasion Count"), beforeParam.AddtionalEvasionCount, afterParam.AddtionalEvasionCount);
+            CheckStatChange(changes, T("Evasion"), beforeParam.AddtionalEvasionRate, afterParam.AddtionalEvasionRate);
+            CheckStatChange(changes, T("Magic Defense Count"), beforeParam.AddtionalMagicDefenseCount, afterParam.AddtionalMagicDefenseCount);
+            CheckStatChange(changes, T("Magic Defense"), beforeParam.AddtionalAbilityDefenseRate, afterParam.AddtionalAbilityDefenseRate);
+            CheckStatChange(changes, T("Magic Evasion"), beforeParam.AddtionalAbilityEvasionRate, afterParam.AddtionalAbilityEvasionRate);
+
+            return changes.Count > 0 ? $"{charName}: {string.Join(", ", changes)}" : null;
+        }
+
+        /// <summary>Adds "Strength +1" (or "HP -3" — FF2 stats can drop) when a stat changed.</summary>
+        private static void CheckStatChange(List<string> changes, string statName, int before, int after)
+        {
+            int delta = after - before;
+            if (delta > 0)
+                changes.Add($"{statName} +{delta}");
+            else if (delta < 0)
+                changes.Add($"{statName} {delta}");
+        }
+
+        #endregion
+
+        #region ShowGetItemsInit - item drops
 
         public static void ShowGetItemsInit_Postfix(ResultMenuController __instance)
         {
             try
             {
-                var data = __instance.targetData;
-                if (data != null)
-                {
-                    AnnounceItemsDropped(data);
-                }
-            }
-            catch { }
-        }
+                var data = __instance?.targetData;
+                if (data == null) return;
+                ResetTracking(data);
+                if (announcedItems) return;
+                announcedItems = true;
 
-        private static void AnnounceItemsDropped(BattleResultData data)
-        {
-            if (data == null || announcedItems) return;
+                var itemList = data.ItemList;
+                if (itemList == null || itemList.Count == 0) return;
 
-            ResetTracking(data);
-            announcedItems = true;
-
-            var itemList = data.ItemList;
-            if (itemList == null || itemList.Count == 0) return;
-
-            try
-            {
                 var messageManager = MessageManager.Instance;
                 if (messageManager == null) return;
 
                 // Convert drop items to localized content data
                 var contentDataList = ListItemFormatter.GetContentDataList(itemList, messageManager);
-                if (contentDataList == null || contentDataList.Count == 0) return;
+                if (contentDataList == null) return;
 
                 foreach (var itemContent in contentDataList)
                 {
                     if (itemContent == null) continue;
 
-                    string itemName = itemContent.Name;
+                    string itemName = TextUtils.StripIconMarkup(itemContent.Name);
                     if (string.IsNullOrEmpty(itemName)) continue;
 
-                    // Strip any icon markup
-                    itemName = TextUtils.StripIconMarkup(itemName);
-                    if (string.IsNullOrEmpty(itemName)) continue;
-
-                    string announcement;
                     int count = itemContent.Count;
-                    if (count > 1)
-                    {
-                        announcement = string.Format(T("Found {0} x{1}"), itemName, count);
-                    }
-                    else
-                    {
-                        announcement = string.Format(T("Found {0}"), itemName);
-                    }
-
+                    string announcement = count > 1
+                        ? string.Format(T("Found {0} x{1}"), itemName, count)
+                        : string.Format(T("Found {0}"), itemName);
                     FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleResult] Error announcing items: {ex.Message}");
+            }
         }
 
         #endregion
 
-        #region ShowStatusUpInit - Stat Gains (HP, Evasion, Magic Evasion, etc.)
+        #region SetLevelUpList - spell level-ups
 
         /// <summary>
-        /// Announce stat gains and weapon skill level-ups for all characters.
-        /// Combined format: "Firion: Sword lv2, Strength +1, HP +5"
+        /// Spell level-up phase (ResultMenuController.ShowLevelUpAbilitysInit → ResultSkillController
+        /// .SetLevelUpList(characters)). Announces, per character, each spell whose level rose, computed
+        /// from the before/after ability exp with ExpUtility.GetExpLevel (the game's own table).
         /// </summary>
-        private static void AnnounceAllStatGains(BattleResultData data)
+        public static void SetLevelUpList_Postfix(Il2CppSystem.Collections.Generic.List<BattleResultCharacterData> __0)
         {
             try
             {
-                var characterList = data.CharacterList;
-                if (characterList == null)
-                {
-                    return;
-                }
+                var list = __0;
+                if (list == null) return;
 
-                foreach (var charResult in characterList)
+                // Diagnostic (unverified in game): confirm this fires once per result screen.
+                spellLevelUpCalls++;
+                MelonLogger.Msg($"[BattleResult] SetLevelUpList call {spellLevelUpCalls} for this result ({list.Count} characters)");
+
+                if (announcedSpellLevels) return;
+                announcedSpellLevels = true;
+
+                foreach (var charResult in list)
                 {
                     if (charResult == null) continue;
-                    AnnounceCharacterStatGains(charResult);
+                    string line = BuildSpellLevelLine(charResult);
+                    if (!string.IsNullOrEmpty(line))
+                        FFII_ScreenReaderMod.SpeakText(line, interrupt: false);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleResult] Error announcing spell level-ups: {ex.Message}");
+            }
         }
 
-        /// <summary>
-        /// Get weapon skill level-ups for a character using BattleUtility.GetSkillLevel for accurate level calculation.
-        /// Returns list of strings like "Sword lv2" for each skill that leveled up.
-        /// </summary>
-        private static List<string> GetWeaponSkillLevelUps(BattleResultCharacterData charResult)
+        /// <summary>"Maria: Fire lv3, Cure lv2", or null when no spell leveled up.</summary>
+        private static string BuildSpellLevelLine(BattleResultCharacterData charResult)
         {
-            var levelUps = new List<string>();
+            var afterData = charResult.AfterData;
+            var afterAbilities = afterData?.OwnedAbilityList;
+            if (afterAbilities == null) return null;
 
-            try
+            string charName = afterData.Name;
+            if (string.IsNullOrEmpty(charName)) return null;
+
+            var beforeAbilities = charResult.BeforData?.OwnedAbilityList;
+            var messageManager = MessageManager.Instance;
+
+            var parts = new List<string>();
+            foreach (var after in afterAbilities)
             {
-                var afterData = charResult.AfterData;
-                var beforeData = charResult.BeforData;
-                if (afterData == null || beforeData == null) return levelUps;
-
-                // Use GrouthWeaponSkillList if available - it contains the exact skills that leveled up
-                var grouthList = charResult.GrouthWeaponSkillList;
-                if (grouthList != null && grouthList.Count > 0)
+                try
                 {
-                    foreach (var skillTarget in grouthList)
+                    int abilityId = after?.Ability?.Id ?? -1;
+                    if (abilityId < 0) continue;
+
+                    int beforeExp = 0;
+                    if (beforeAbilities != null)
                     {
-                        try
+                        foreach (var before in beforeAbilities)
                         {
-                            // Skip evasion skills - they don't have exp bars/level-ups
-                            if (skillTarget == SkillLevelTarget.PhysicalAvoidance ||
-                                skillTarget == SkillLevelTarget.AbilityAvoidance)
+                            if (before?.Ability != null && before.Ability.Id == abilityId)
                             {
-                                continue;
+                                beforeExp = before.SkillLevel;
+                                break;
                             }
-
-                            // Use BattleUtility.GetSkillLevel for accurate level
-                            int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
-                            string skillName = GetWeaponSkillName(skillTarget);
-                            levelUps.Add($"{skillName} lv{afterLevel}");
-                        }
-                        catch { }
-                    }
-                    return levelUps;
-                }
-
-                // Fallback: compare before/after skill exp using BattleUtility
-                var afterSkills = afterData.SkillLevelTargets;
-                var beforeSkills = beforeData.SkillLevelTargets;
-
-                if (afterSkills == null || beforeSkills == null) return levelUps;
-
-                // Check each skill for level-ups
-                foreach (var kvp in afterSkills)
-                {
-                    try
-                    {
-                        var skillTarget = kvp.Key;
-
-                        // Skip evasion skills - they don't have exp bars/level-ups
-                        if (skillTarget == SkillLevelTarget.PhysicalAvoidance ||
-                            skillTarget == SkillLevelTarget.AbilityAvoidance)
-                        {
-                            continue;
-                        }
-
-                        int afterExp = kvp.Value;
-                        int beforeExp = 0;
-
-                        if (beforeSkills.ContainsKey(skillTarget))
-                        {
-                            beforeExp = beforeSkills[skillTarget];
-                        }
-
-                        // Only check skills that gained exp
-                        if (afterExp <= beforeExp) continue;
-
-                        // Use BattleUtility.GetSkillLevel for accurate levels
-                        int beforeLevel = BattleUtility.GetSkillLevel(beforeData, skillTarget);
-                        int afterLevel = BattleUtility.GetSkillLevel(afterData, skillTarget);
-
-                        string skillName = GetWeaponSkillName(skillTarget);
-
-                        // Add if level increased
-                        if (afterLevel > beforeLevel)
-                        {
-                            levelUps.Add($"{skillName} lv{afterLevel}");
                         }
                     }
-                    catch { }
-                }
-            }
-            catch { }
 
-            return levelUps;
+                    int beforeLevel = SpellLevel(beforeExp);
+                    int afterLevel = SpellLevel(after.SkillLevel);
+                    if (afterLevel <= beforeLevel) continue;
+
+                    string name = SpellName(after, messageManager);
+                    if (!string.IsNullOrEmpty(name))
+                        parts.Add(string.Format(T("{0} lv{1}"), name, afterLevel));
+                }
+                catch { }
+            }
+
+            return parts.Count > 0 ? $"{charName}: {string.Join(", ", parts)}" : null;
         }
 
-        /// <summary>
-        /// Announce stat gains and weapon level-ups for a single character.
-        /// Format: "Firion: Sword lv2, Strength +1, HP +5"
-        /// Weapon level-ups come first, then stat changes.
-        /// </summary>
-        private static void AnnounceCharacterStatGains(BattleResultCharacterData charResult)
+        /// <summary>Spell level (1-16) from raw ability exp via the game's LevelExp table.</summary>
+        private static int SpellLevel(int rawExp)
         {
-            try
-            {
-                var beforeData = charResult.BeforData;
-                var afterData = charResult.AfterData;
-
-                if (beforeData == null || afterData == null)
-                {
-                    return;
-                }
-
-                string charName = afterData.Name;
-                if (string.IsNullOrEmpty(charName))
-                {
-                    return;
-                }
-
-                // Build combined list: weapon level-ups first, then stat changes
-                var allChanges = new List<string>();
-
-                // Get weapon skill level-ups first
-                var weaponLevelUps = GetWeaponSkillLevelUps(charResult);
-                allChanges.AddRange(weaponLevelUps);
-
-                // Only check stat changes if IsStatusUp flag is set
-                if (charResult.IsStatusUp)
-                {
-                    var beforeParam = beforeData.Parameter;
-                    var afterParam = afterData.Parameter;
-
-                    if (beforeParam != null && afterParam != null)
-                    {
-                        // Check all relevant stats
-                        // Base stats
-                        CheckStatChange(allChanges, "HP", beforeParam.AddtionalMaxHp, afterParam.AddtionalMaxHp);
-                        CheckStatChange(allChanges, "MP", beforeParam.AddtionalMaxMp, afterParam.AddtionalMaxMp);
-                        CheckStatChange(allChanges, "Strength", beforeParam.AddtionalPower, afterParam.AddtionalPower);
-                        CheckStatChange(allChanges, "Vitality", beforeParam.AddtionalVitality, afterParam.AddtionalVitality);
-                        CheckStatChange(allChanges, "Agility", beforeParam.AddtionalAgility, afterParam.AddtionalAgility);
-                        CheckStatChange(allChanges, "Intelligence", beforeParam.AddtionalIntelligence, afterParam.AddtionalIntelligence);
-                        CheckStatChange(allChanges, "Spirit", beforeParam.AddtionalSpirit, afterParam.AddtionalSpirit);
-
-                        // Derived combat stats
-                        CheckStatChange(allChanges, "Accuracy", beforeParam.AddtionalAccuracyRate, afterParam.AddtionalAccuracyRate);
-                        CheckStatChange(allChanges, "Defense", beforeParam.AddtionalDefense, afterParam.AddtionalDefense);
-
-                        // Evasion uses "Nx Y%" format on victory screen - track both count and rate
-                        CheckStatChange(allChanges, "Evasion Count", beforeParam.AddtionalEvasionCount, afterParam.AddtionalEvasionCount);
-                        CheckStatChange(allChanges, "Evasion", beforeParam.AddtionalEvasionRate, afterParam.AddtionalEvasionRate);
-
-                        // Magic Defense uses "Nx Y%" format on victory screen - track both count and rate
-                        CheckStatChange(allChanges, "Magic Defense Count", beforeParam.AddtionalMagicDefenseCount, afterParam.AddtionalMagicDefenseCount);
-                        CheckStatChange(allChanges, "Magic Defense", beforeParam.AddtionalAbilityDefenseRate, afterParam.AddtionalAbilityDefenseRate);
-
-                        // Magic Evasion
-                        CheckStatChange(allChanges, "Magic Evasion", beforeParam.AddtionalAbilityEvasionRate, afterParam.AddtionalAbilityEvasionRate);
-                    }
-                }
-
-                if (allChanges.Count > 0)
-                {
-                    // Format: "Firion: Sword lv2, Strength +1, HP +5"
-                    string announcement = $"{charName}: {string.Join(", ", allChanges)}";
-                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
-                }
-            }
-            catch { }
+            return Math.Clamp(ExpUtility.GetExpLevel(1, rawExp, ExpTableType.LevelExp), 1, 16);
         }
 
-        /// <summary>
-        /// Check if a stat changed and add to the list if it did.
-        /// Format: "Strength +1" for use in "Firion: Strength +1, HP +5"
-        /// </summary>
-        private static void CheckStatChange(List<string> changes, string statName, int before, int after)
+        private static string SpellName(OwnedAbility ability, MessageManager messageManager)
         {
-            int delta = after - before;
-            if (delta > 0)
-            {
-                changes.Add($"{statName} +{delta}");
-            }
-            else if (delta < 0)
-            {
-                // Stats can decrease in FF2 (e.g., HP down from certain actions)
-                changes.Add($"{statName} {delta}");
-            }
-        }
-
-        #endregion
-
-        #region Show - Main Entry Point for Battle Results
-
-        /// <summary>
-        /// Main entry point when battle result screen shows.
-        /// Since ShowPointsInit patch doesn't fire reliably in IL2CPP,
-        /// we announce gil directly from here.
-        /// Weapon skills are announced in ShowSkillLevelsInit (fires later when data is populated).
-        /// </summary>
-        public static void Show_Postfix(BattleResultData data, bool isReverse)
-        {
-            try
-            {
-                if (data == null || isReverse) return;
-
-                // Clear battle active flag - battle is now over
-                FFII_ScreenReaderMod.ClearBattleActive();
-                // ...but the result screen is still up over the field. Latch a beacon-only gate so the
-                // audio beacon doesn't ping the field underneath until the player returns to it
-                // (cleared by GameStatePatches field transition / OnSceneLoaded).
-                FFII_ScreenReaderMod.BattleResultActive = true;
-
-                // Reset tracking for new battle result
-                ResetTracking(data);
-
-                // Announce gil directly (ShowPointsInit doesn't fire reliably)
-                AnnounceGilGained(data);
-
-                // Announce weapon skill percentage gains
-                if (!announcedWeaponSkills)
-                {
-                    announcedWeaponSkills = true;
-                    AnnounceAllWeaponSkills(data);
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Announce gil gained from battle.
-        /// </summary>
-        private static void AnnounceGilGained(BattleResultData data)
-        {
-            // Prevent double announcements (ShowPointsInit might also fire)
-            if (announcedPoints)
-            {
-                return;
-            }
-            announcedPoints = true;
-
-            try
-            {
-                int gil = data.GetGil;
-                if (gil > 0)
-                {
-                    string announcement = string.Format(T("Gained {0} gil"), gil.ToString("N0"));
-                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-                }
-            }
-            catch { }
-        }
-
-        /// <summary>
-        /// Announce weapon skill progress for all characters.
-        /// </summary>
-        private static void AnnounceAllWeaponSkills(BattleResultData data)
-        {
-            try
-            {
-                var characterList = data.CharacterList;
-                if (characterList == null)
-                {
-                    return;
-                }
-
-                foreach (var charResult in characterList)
-                {
-                    if (charResult == null) continue;
-                    AnnounceWeaponSkillProgress(charResult);
-                }
-            }
-            catch { }
+            string mesIdName = ability.MesIdName;
+            if (messageManager == null || string.IsNullOrEmpty(mesIdName)) return null;
+            return TextUtils.StripIconMarkup(messageManager.GetMessage(mesIdName, false));
         }
 
         #endregion

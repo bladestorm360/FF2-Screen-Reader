@@ -9,56 +9,15 @@ using Il2CppLast.Battle.Function;
 using Il2CppLast.Systems;
 using FFII_ScreenReader.Core;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 using BattlePlayerData = Il2Cpp.BattlePlayerData;
 using BattleController = Il2CppLast.Battle.BattleController;
-using BattlePlugManager = Il2CppLast.Battle.BattlePlugManager;
 using OwnedItemData = Il2CppLast.Data.User.OwnedItemData;
 using HitType = Il2CppLast.Systems.HitType;
 using BattleBasicFunction = Il2CppLast.Battle.Function.BattleBasicFunction;
 
 namespace FFII_ScreenReader.Patches
 {
-    /// <summary>
-    /// Helper for battle message announcements using centralized deduplication.
-    /// </summary>
-    public static class GlobalBattleMessageTracker
-    {
-        // Local guard: the same battle message can be posted via more than one code path.
-        private static string _lastMessage = null;
-
-        /// <summary>
-        /// Try to announce a message, returning false if it duplicates the last one.
-        /// </summary>
-        public static bool TryAnnounce(string message, string source)
-        {
-            if (string.IsNullOrWhiteSpace(message))
-            {
-                return false;
-            }
-
-            string cleanMessage = message.Trim();
-
-            if (cleanMessage == _lastMessage)
-            {
-                return false;
-            }
-            _lastMessage = cleanMessage;
-
-            // Battle actions don't interrupt - they queue
-            FFII_ScreenReaderMod.SpeakText(cleanMessage, interrupt: false);
-            return true;
-        }
-
-        /// <summary>
-        /// Reset tracking (e.g., when battle ends).
-        /// </summary>
-        public static void Reset()
-        {
-            _lastMessage = null;
-            BattleMessagePatches.ResetConditionDedup();
-        }
-    }
-
     /// <summary>
     /// Patches for battle action and damage announcements.
     /// Ported from FF3 screen reader.
@@ -87,11 +46,6 @@ namespace FFII_ScreenReader.Patches
             pendingDamageSource = null;
             return source;
         }
-
-        /// <summary>
-        /// Tracks the last battle command message to prevent duplicates.
-        /// </summary>
-        private static string lastBattleCommandMessage = "";
 
         #endregion
 
@@ -137,7 +91,7 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(addConditionMethod, postfix: new HarmonyMethod(postfix));
                 }
 
-                // Patch BattleController.StartPreeMptiveMes for encounter type announcements
+                // Patch BattleController.StartPreeMptiveMes as the battle-start lifecycle hook
                 var startPreeMptiveMesMethod = AccessTools.Method(typeof(BattleController), "StartPreeMptiveMes");
                 if (startPreeMptiveMesMethod != null)
                 {
@@ -172,6 +126,9 @@ namespace FFII_ScreenReader.Patches
 
                 // Patch BattleCommandMessageController for system messages like "The party was defeated"
                 PatchBattleCommandMessage(harmony);
+
+                // Battle-end lifecycle hooks (win / lose / escape fade-outs + Exit)
+                PatchBattleEnd(harmony);
             }
             catch (Exception ex)
             {
@@ -250,6 +207,39 @@ namespace FFII_ScreenReader.Patches
         // an unrelated later attack's damage announcement.
         private static int _pendingHitCountFrame = -1;
 
+        // BattleBaseFunction.<battleActData>k__BackingField — a protected property, so read by offset.
+        private const int OFFSET_BATTLE_ACT_DATA = 0x38;
+        // Ability.TypeId of weapon attacks. BattleBasicFunction.CreateHitCount only draws the ×N for
+        // this type, so the calculated-hit-count fallback follows the same rule.
+        private const int WEAPON_ABILITY_TYPE = 4;
+
+        /// <summary>
+        /// The attack's own hit count against this target, from the function's calculation results
+        /// (ICalcResultDic → ICalcResult.GetHitCount). Used when no on-screen ×N was paired with the
+        /// damage view. Weapon attacks only; 1 for anything else or on any failure.
+        /// </summary>
+        private static int ReadWeaponHitCount(BattleBasicFunction function, BattleUnitData target)
+        {
+            try
+            {
+                if (function == null || target == null) return 1;
+                IntPtr actPtr = System.Runtime.InteropServices.Marshal.ReadIntPtr(function.Pointer, OFFSET_BATTLE_ACT_DATA);
+                if (actPtr == IntPtr.Zero) return 1;
+                var abilities = new BattleActData(actPtr).abilityList;
+                if (abilities == null || abilities.Count == 0 || abilities[0] == null
+                    || abilities[0].TypeId != WEAPON_ABILITY_TYPE)
+                    return 1;
+                var results = function.ICalcResultDic;
+                if (results == null || !results.ContainsKey(target)) return 1;
+                var result = results[target];
+                return result != null ? Math.Max(1, result.GetHitCount()) : 1;
+            }
+            catch
+            {
+                return 1;
+            }
+        }
+
         /// <summary>Captures the hit-count multiplier (__0 = hitCountValue) for the next damage view.</summary>
         public static void CreateHitCount_Postfix(int __0)
         {
@@ -321,10 +311,6 @@ namespace FFII_ScreenReader.Patches
                 string message = __0?.ToString();
                 if (string.IsNullOrEmpty(message)) return;
 
-                // Deduplicate
-                if (message == lastBattleCommandMessage) return;
-                lastBattleCommandMessage = message;
-
                 // Clean up the message
                 string cleanMessage = TextUtils.StripIconMarkup(message);
                 cleanMessage = cleanMessage.Replace("\n", " ").Replace("\r", " ").Trim();
@@ -332,6 +318,21 @@ namespace FFII_ScreenReader.Patches
                     cleanMessage = cleanMessage.Replace("  ", " ");
 
                 if (string.IsNullOrEmpty(cleanMessage)) return;
+
+                // Per-frame repeat guard: ScanBattleFunction.IsFunctionEnd re-sends the current line
+                // (BattleUIManager.SetCommadnMessage → SetMessage) every frame until its timer advances.
+                // Swallow an identical text inside a short frame window, refreshing the stamp on each
+                // swallowed repeat, so the stream speaks once but the same text seconds later (a second
+                // identical cast) still speaks. Checked on the game's text, before the caster prefix,
+                // so a swallowed repeat never consumes _pendingActorName.
+                int frame = UnityEngine.Time.frameCount;
+                if (cleanMessage == _lastMessageText && frame - _lastMessageFrame < 20)
+                {
+                    _lastMessageFrame = frame;
+                    return;
+                }
+                _lastMessageText = cleanMessage;
+                _lastMessageFrame = frame;
 
                 // Bug 6: if a spell/skill act just stashed its caster (CreateActFunction suppressed
                 // its own base-name utterance), prepend the caster so this level-bearing message
@@ -385,31 +386,11 @@ namespace FFII_ScreenReader.Patches
                     return;
                 }
 
-                string announcement;
-                if (!string.IsNullOrEmpty(actionName))
-                {
-                    string actionLower = actionName.ToLower();
-                    if (actionLower == "attack" || actionLower == "fight")
-                    {
-                        announcement = $"{actorName} attacks";
-                    }
-                    else if (actionLower == "defend" || actionLower == "guard")
-                    {
-                        announcement = $"{actorName} defends";
-                    }
-                    else if (actionLower == "item")
-                    {
-                        announcement = $"{actorName} uses item";
-                    }
-                    else
-                    {
-                        announcement = $"{actorName}, {actionName}";
-                    }
-                }
-                else
-                {
-                    announcement = $"{actorName} attacks";
-                }
+                // "Actor: Action" for every action (FF1 parity), using the game's own localized
+                // command/item name — no English command-word matching.
+                string announcement = string.IsNullOrEmpty(actionName)
+                    ? actorName
+                    : $"{actorName}: {actionName}";
 
                 // Local guard by the native BattleActData pointer: skip a repeat fire for the
                 // same action, but different enemies with the same name (distinct act data)
@@ -550,7 +531,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         private static string GetTargetName(BattleUnitData targetUnitData)
         {
-            string targetName = "Unknown";
+            string targetName = T("Unknown");
             var playerData = targetUnitData.TryCast<BattlePlayerData>();
             if (playerData?.ownedCharacterData != null)
             {
@@ -580,25 +561,23 @@ namespace FFII_ScreenReader.Patches
         /// that actually fires during combat (incl. multi-hit). Announces directly — with only one
         /// damage postfix there is no cross-patch duplication to dedup against.
         /// </summary>
-        public static void CreateDamageViewWithHitType_Postfix(BattleUnitData data, int value, HitType hitType, bool isRecovery)
+        public static void CreateDamageViewWithHitType_Postfix(BattleBasicFunction __instance, BattleUnitData data, int value, HitType hitType, bool isRecovery)
         {
             try
             {
                 if (data == null) return;
 
-                // TEMP DIAG (0-damage / buff HitType confirmation): log the raw game damage-view event
-                // — value + HitType + isRecovery — so buff-vs-zero-damage HitTypes can be verified.
-                // Remove after confirming.
-                MelonLogger.Msg($"[DIAG-DMG] CreateDamageView value={value} hitType={hitType}({(int)hitType}) isRecovery={isRecovery}");
-
                 string targetName = GetTargetName(data);
                 var damageSource = ConsumeDamageSource();
 
                 // Consume the multi-hit "×N" count captured by CreateHitCount (fires just before this
-                // view). Reset to 1 so a stale count can't leak into the next attack.
+                // view). Reset to 1 so a stale count can't leak into the next attack. When no ×N was
+                // paired with this view, fall back to the attack's own calculated hit count.
                 bool fresh = UnityEngine.Time.frameCount - _pendingHitCountFrame <= 1;
                 int hitCount = fresh ? _pendingHitCount : 1;
                 _pendingHitCount = 1;
+                if (hitCount <= 1)
+                    hitCount = ReadWeaponHitCount(__instance, data);
 
                 string message;
 
@@ -613,34 +592,31 @@ namespace FFII_ScreenReader.Patches
                 }
                 else if (hitType == HitType.Miss)
                 {
-                    message = $"{targetName}: Miss";
+                    message = string.Format(T("{0}: Miss"), targetName);
                 }
                 else if (hitType == HitType.MPRecovery)
                 {
-                    message = $"{targetName}: Recovered {value} MP";
+                    message = string.Format(T("{0}: Recovered {1} MP"), targetName, value);
                 }
                 else if (hitType == HitType.Recovery || isRecovery)
                 {
-                    message = $"{targetName}: Recovered {value} HP";
+                    message = string.Format(T("{0}: Recovered {1} HP"), targetName, value);
                 }
                 else if (hitType == HitType.MPHit)
                 {
-                    message = $"{targetName}: {value} MP damage";
-                }
-                else if (!string.IsNullOrEmpty(damageSource))
-                {
-                    // HP damage from a status source (e.g. Poison).
-                    message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
-                        ? $"{damageSource}: {targetName}: {hitCount}x{value} damage"
-                        : $"{damageSource}: {targetName}: {value} damage";
+                    message = string.Format(T("{0}: {1} MP damage"), targetName, value);
                 }
                 else
                 {
                     // HP damage — Hit / Critical / Zero. A zero-damage hit (HitType.Zero) has value 0
                     // and reads "0 damage", mirroring the game's on-screen "0".
                     message = (PreferencesManager.DamageDisplay == 1 && hitCount > 1)
-                        ? $"{targetName}: {hitCount}x{value} damage"
-                        : $"{targetName}: {value} damage";
+                        ? string.Format(T("{0}: {1}x{2} damage"), targetName, hitCount, value)
+                        : string.Format(T("{0}: {1} damage"), targetName, value);
+
+                    // HP damage from a status source (e.g. Poison) is prefixed with the source.
+                    if (!string.IsNullOrEmpty(damageSource))
+                        message = $"{damageSource}: {message}";
                 }
 
                 // Damage/healing doesn't interrupt - queues after the action announcement.
@@ -667,6 +643,10 @@ namespace FFII_ScreenReader.Patches
         private static string _pendingActorName = null;
         private static int _pendingActorFrame = -1;
 
+        // SetMessage_Postfix per-frame repeat guard (last spoken message text + frame it was last seen).
+        private static string _lastMessageText = null;
+        private static int _lastMessageFrame = -1;
+
         public static void ResetConditionDedup()
         {
             _lastConditionByUnit.Clear();
@@ -680,7 +660,7 @@ namespace FFII_ScreenReader.Patches
                 if (battleUnitData == null) return;
 
                 // Get target name
-                string targetName = "Unknown";
+                string targetName = T("Unknown");
                 var playerData = battleUnitData.TryCast<BattlePlayerData>();
                 if (playerData?.ownedCharacterData != null)
                 {
@@ -772,70 +752,73 @@ namespace FFII_ScreenReader.Patches
 
         #endregion
 
-        #region StartPreeMptiveMes - Encounter Type Announcements
-
-        private static int lastPreemptiveState = 0;
+        #region Battle lifecycle
 
         /// <summary>
-        /// Postfix for BattleController.StartPreeMptiveMes - announces encounter type.
-        /// PreeMptiveState enum: Non=-1, Normal=0, PreeMptive=1, BackAttack=2,
-        /// EnemyPreeMptive=3, EnemySideAttack=4, SideAttack=5
+        /// Postfix for BattleController.StartPreeMptiveMes - the battle-start lifecycle hook. The
+        /// encounter condition ("Preemptive strike!", "Back attack!") is the game's own message:
+        /// StartPreeMptiveMes → BattleUtility.SetCommandMessageAtKey → BattleUIManager.SetCommadnMessage
+        /// → BattleCommandMessageController.SetMessage (verified in GameAssembly), which SetMessage_Postfix
+        /// already speaks, so nothing is synthesized here (FF1 parity).
         /// </summary>
-        public static void StartPreeMptiveMes_Postfix(BattleController __instance)
+        public static void StartPreeMptiveMes_Postfix()
         {
             try
             {
-                // Try to get the preemptive state via BattlePlugManager
-                int preemptiveState = 0;
+                FFII_ScreenReaderMod.SetBattleActive();
+                BattleResultPatches.ResetForNewBattle();
+            }
+            catch { }
+        }
 
+        /// <summary>
+        /// Patches the BattleController end-of-battle callbacks (win / lose / escape fade-outs) and
+        /// Exit(bool) so battle state clears on every exit path (FF1 BattleControllerPatches). All are
+        /// real-bodied, unique-RVA methods (dump.cs:469532-469580).
+        /// </summary>
+        private static void PatchBattleEnd(HarmonyLib.Harmony harmony)
+        {
+            var endPostfix = new HarmonyMethod(AccessTools.Method(typeof(BattleMessagePatches), nameof(BattleEnd_Hook)));
+            foreach (var name in new[] { "EndWinFadeOutCallback", "EndLoseFadeOutCallback", "EndEscapeFadeOut", "EndFadeOutCallback" })
+            {
                 try
                 {
-                    var battlePlugManager = BattlePlugManager.Instance();
-                    if (battlePlugManager != null)
-                    {
-                        // Get BattlePopPlug and call GetResult()
-                        var battlePopPlug = battlePlugManager.BattlePopPlug;
-                        if (battlePopPlug != null)
-                        {
-                            preemptiveState = (int)battlePopPlug.GetResult();
-                        }
-                        else
-                        {
-                            // Alternatively, get BattleProgress and call GetNowPreetive if it's a BattleProgressTurn
-                            var battleProgress = battlePlugManager.BattleProgress;
-                            if (battleProgress != null)
-                            {
-                                var getNowPreetiveMethod = battleProgress.GetType().GetMethod("GetNowPreetive");
-                                if (getNowPreetiveMethod != null)
-                                {
-                                    var result = getNowPreetiveMethod.Invoke(battleProgress, null);
-                                    preemptiveState = Convert.ToInt32(result);
-                                }
-                            }
-                        }
-                    }
+                    var method = AccessTools.Method(typeof(BattleController), name, Type.EmptyTypes);
+                    if (method != null)
+                        harmony.Patch(method, postfix: endPostfix);
+                    else
+                        MelonLogger.Warning($"[BattleMessage] BattleController.{name} not found");
                 }
-                catch { }
-
-                // Avoid repeat announcements
-                if (preemptiveState == lastPreemptiveState && preemptiveState == 0)
-                    return;
-                lastPreemptiveState = preemptiveState;
-
-                string announcement = preemptiveState switch
+                catch (Exception ex)
                 {
-                    FF2Constants.BattleStartStates.STATE_PREEMPTIVE => "Preemptive strike!",
-                    FF2Constants.BattleStartStates.STATE_BACK_ATTACK => "Back attack!",
-                    FF2Constants.BattleStartStates.STATE_ENEMY_PREEMPTIVE => "Enemy preemptive!",
-                    FF2Constants.BattleStartStates.STATE_ENEMY_SIDE_ATTACK => "Enemy side attack!",
-                    FF2Constants.BattleStartStates.STATE_SIDE_ATTACK => "Side attack!",
-                    _ => null
-                };
-
-                if (!string.IsNullOrEmpty(announcement))
-                {
-                    FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
+                    MelonLogger.Error($"[BattleMessage] Error patching {name}: {ex.Message}");
                 }
+            }
+
+            try
+            {
+                var exitMethod = AccessTools.Method(typeof(BattleController), "Exit", new Type[] { typeof(bool) });
+                if (exitMethod != null)
+                    harmony.Patch(exitMethod, prefix: endPostfix);
+                else
+                    MelonLogger.Warning("[BattleMessage] BattleController.Exit not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleMessage] Error patching Exit: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Battle ended (any path): clear battle state, guarded on IsInBattle so the callbacks can't
+        /// clear anything outside a real battle. Leaves BattleResultActive to the field transition.
+        /// </summary>
+        public static void BattleEnd_Hook()
+        {
+            try
+            {
+                if (FFII_ScreenReaderMod.IsInBattle)
+                    FFII_ScreenReaderMod.ClearBattleState();
             }
             catch { }
         }
@@ -849,7 +832,7 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void GeneratePoisonDamage_Prefix()
         {
-            SetDamageSource("Poison");
+            SetDamageSource(T("Poison"));
         }
 
         /// <summary>
@@ -868,11 +851,11 @@ namespace FFII_ScreenReader.Patches
         /// </summary>
         public static void ResetState()
         {
-            GlobalBattleMessageTracker.Reset();
-            lastPreemptiveState = 0;
-            lastBattleCommandMessage = "";
+            ResetConditionDedup();
             _pendingActorName = null;
             _pendingActorFrame = -1;
+            _lastMessageText = null;
+            _lastMessageFrame = -1;
         }
     }
 }

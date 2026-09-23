@@ -25,16 +25,17 @@ Confirms compile succeeds and produces `bin\Debug\net6.0\FFII_ScreenReader.dll`.
 
 ### 2. Assemble `Releases\V<version>\`
 
-Create the directory and copy in the four end-user files:
+Create the directory and copy in the five end-user files:
 
 | File | Source |
 |---|---|
 | `FFII_ScreenReader.dll` | `bin\Debug\net6.0\FFII_ScreenReader.dll` (the fresh build) |
 | `nvdaControllerClient64.dll` | most recent prior `Releases\V*\` directory |
 | `Tolk.dll` | most recent prior `Releases\V*\` directory |
+| `SDL3.dll` | most recent prior `Releases\V*\` directory. No FF2 release has shipped it yet (V1.1 predates the SDL3 audio/controller layer), so the first one takes it from the FF1 mod: `D:\Games\Dev\Unity\FFPR\ff1\ff1-screen-reader\Releases\V1.4\SDL3.dll`. Without it the mod has no audio feedback or controller support |
 | `ReadMe.txt` | copy of repo-root `readme.md`, converted to plain text and saved as `ReadMe.txt` (strip `#` heading markers, code-fence ` ``` ` lines, leading `-` bullet markers, and any other markdown syntax — the shipped file should read cleanly with a screen reader, no leftover `#` or backticks) |
 
-Preserve casing exactly: lowercase `n` in `nvdaControllerClient64.dll`, capital `T` in `Tolk.dll`. End users follow install instructions in `ReadMe.txt` that reference these names.
+Preserve casing exactly: lowercase `n` in `nvdaControllerClient64.dll`, capital `T` in `Tolk.dll`, `SDL3.dll` as written. End users follow install instructions in `ReadMe.txt` that reference these names.
 
 ### 3. Zip with 7-Zip
 
@@ -42,7 +43,7 @@ Preserve casing exactly: lowercase `n` in `nvdaControllerClient64.dll`, capital 
 & "C:\Program Files\7-Zip\7z.exe" a -tzip "Releases\FFII-Screen-ReaderV<version>.zip" ".\Releases\V<version>\*"
 ```
 
-Zip naming: `FFII-Screen-ReaderV<version>.zip`, placed in `Releases\` (sibling of the version directory, not inside it). The zip's root contains the four files directly — no nested `V<version>\` folder, so end users can extract and follow ReadMe placement instructions without re-routing paths.
+Zip naming: `FFII-Screen-ReaderV<version>.zip`, placed in `Releases\` (sibling of the version directory, not inside it). The zip's root contains the five files directly — no nested `V<version>\` folder, so end users can extract and follow ReadMe placement instructions without re-routing paths.
 
 ### 4. Tag and push
 

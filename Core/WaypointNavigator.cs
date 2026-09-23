@@ -5,6 +5,7 @@ using UnityEngine;
 using MelonLoader;
 using FFII_ScreenReader.Field;
 using FFII_ScreenReader.Utils;
+using static FFII_ScreenReader.Utils.ModTextTranslator;
 
 namespace FFII_ScreenReader.Core
 {
@@ -121,7 +122,7 @@ namespace FFII_ScreenReader.Core
             int nextVal = ((int)currentCategory + 1) % CategoryCount;
             currentCategory = (WaypointCategory)nextVal;
             RefreshList(mapId);
-            return CategoryNames[(int)currentCategory];
+            return T(CategoryNames[(int)currentCategory]);
         }
 
         /// <summary>
@@ -132,7 +133,7 @@ namespace FFII_ScreenReader.Core
             int prevVal = ((int)currentCategory - 1 + CategoryCount) % CategoryCount;
             currentCategory = (WaypointCategory)prevVal;
             RefreshList(mapId);
-            return CategoryNames[(int)currentCategory];
+            return T(CategoryNames[(int)currentCategory]);
         }
 
         /// <summary>
@@ -142,14 +143,14 @@ namespace FFII_ScreenReader.Core
         {
             var waypoint = SelectedWaypoint;
             if (waypoint == null)
-                return "No waypoints";
+                return T("No waypoints");
 
             Vector3 playerPos = GetPlayerPosition();
             string description = waypoint.FormatDescription(playerPos);
 
             if (currentList.Count > 1)
             {
-                description += $", {currentIndex + 1} of {currentList.Count}";
+                description += ", " + string.Format(T("{0} of {1}"), currentIndex + 1, currentList.Count);
             }
 
             return description;
@@ -160,9 +161,9 @@ namespace FFII_ScreenReader.Core
         /// </summary>
         public string GetCategoryAnnouncement()
         {
-            string categoryName = CategoryNames[(int)currentCategory];
+            string categoryName = T(CategoryNames[(int)currentCategory]);
             int count = currentList.Count;
-            string plural = count == 1 ? "waypoint" : "waypoints";
+            string plural = count == 1 ? T("waypoint") : T("waypoints");
             return $"{categoryName}: {count} {plural}";
         }
 

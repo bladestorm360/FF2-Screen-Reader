@@ -12,21 +12,6 @@ namespace FFII_ScreenReader.Utils
         public const float TILE_SIZE = 16f;
 
         /// <summary>
-        /// Battle start condition state values (PreeMptiveState enum).
-        /// Used by BattleMessagePatches to announce encounter types.
-        /// </summary>
-        public static class BattleStartStates
-        {
-            public const int STATE_NON = -1;
-            public const int STATE_NORMAL = 0;
-            public const int STATE_PREEMPTIVE = 1;
-            public const int STATE_BACK_ATTACK = 2;
-            public const int STATE_ENEMY_PREEMPTIVE = 3;
-            public const int STATE_ENEMY_SIDE_ATTACK = 4;
-            public const int STATE_SIDE_ATTACK = 5;
-        }
-
-        /// <summary>
         /// AbilityWindowController (magic menu) state machine values.
         /// </summary>
         public static class MagicMenuStates
