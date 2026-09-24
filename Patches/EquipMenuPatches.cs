@@ -194,67 +194,15 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(selectContentItemMethod, postfix: new HarmonyMethod(postfix));
                 }
 
-                // Patch EquipmentWindowController.SetNextState for state transition detection
-                TryPatchSetNextState(harmony);
+                // (No EquipmentWindowController.SetNextState hook: its body 0x38E930 is folded with 15
+                // setters and only called from BattlePlayController.ActDecisionDelegate, so it never saw
+                // an equipment-window transition. EquipMenuState clears itself in ShouldSuppress when the
+                // window is back on its command bar, and on SetActive(false).)
             }
             catch (Exception ex)
             {
                 MelonLogger.Error($"[EquipMenu] Error applying patches: {ex.Message}");
             }
-        }
-
-        /// <summary>
-        /// Patches EquipmentWindowController.SetNextState for state transition detection.
-        /// </summary>
-        private static void TryPatchSetNextState(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type controllerType = typeof(KeyInputEquipmentWindowController);
-
-                MethodInfo setNextStateMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "SetNextState")
-                    {
-                        setNextStateMethod = method;
-                        break;
-                    }
-                }
-
-                if (setNextStateMethod != null)
-                {
-                    var postfix = typeof(EquipMenuPatches).GetMethod(nameof(SetNextState_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        /// <summary>
-        /// Postfix for SetNextState - clears state when returning to command bar or closing menu.
-        /// </summary>
-        public static void SetNextState_Postfix(object __instance, int state)
-        {
-            try
-            {
-                // The compiled body (0x38E930) is folded with fifteen other setters and is only ever
-                // called from BattlePlayController.ActDecisionDelegate (every battle action): act only
-                // when the native object really is the equipment window. The command-bar open read is
-                // armed by CommandInit instead (CommandBarPatches).
-                if (!Il2CppTypeCheck.Is<KeyInputEquipmentWindowController>((__instance as Il2CppSystem.Object)?.Pointer ?? IntPtr.Zero))
-                    return;
-
-                // STATE_NONE = 0 (menu closing), STATE_COMMAND = 1 (command bar)
-                if ((state == 0 || state == 1) && EquipMenuState.IsActive)
-                {
-                    EquipMenuState.ClearState();
-                }
-            }
-            catch { }
         }
 
         #region EquipmentInfoWindowController - Slot Selection

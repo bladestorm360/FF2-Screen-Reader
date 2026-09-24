@@ -16,8 +16,10 @@ namespace FFII_ScreenReader.Patches
     ///
     /// Hook Layers (most reliable first):
     /// 1. FieldController.ChangeTransportation - Primary, fires on all transportation changes
-    /// 2. FieldPlayer.ChangeMoveState - Backup, catches state machine transitions
-    /// 3. FieldPlayer.GetOn/GetOff - Secondary, specific boarding/disembarking events
+    /// 2. FieldPlayer.GetOn/GetOff - Secondary, specific boarding/disembarking events
+    /// (The FieldPlayer.ChangeMoveState "backup" hook is gone: its only callers are the per-frame
+    /// FieldPlayerKeyController/TouchBase OnTouchPadCallback movement paths, which only ever pass
+    /// Walk/Dash — CLAUDE.md rule 3; FF1 has no such hook.)
     /// </summary>
     public static class MovementSpeechPatches
     {
@@ -40,9 +42,6 @@ namespace FFII_ScreenReader.Patches
             {
                 // Primary hook - most reliable for all transportation changes
                 TryPatchChangeTransportation(harmony);
-
-                // Backup hook - catches state machine transitions
-                TryPatchChangeMoveState(harmony);
 
                 // Secondary hooks - specific boarding/disembarking events
                 TryPatchGetOn(harmony);
@@ -150,84 +149,6 @@ namespace FFII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"[MoveState] Error in ChangeTransportation patch: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Patch FieldPlayer.ChangeMoveState - backup hook for state machine transitions.
-        /// Signature: public void ChangeMoveState(MoveState moveState, bool ignoreStatusSwitchConfirm = False)
-        /// Note: MoveState is enum but marshals as int in IL2CPP.
-        /// </summary>
-        private static void TryPatchChangeMoveState(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type fieldPlayerType = typeof(FieldPlayer);
-                MethodInfo targetMethod = null;
-
-                foreach (var method in fieldPlayerType.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-                {
-                    if (method.Name == "ChangeMoveState")
-                    {
-                        var parameters = method.GetParameters();
-                        // ChangeMoveState(MoveState, bool) - MoveState is enum (int)
-                        if (parameters.Length >= 1)
-                        {
-                            targetMethod = method;
-                            break;
-                        }
-                    }
-                }
-
-                if (targetMethod != null)
-                {
-                    var postfix = typeof(MovementSpeechPatches).GetMethod(nameof(ChangeMoveState_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-
-                    harmony.Patch(targetMethod, postfix: new HarmonyMethod(postfix));
-                }
-                else
-                {
-                    MelonLogger.Error("[MoveState] Could not find ChangeMoveState method");
-                }
-            }
-            catch { }
-        }
-
-        // Track last move state for ChangeMoveState backup hook
-        private static int lastMoveState = -1;
-
-        /// <summary>
-        /// Postfix for FieldPlayer.ChangeMoveState - backup hook for state transitions.
-        /// Catches transitions that might bypass ChangeTransportation.
-        /// </summary>
-        public static void ChangeMoveState_Postfix(FieldPlayer __instance)
-        {
-            try
-            {
-                if (__instance == null)
-                    return;
-
-                int currentMoveState = (int)__instance.moveState;
-
-                // Only process if state actually changed
-                if (currentMoveState != lastMoveState)
-                {
-                    int previousState = lastMoveState;
-                    lastMoveState = currentMoveState;
-
-                    // Skip first call (initialization)
-                    if (previousState == -1)
-                        return;
-
-                    // Announce state change (handles both boarding and disembarking)
-                    // Cache updates are handled by ChangeTransportation/GetOn/GetOff patches
-                    MoveStateHelper.AnnounceStateChange(previousState, currentMoveState);
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[MoveState] Error in ChangeMoveState patch: {ex.Message}");
             }
         }
 
@@ -433,11 +354,7 @@ namespace FFII_ScreenReader.Patches
         {
             lastTransportationId = IL2CppOffsets.Transport.TRANSPORT_PLAYER;
             lastAnnouncedTransportId = -1;
-            lastMoveState = -1;
             MoveStateHelper.ResetState();
-
-            // Re-seed the walk/run poller so a map/scene transition isn't mistaken for a toggle.
-            FFII_ScreenReader.Core.Handlers.GameToggleAnnouncer.Reset();
         }
 
         /// <summary>

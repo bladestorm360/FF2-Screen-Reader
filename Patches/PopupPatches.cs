@@ -423,6 +423,29 @@ namespace FFII_ScreenReader.Patches
         #region Button Reading
 
         /// <summary>
+        /// True when <paramref name="cursor"/> is the selectCursor of the popup PopupState owns (a popup
+        /// with buttons). Lets the cursor reader route the popup's own navigation to ReadCurrentButton in
+        /// battle, where the generic reader is otherwise silent, without misreading any other cursor.
+        /// </summary>
+        public static bool IsActivePopupCursor(GameCursor cursor)
+        {
+            try
+            {
+                if (cursor == null || !PopupState.ShouldSuppress() || PopupState.SelectCursorOffset < 0)
+                    return false;
+                IntPtr popupPtr = PopupState.ActivePopupPtr;
+                if (popupPtr == IntPtr.Zero)
+                    return false;
+                IntPtr cursorPtr = Marshal.ReadIntPtr(popupPtr + PopupState.SelectCursorOffset);
+                return cursorPtr != IntPtr.Zero && cursorPtr == cursor.Pointer;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        /// <summary>
         /// Read current button label from active popup.
         /// Called by CursorNavigation_Postfix when popup is active.
         /// </summary>
@@ -604,9 +627,6 @@ namespace FFII_ScreenReader.Patches
         private static void HandlePopupDetected(string typeName, IntPtr ptr, int cmdListOffset, Func<string> readFunc, int selectCursorOffset = -1)
         {
             PopupState.SetActive(typeName, ptr, cmdListOffset, selectCursorOffset);
-
-            // Reset button tracking to prevent stale state from previous popups
-            BattlePausePatches.Reset();
 
             CoroutineManager.StartManaged(DelayedPopupRead(ptr, typeName, readFunc));
         }

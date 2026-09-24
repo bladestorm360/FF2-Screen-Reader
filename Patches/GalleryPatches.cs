@@ -21,6 +21,8 @@ namespace FFII_ScreenReader.Patches
         public static bool IsInGallery { get; set; } = false;
         public static bool SuppressContentChange { get; set; } = false;
         public static IntPtr CachedFocusedPtr { get; set; } = IntPtr.Zero;
+        // Entry title spoken before the focused entry was known: the next SetFocusContent speaks it.
+        public static bool PendingEntryRead { get; set; } = false;
         public static int PreviousState { get; set; } = 0;
 
         public static void ClearState()
@@ -28,6 +30,7 @@ namespace FFII_ScreenReader.Patches
             IsInGallery = false;
             SuppressContentChange = false;
             CachedFocusedPtr = IntPtr.Zero;
+            PendingEntryRead = false;
             PreviousState = 0;
             MenuStateRegistry.Reset(MenuStateRegistry.GALLERY);
         }
@@ -74,38 +77,36 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        /// <summary>
+        /// Entry read, event-driven (CLAUDE.md rule 3; replaces a 2-second poll of CachedFocusedPtr):
+        /// one frame after the View state, the title; then the focused entry if its SetFocusContent
+        /// already came (cached by the suppressed path), otherwise the next SetFocusContent speaks it
+        /// (PendingEntryRead).
+        /// </summary>
         private static IEnumerator AnnounceGalleryEntry()
         {
             yield return null;
+            if (!GalleryStateTracker.IsInGallery) yield break;
             FFII_ScreenReaderMod.SpeakText(T("Gallery"), true);
 
-            float elapsed = 0f;
-            while (elapsed < 2f)
+            try
             {
-                yield return null;
-                elapsed += Time.deltaTime;
-
-                try
+                IntPtr focusedPtr = GalleryStateTracker.CachedFocusedPtr;
+                if (focusedPtr != IntPtr.Zero && GalleryTopListController_SetFocusContent_Patch.SpeakEntry(focusedPtr, interrupt: false))
                 {
-                    IntPtr focusedPtr = GalleryStateTracker.CachedFocusedPtr;
-                    if (focusedPtr != IntPtr.Zero &&
-                        GalleryReader.ReadContentFromPointer(focusedPtr, out int number, out string name))
-                    {
-                        string entry = GalleryReader.ReadListEntry(number, name);
-                        if (!string.IsNullOrEmpty(entry))
-                            FFII_ScreenReaderMod.SpeakText(entry, false);
-                        GalleryStateTracker.SuppressContentChange = false;
-                        yield break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[Gallery] Error announcing entry item: {ex.Message}");
-                    break;
+                    GalleryStateTracker.SuppressContentChange = false;
+                    yield break;
                 }
             }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[Gallery] Error announcing entry item: {ex.Message}");
+                GalleryStateTracker.SuppressContentChange = false;
+                yield break;
+            }
 
-            GalleryStateTracker.SuppressContentChange = false;
+            // Focus not set yet: the entry's SetFocusContent speaks it (and lifts the suppression).
+            GalleryStateTracker.PendingEntryRead = true;
         }
 
     }
@@ -137,22 +138,36 @@ namespace FFII_ScreenReader.Patches
                 if (GalleryStateTracker.SuppressContentChange)
                 {
                     GalleryStateTracker.CachedFocusedPtr = ptr;
+
+                    // The entry title is already spoken: this is the entry's focused item.
+                    if (GalleryStateTracker.PendingEntryRead)
+                    {
+                        GalleryStateTracker.PendingEntryRead = false;
+                        GalleryStateTracker.SuppressContentChange = false;
+                        SpeakEntry(ptr, interrupt: false);
+                    }
                     return;
                 }
 
-                if (!GalleryReader.ReadContentFromPointer(ptr, out int number, out string name))
-                    return;
-
-                string entry = GalleryReader.ReadListEntry(number, name);
-                if (!string.IsNullOrEmpty(entry))
-                {
-                    FFII_ScreenReaderMod.SpeakText(entry);
-                }
+                SpeakEntry(ptr, interrupt: true);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[Gallery] Error in SetFocusContent patch: {ex.Message}");
             }
+        }
+
+        /// <summary>Speaks the gallery entry of a list content pointer. Returns true when something was spoken.</summary>
+        internal static bool SpeakEntry(IntPtr contentPtr, bool interrupt)
+        {
+            if (contentPtr == IntPtr.Zero || !GalleryReader.ReadContentFromPointer(contentPtr, out int number, out string name))
+                return false;
+
+            string entry = GalleryReader.ReadListEntry(number, name);
+            if (string.IsNullOrEmpty(entry))
+                return false;
+            FFII_ScreenReaderMod.SpeakText(entry, interrupt);
+            return true;
         }
     }
 

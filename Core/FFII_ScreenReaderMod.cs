@@ -209,9 +209,6 @@ namespace FFII_ScreenReader.Core
             // Patch save/load confirmation popups
             SaveLoadPatches.ApplyPatches(harmony);
 
-            // Patch battle pause menu
-            BattlePausePatches.ApplyPatches(harmony);
-
             // Apply transition patches to clear menu states when menus close
             MenuTransitionPatches.ApplyPatches(harmony);
 
@@ -221,7 +218,7 @@ namespace FFII_ScreenReader.Core
             // Map transition fade detection (suppress wall tones during screen fades)
             MapTransitionPatches.ApplyPatches(harmony);
 
-            // Encounter toggle announcements (walk/run is tracked read-only by GameToggleAnnouncer.Poll()).
+            // Walk/run and encounter toggle announcements (ConfigClient.SetIsAutoDash / CheatSettingsClient.SetIsEnableEncount).
             Handlers.GameToggleAnnouncer.ApplyPatches(harmony);
 
             // Patch InputSystemManager for SDL controller passthrough and mod input suppression
@@ -263,6 +260,9 @@ namespace FFII_ScreenReader.Core
                 }
 
                 var nextIndexPostfix = typeof(ManualPatches).GetMethod("CursorNavigation_Postfix", BindingFlags.Public | BindingFlags.Static);
+                // Prefix marks the cursor being moved (ManualPatches.NavigatingCursor) for hooks its
+                // synchronous callback reaches (config SelectCommand).
+                var navPrefix = new HarmonyMethod(typeof(ManualPatches).GetMethod("CursorNavigation_Prefix", BindingFlags.Public | BindingFlags.Static));
 
                 if (nextIndexPostfix == null)
                 {
@@ -273,28 +273,28 @@ namespace FFII_ScreenReader.Core
                 var nextIndexMethod = cursorType.GetMethod("NextIndex", BindingFlags.Public | BindingFlags.Instance);
                 if (nextIndexMethod != null)
                 {
-                    harmony.Patch(nextIndexMethod, postfix: new HarmonyMethod(nextIndexPostfix));
+                    harmony.Patch(nextIndexMethod, prefix: navPrefix, postfix: new HarmonyMethod(nextIndexPostfix));
                     LoggerInstance.Msg("Patched NextIndex");
                 }
 
                 var prevIndexMethod = cursorType.GetMethod("PrevIndex", BindingFlags.Public | BindingFlags.Instance);
                 if (prevIndexMethod != null)
                 {
-                    harmony.Patch(prevIndexMethod, postfix: new HarmonyMethod(nextIndexPostfix));
+                    harmony.Patch(prevIndexMethod, prefix: navPrefix, postfix: new HarmonyMethod(nextIndexPostfix));
                     LoggerInstance.Msg("Patched PrevIndex");
                 }
 
                 var skipNextMethod = cursorType.GetMethod("SkipNextIndex", BindingFlags.Public | BindingFlags.Instance);
                 if (skipNextMethod != null)
                 {
-                    harmony.Patch(skipNextMethod, postfix: new HarmonyMethod(nextIndexPostfix));
+                    harmony.Patch(skipNextMethod, prefix: navPrefix, postfix: new HarmonyMethod(nextIndexPostfix));
                     LoggerInstance.Msg("Patched SkipNextIndex");
                 }
 
                 var skipPrevMethod = cursorType.GetMethod("SkipPrevIndex", BindingFlags.Public | BindingFlags.Instance);
                 if (skipPrevMethod != null)
                 {
-                    harmony.Patch(skipPrevMethod, postfix: new HarmonyMethod(nextIndexPostfix));
+                    harmony.Patch(skipPrevMethod, prefix: navPrefix, postfix: new HarmonyMethod(nextIndexPostfix));
                     LoggerInstance.Msg("Patched SkipPrevIndex");
                 }
 
@@ -1191,16 +1191,42 @@ namespace FFII_ScreenReader.Core
     public static class ManualPatches
     {
         /// <summary>
+        /// Native pointer of the Cursor whose NextIndex/PrevIndex/SkipNextIndex/SkipPrevIndex is running.
+        /// Those methods invoke their callback synchronously, so a hook reached from inside one (e.g. the
+        /// config list's SelectCommand) knows it is a navigation step. Cleared by the postfix.
+        /// </summary>
+        public static IntPtr NavigatingCursor { get; private set; } = IntPtr.Zero;
+
+        /// <summary>Prefix for the Cursor navigation methods: marks the cursor being moved.</summary>
+        public static void CursorNavigation_Prefix(object __instance)
+        {
+            try { NavigatingCursor = (__instance as GameCursor)?.Pointer ?? IntPtr.Zero; }
+            catch { NavigatingCursor = IntPtr.Zero; }
+        }
+
+        /// <summary>
         /// Postfix for cursor navigation methods.
         /// Uses the Active State Pattern to check if specialized patches handle announcements.
         /// </summary>
         public static void CursorNavigation_Postfix(object __instance)
         {
+            NavigatingCursor = IntPtr.Zero;
             try
             {
                 var cursor = __instance as GameCursor;
                 if (cursor == null)
                     return;
+
+                // === REGISTERED POPUP IN BATTLE ===
+                // A popup opened in battle (the pause menu's Return to Title confirmation) owns its own
+                // cursor; its buttons are read by ReadCurrentButton, like every popup outside battle.
+                // Replaces the per-frame KeyInput CommonPopup.UpdateFocus postfix (CLAUDE.md rule 3).
+                // Matched on the popup's own selectCursor, so no other cursor is misread.
+                if (FFII_ScreenReaderMod.IsInBattleUIContext() && PopupPatches.IsActivePopupCursor(cursor))
+                {
+                    PopupPatches.ReadCurrentButton(cursor);
+                    return;
+                }
 
                 // Build cursor path for pause menu detection
                 string cursorPath = "";

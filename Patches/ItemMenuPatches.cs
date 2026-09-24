@@ -163,21 +163,6 @@ namespace FFII_ScreenReader.Patches
         }
 
         public static void ClearState() => _helper.IsActive = false;
-
-        public static string GetItemCommandName(ItemCommandId commandId)
-        {
-            switch (commandId)
-            {
-                case ItemCommandId.Use:
-                    return LocalizationUtility.GetLocalizedCommand("$menu_item_use") ?? "Use";
-                case ItemCommandId.Organize:
-                    return LocalizationUtility.GetLocalizedCommand("$menu_item_organize") ?? "Sort";
-                case ItemCommandId.Important:
-                    return LocalizationUtility.GetLocalizedCommand("$menu_item_important") ?? "Key Items";
-                default:
-                    return null;
-            }
-        }
     }
 
     /// <summary>
@@ -226,8 +211,9 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(itemUseSelectContent, postfix: new HarmonyMethod(postfix));
                 }
 
-                // Patch ItemWindowController.SetNextState for state transition detection
-                TryPatchSetNextState(harmony);
+                // (No ItemWindowController.SetNextState hook: its body 0x4A9B40 is folded with seven
+                // setters and has no direct callers, so it never fired. ItemMenuState clears itself in
+                // ShouldSuppress on the command bar / None, and on SetActive(false).)
 
                 // Item list / item-use target (re)entry reads
                 FieldItemReannouncePatches.ApplyPatches(harmony);
@@ -463,60 +449,6 @@ namespace FFII_ScreenReader.Patches
                 return false;
             }
         }
-
-        /// <summary>
-        /// Patches ItemWindowController.SetNextState for state transition detection.
-        /// </summary>
-        private static void TryPatchSetNextState(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                Type controllerType = typeof(KeyInputItemWindowController);
-
-                MethodInfo setNextStateMethod = null;
-                foreach (var method in controllerType.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
-                {
-                    if (method.Name == "SetNextState")
-                    {
-                        setNextStateMethod = method;
-                        break;
-                    }
-                }
-
-                if (setNextStateMethod != null)
-                {
-                    var postfix = typeof(ItemMenuPatches).GetMethod(nameof(SetNextState_Postfix),
-                        BindingFlags.Public | BindingFlags.Static);
-                    harmony.Patch(setNextStateMethod, postfix: new HarmonyMethod(postfix));
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        /// <summary>
-        /// Postfix for SetNextState - clears state when returning to command bar or closing menu.
-        /// Its compiled body (0x4A9B40) is folded with seven other nextState setters and has no direct
-        /// callers (inlined at every ItemWindowController call site), so the postfix acts only when the
-        /// native object really is an ItemWindowController. The command-bar open read is armed by
-        /// CommandSelectInit instead (CommandBarPatches).
-        /// </summary>
-        public static void SetNextState_Postfix(object __instance, int state)
-        {
-            try
-            {
-                if (!Il2CppTypeCheck.Is<KeyInputItemWindowController>((__instance as Il2CppSystem.Object)?.Pointer ?? IntPtr.Zero))
-                    return;
-
-                // STATE_NONE = 0 (menu closing), STATE_COMMAND_SELECT = 1 (command bar)
-                if ((state == 0 || state == 1) && ItemMenuState.IsActive)
-                {
-                    ItemMenuState.ClearState();
-                }
-            }
-            catch { }
-        }
     }
 
     /// <summary>
@@ -577,6 +509,18 @@ namespace FFII_ScreenReader.Patches
         /// <summary>Navigation spoke the row — the pending entry read is satisfied.</summary>
         internal static void ItemListAnnounced() => _pendingItemList = false;
         internal static void ItemTargetAnnounced() => _pendingItemTarget = false;
+
+        /// <summary>
+        /// The item command bar has the focus again (CommandSelectInit): a list / target read still
+        /// retrying belongs to a screen that was left, so it must not speak over the command read.
+        /// </summary>
+        internal static void CancelPending()
+        {
+            _pendingItemList = false;
+            _pendingItemTarget = false;
+            _itemListGen++;
+            _itemTargetGen++;
+        }
 
         /// <summary>Starts the deferred list read unless the Init body's own SelectContent already spoke.</summary>
         public static void ItemList_Init_Postfix(KeyInputItemListController __instance)

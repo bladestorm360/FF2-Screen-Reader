@@ -268,6 +268,9 @@ namespace FFII_ScreenReader.Patches
         // fade-out, so the popup-close re-read must not speak the row. Cleared when the config menu
         // closes (CancelReannounce) or is opened afresh (ShowConfig / InitSelectLanguage).
         private static bool _configLeaving = false;
+        // Config list last entered or navigated (in-game list, its Boost list, or a title section): the
+        // popup-close / bestiary-return re-read targets it while it is on screen.
+        private static ConfigActualDetailsControllerBase_KeyInput _lastDetails = null;
 
         /// <summary>
         /// Applies config menu patches using manual Harmony patching.
@@ -279,8 +282,9 @@ namespace FFII_ScreenReader.Patches
 
             try
             {
-                // Patch ConfigCommandController.SetFocus for navigation
-                TryPatchSetFocus(harmony);
+                // Config list navigation (SelectCommand) and menu-entry reads — event-driven
+                TryPatchSelectCommand(harmony);
+                TryPatchEntryReads(harmony);
 
                 // Patch slider and arrow value changes
                 TryPatchSwitchArrowSelectType(harmony);
@@ -436,7 +440,7 @@ namespace FFII_ScreenReader.Patches
             // Title Language screen opened: OptionController.InitSelectLanguage (SelectLanguage state
             // entry, unique RVA 0x2F8330; entered from SetEnableLanguageRoot and the title Config list).
             // It points configActualDetailsController at the language section and moves the cursor with
-            // SetCursorFocus, which never calls ConfigCommandController.SetFocus, so nothing read the row.
+            // SetCursorFocus, which never calls SelectCommand, so nothing read the row.
             try
             {
                 var initSelectLanguage = AccessTools.Method(typeof(OptionController), "InitSelectLanguage", Type.EmptyTypes);
@@ -471,20 +475,65 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
-        private static void TryPatchSetFocus(HarmonyLib.Harmony harmony)
+        /// <summary>
+        /// Config list navigation, event-driven (CLAUDE.md rule 3). ConfigActualDetailsControllerBase
+        /// .SelectCommand(Cursor, WithinRangeType) (private, unique RVA 0x2D99F0) stores
+        /// commandList[cursor.Index] into SelectedCommand (@0x20). Its callers are Initialize, ResetCursor,
+        /// SetDefaultSelect, the click lambda and the navigation callbacks <UpdateController>b__1/3/5/7,
+        /// which Cursor.NextIndex / PrevIndex / SkipNextIndex / SkipPrevIndex invoke synchronously. Only
+        /// the navigation calls speak here (ManualPatches.NavigatingCursor is the cursor being moved);
+        /// OptionController.SetActive(true) runs ResetCursor on all four title sections, so the non-
+        /// navigation callers must stay quiet — menu entries are read by TryPatchEntryReads.
+        /// Replaces the ConfigCommandController.SetFocus postfix: ConfigActualDetailsControllerBase
+        /// .UpdateController calls UpdateFocus every frame, which calls SetFocus on every row.
+        /// </summary>
+        private static void TryPatchSelectCommand(HarmonyLib.Harmony harmony)
         {
             try
             {
-                var setFocusMethod = AccessTools.Method(typeof(ConfigCommandController), "SetFocus");
-                if (setFocusMethod != null)
-                {
-                    var postfix = AccessTools.Method(typeof(ConfigMenuPatches), nameof(SetFocus_Postfix));
-                    harmony.Patch(setFocusMethod, postfix: new HarmonyMethod(postfix));
-                }
+                var method = AccessTools.Method(typeof(ConfigActualDetailsControllerBase_KeyInput), "SelectCommand");
+                if (method != null)
+                    harmony.Patch(method, postfix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), nameof(SelectCommand_Postfix))));
+                else
+                    MelonLogger.Error("[Config Menu] ConfigActualDetailsControllerBase.SelectCommand not found");
             }
             catch (Exception ex)
             {
-                MelonLogger.Error($"[Config Menu] Error patching SetFocus: {ex.Message}");
+                MelonLogger.Error($"[Config Menu] Error patching SelectCommand: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Focused-row reads on entering a config list (the per-frame SetFocus used to give them). All are
+        /// state-machine Inits registered in CreateState, unique RVAs:
+        ///   in-game ConfigController.InitializeSelect (0x5FC0C0; detailsController @0x48) and
+        ///   InitializeGameBoosterSetting (0x5FBF70; cheatSettingsController @0x50) — open, and every
+        ///   return from the controls screen or the Boost list;
+        ///   title OptionController.InitConfig (0x2F7340; the Configuration list, also on returning from a
+        ///   section) and InitSelectSoundSettings (0x2F9490).
+        /// Each arms the deferred focused-row read; the config dedup keeps a row from being spoken twice.
+        /// </summary>
+        private static void TryPatchEntryReads(HarmonyLib.Harmony harmony)
+        {
+            PatchEntry(harmony, typeof(ConfigController), "InitializeSelect", nameof(ConfigInitializeSelect_Postfix));
+            PatchEntry(harmony, typeof(ConfigController), "InitializeGameBoosterSetting", nameof(ConfigInitializeGameBooster_Postfix));
+            PatchEntry(harmony, typeof(OptionController), "InitConfig", nameof(OptionListEntry_Postfix));
+            PatchEntry(harmony, typeof(OptionController), "InitSelectSoundSettings", nameof(OptionListEntry_Postfix));
+        }
+
+        private static void PatchEntry(HarmonyLib.Harmony harmony, Type type, string method, string postfixName)
+        {
+            try
+            {
+                var target = AccessTools.Method(type, method, Type.EmptyTypes);
+                if (target != null)
+                    harmony.Patch(target, postfix: new HarmonyMethod(AccessTools.Method(typeof(ConfigMenuPatches), postfixName)));
+                else
+                    MelonLogger.Error($"[Config Menu] {type.Name}.{method} not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[Config Menu] Error patching {type.Name}.{method}: {ex.Message}");
             }
         }
 
@@ -523,34 +572,69 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for ConfigCommandController.SetFocus - announces config option when navigating.
+        /// Postfix for ConfigActualDetailsControllerBase.SelectCommand — a navigation step in a config
+        /// list (see TryPatchSelectCommand): speaks the newly selected row "Name: Value (X of Y)". The
+        /// Cursor callback runs inside Cursor.NextIndex & co., so this runs before the generic cursor
+        /// reader's postfix, which the config state then suppresses.
         /// </summary>
-        public static void SetFocus_Postfix(ConfigCommandController __instance, bool isFocus)
+        public static void SelectCommand_Postfix(ConfigActualDetailsControllerBase_KeyInput __instance, GameCursor __0)
         {
             try
             {
-                // Only announce when gaining focus
-                if (!isFocus)
+                if (__instance == null || __0 == null || __0.Pointer != ManualPatches.NavigatingCursor)
+                    return;
+                if (_configLeaving || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
                     return;
 
-                // Set active state when config menu is in use
                 ConfigMenuState.SetActive();
+                _lastDetails = __instance;
 
-                if (__instance == null || !__instance.gameObject.activeInHierarchy)
+                var selected = __instance.SelectedCommand;
+                if (selected == null || !selected.gameObject.activeInHierarchy || !AnnounceCommand(selected, __instance))
+                    ReannounceFocusedConfigRow(__instance);   // not readable yet: bounded deferred retry
+            }
+            catch { }
+        }
+
+        /// <summary>In-game config list entered (open / return from controls or Boost).</summary>
+        public static void ConfigInitializeSelect_Postfix(ConfigController __instance)
+        {
+            try { ArmEntryRead(__instance, __instance?.detailsController); }
+            catch { }
+        }
+
+        /// <summary>In-game Boost (game booster) list entered.</summary>
+        public static void ConfigInitializeGameBooster_Postfix(ConfigController __instance)
+        {
+            try { ArmEntryRead(__instance, __instance?.cheatSettingsController); }
+            catch { }
+        }
+
+        private static void ArmEntryRead(ConfigController controller, ConfigActualDetailsControllerBase_KeyInput details)
+        {
+            // Only a config menu that is really on screen (the read itself takes the config state).
+            if (controller == null || details == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
+                return;
+            _lastDetails = details;
+            ReannounceFocusedConfigRow(details);
+        }
+
+        /// <summary>Title Configuration list / Sound settings entered (like InitSelectLanguage).</summary>
+        public static void OptionListEntry_Postfix(OptionController __instance)
+        {
+            try
+            {
+                if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
                     return;
-
-                // Note: Removed SelectedCommand verification check that failed with multiple
-                // ConfigActualDetailsControllerBase instances (regular config + boost menu).
-                // The isFocus parameter and activeInHierarchy check are sufficient; the owning
-                // details controller (for the row position) is the row's nearest parent.
-                AnnounceCommand(__instance, __instance.GetComponentInParent<ConfigActualDetailsControllerBase_KeyInput>());
+                ConfigMenuState.SetActive();
+                ReannounceFocusedConfigOption(__instance);
             }
             catch { }
         }
 
         /// <summary>
         /// Speaks a focused config row as "Name: Value, (X of Y)" unless it is the row last spoken
-        /// (SetFocus can re-fire for the focused row) or only its value changed (the arrow/slider
+        /// (another read already spoke it) or only its value changed (the arrow/slider
         /// postfixes speak value changes). Returns false only when the row isn't readable yet, so the
         /// one-shot re-announce consumer retries next frame; true once spoken or already spoken.
         /// </summary>
@@ -605,20 +689,24 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Arms the one-shot re-announce of the focused config row (see _pendingConfigReannounce) and
-        /// starts its deferred read. Callers make sure the dedup no longer holds that row, so whichever
-        /// of SetFocus or the deferred read reads it first speaks and the other is deduplicated.
-        /// <paramref name="option"/> is the title OptionController when the caller has it (ShowConfig);
-        /// otherwise the open config menu is looked up when the read runs.
+        /// Arms the one-shot read of the focused config row (see _pendingConfigReannounce) and starts its
+        /// deferred read. The config dedup keeps a row that was just spoken (by navigation or another arm)
+        /// from being spoken again. <paramref name="option"/> is the title OptionController when the caller
+        /// has it; otherwise the open config menu is looked up when the read runs.
         /// </summary>
-        public static void ReannounceFocusedConfigOption(OptionController option = null)
+        public static void ReannounceFocusedConfigOption(OptionController option = null) => ArmReannounce(option, null);
+
+        /// <summary>Same as <see cref="ReannounceFocusedConfigOption"/> for a known config list.</summary>
+        internal static void ReannounceFocusedConfigRow(ConfigActualDetailsControllerBase_KeyInput details) => ArmReannounce(null, details);
+
+        private static void ArmReannounce(OptionController option, ConfigActualDetailsControllerBase_KeyInput details)
         {
             // Return to Title / Quit confirmed: the menu may stay active through the fade-out.
             if (_configLeaving)
                 return;
             _pendingConfigReannounce = true;
             int gen = ++_reannounceGen;
-            try { CoroutineManager.StartManaged(DeferredReannounce(option, gen)); }
+            try { CoroutineManager.StartManaged(DeferredReannounce(option, details, gen)); }
             catch (Exception ex) { MelonLogger.Warning($"[Config Menu] Error scheduling focused-row read: {ex.Message}"); }
         }
 
@@ -627,6 +715,7 @@ namespace FFII_ScreenReader.Patches
         {
             _pendingConfigReannounce = false;
             _configLeaving = false;
+            _lastDetails = null;
         }
 
         /// <summary>
@@ -645,7 +734,7 @@ namespace FFII_ScreenReader.Patches
         /// no config menu is open or its focused row isn't readable yet. Stops as soon as the row is
         /// spoken, the re-announce is cancelled (config menu closed) or a newer arm superseded it.
         /// </summary>
-        private static IEnumerator DeferredReannounce(OptionController option, int gen)
+        private static IEnumerator DeferredReannounce(OptionController option, ConfigActualDetailsControllerBase_KeyInput details, int gen)
         {
             for (int frame = 0; frame < MAX_REANNOUNCE_FRAMES; frame++)
             {
@@ -654,7 +743,8 @@ namespace FFII_ScreenReader.Patches
                 if (!_pendingConfigReannounce || gen != _reannounceGen)
                     yield break;
 
-                if (TryConsumeReannounce(FindOpenDetailsController(option)))
+                var target = details != null ? (IsOnScreen(details) ? details : null) : FindOpenDetailsController(option);
+                if (TryConsumeReannounce(target))
                 {
                     _pendingConfigReannounce = false;
                     yield break;
@@ -665,9 +755,16 @@ namespace FFII_ScreenReader.Patches
                 _pendingConfigReannounce = false;
         }
 
+        private static bool IsOnScreen(ConfigActualDetailsControllerBase_KeyInput details)
+        {
+            try { return details != null && details.gameObject != null && details.gameObject.activeInHierarchy; }
+            catch { return false; }
+        }
+
         /// <summary>
-        /// Details controller of the open config menu: the given title OptionController, else the
-        /// active in-game ConfigController (detailsController, dump.cs:446198 @0x48), else the active
+        /// Details controller of the open config menu: the given title OptionController, else the config
+        /// list last entered or navigated (the in-game list or its Boost list) while it is on screen, else
+        /// the active in-game ConfigController (detailsController, dump.cs:446198 @0x48), else the active
         /// title OptionController (configActualDetailsController, dump.cs:456168 @0xA0). Null while no
         /// config menu is open, so an exit that really left the menu stays silent.
         /// </summary>
@@ -675,6 +772,8 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                if (option == null && IsOnScreen(_lastDetails))
+                    return _lastDetails;
                 if (option == null)
                 {
                     var config = UnityEngine.Object.FindObjectOfType<ConfigController>();
@@ -712,8 +811,8 @@ namespace FFII_ScreenReader.Patches
 
         /// <summary>
         /// Title Configuration opened: forget any row spoken before (prefix) and arm the focused-row
-        /// read (postfix), so the initial row speaks exactly once whether or not ShowConfig's own
-        /// SetFocus fires.
+        /// read (postfix), so the initial row speaks exactly once (InitConfig's arm supersedes it in the
+        /// same frame; the dedup covers the rest).
         /// </summary>
         public static void ShowConfig_Prefix()
         {
@@ -820,7 +919,7 @@ namespace FFII_ScreenReader.Patches
                 if (controller == lastController && percentage == lastSliderPercentage)
                     return;
 
-                // If different controller, don't announce - let SetFocus handle it
+                // If different controller, don't announce - the row read (SelectCommand) handles it
                 if (controller != lastController)
                 {
                     lastController = controller;

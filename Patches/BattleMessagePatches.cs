@@ -91,6 +91,9 @@ namespace FFII_ScreenReader.Patches
                     harmony.Patch(addConditionMethod, postfix: new HarmonyMethod(postfix));
                 }
 
+                // Status removal announcements ("X: Poison removed")
+                PatchConditionRemoval(harmony);
+
                 // Patch BattleController.StartPreeMptiveMes as the battle-start lifecycle hook
                 var startPreeMptiveMesMethod = AccessTools.Method(typeof(BattleController), "StartPreeMptiveMes");
                 if (startPreeMptiveMesMethod != null)
@@ -570,13 +573,6 @@ namespace FFII_ScreenReader.Patches
                 string targetName = GetTargetName(data);
                 var damageSource = ConsumeDamageSource();
 
-                // Value-0 diagnostic — one line per value-0 damage view (a view is created once per
-                // target per action, so this is bounded). Settles in game which HitType a buff/debuff,
-                // a status cure (Antidote) and a genuine 0-damage hit carry; not provable offline
-                // (every Function subclass computes its own result). See debug.md, open-issues pass 2.
-                if (value == 0)
-                    MelonLogger.Msg($"[Battle] value-0 view: hitType={(int)hitType} isRecovery={isRecovery} target={targetName}");
-
                 // Consume the multi-hit "×N" count captured by CreateHitCount (fires just before this
                 // view). Reset to 1 so a stale count can't leak into the next attack. When no ×N was
                 // paired with this view, fall back to the attack's own calculated hit count.
@@ -658,6 +654,10 @@ namespace FFII_ScreenReader.Patches
         {
             _lastConditionByUnit.Clear();
             _lastActDataPtr = IntPtr.Zero;
+            _trackedConditions.Clear();
+            _lastRemovalUnit = IntPtr.Zero;
+            _lastRemovalId = -1;
+            _lastRemovalFrame = -1;
         }
 
         public static void ConditionAdd_Postfix(BattleUnitData battleUnitData, int id)
@@ -693,6 +693,7 @@ namespace FFII_ScreenReader.Patches
 
                 // Get condition name from ID
                 string conditionName = null;
+                int conditionType = -1;
                 try
                 {
                     var unitDataInfo = battleUnitData.BattleUnitDataInfo;
@@ -705,6 +706,7 @@ namespace FFII_ScreenReader.Patches
                             {
                                 if (condition != null && condition.Id == id)
                                 {
+                                    conditionType = condition.ConditionType;
                                     string conditionMesId = condition.MesIdName;
 
                                     // Skip conditions with no message ID (internal/hidden statuses)
@@ -746,6 +748,9 @@ namespace FFII_ScreenReader.Patches
                 try { unitPtr = battleUnitData.Pointer; } catch { }
                 if (unitPtr != IntPtr.Zero)
                 {
+                    // Named, announceable condition: its removal is announced too (UpdateTempParamter_Postfix).
+                    TrackCondition(unitPtr, id, conditionName, conditionType, announcement);
+
                     if (_lastConditionByUnit.TryGetValue(unitPtr, out var last) && last == announcement)
                         return;
                     _lastConditionByUnit[unitPtr] = announcement;
@@ -755,6 +760,178 @@ namespace FFII_ScreenReader.Patches
                 FFII_ScreenReaderMod.SpeakText(announcement, interrupt: false);
             }
             catch { }
+        }
+
+        #endregion
+
+        #region Condition removal - "X: Poison removed"
+
+        // FF2 does not route cures through BattleConditionController.Remove (0x6BAB70): its only callers
+        // are InterruptRemoveCondition (condition-driven), BattleEndRecoveryCondition and one ActSelect.
+        // Cures (RecoveryConditionFunction & co. UpdateParameter), wear-off (BattleConditionFunction.
+        // NaturalRemove) and revive edit Parameter.CurrentConditionList directly; the controller then
+        // reconciles each unit's BattleConditionFunction list (CheckConditionFunction →
+        // RemoveConditionFunction), and every function it drops is followed by
+        // BattleStatusControl.UpdateTempParamter(unit) (0x90C4C0). That list is only ever changed by
+        // BattleConditionController.Add (list.Add, then UpdateTempParamter) and that removal loop, so a
+        // tracked condition missing from it inside UpdateTempParamter has just been removed, whatever
+        // removed it (cure, wear-off, revive, Remove, conflict). Only conditions whose Add was announced
+        // (named) are tracked, so a negated or hidden condition never reads "removed".
+
+        // Last.Systems.ConditionType.UnableFight (KO).
+        private const int CONDITION_TYPE_UNABLE_FIGHT = 5;
+
+        private sealed class TrackedCondition
+        {
+            public string Name;
+            public int Type;
+            public string AddAnnouncement;
+        }
+
+        // unit pointer → condition id → the announced Add (name, type, text).
+        private static readonly Dictionary<IntPtr, Dictionary<int, TrackedCondition>> _trackedConditions =
+            new Dictionary<IntPtr, Dictionary<int, TrackedCondition>>();
+
+        // Set by BattleConditionController.BattleEndRecoveryCondition (victory / escape clean-up);
+        // cleared at the next battle start and by ResetState.
+        private static bool _battleEnding = false;
+
+        // Same (unit, condition) removal repeated in one frame is spoken once.
+        private static IntPtr _lastRemovalUnit = IntPtr.Zero;
+        private static int _lastRemovalId = -1;
+        private static int _lastRemovalFrame = -1;
+
+        /// <summary>
+        /// BattleStatusControl.UpdateTempParamter(BattleUnitData) (unique RVA 0x90C4C0; callers:
+        /// BattleConditionController.Add, RemoveConditionFunction, AttackSpeedConflict,
+        /// AfterAttackSpeedConflict) and BattleConditionController.BattleEndRecoveryCondition (unique RVA
+        /// 0x6B77D0; callers BattleController.StartWinResult / EndEscapeFadeOut).
+        /// </summary>
+        private static void PatchConditionRemoval(HarmonyLib.Harmony harmony)
+        {
+            try
+            {
+                var updateTemp = AccessTools.Method(typeof(BattleStatusControl), "UpdateTempParamter", new Type[] { typeof(BattleUnitData) });
+                if (updateTemp != null)
+                    harmony.Patch(updateTemp, postfix: new HarmonyMethod(typeof(BattleMessagePatches), nameof(UpdateTempParamter_Postfix)));
+                else
+                    MelonLogger.Error("[BattleMessage] BattleStatusControl.UpdateTempParamter(BattleUnitData) not found");
+
+                var endRecovery = AccessTools.Method(typeof(BattleConditionController), "BattleEndRecoveryCondition", Type.EmptyTypes);
+                if (endRecovery != null)
+                    harmony.Patch(endRecovery, prefix: new HarmonyMethod(typeof(BattleMessagePatches), nameof(BattleEndRecoveryCondition_Prefix)));
+                else
+                    MelonLogger.Error("[BattleMessage] BattleConditionController.BattleEndRecoveryCondition not found");
+            }
+            catch (Exception ex)
+            {
+                MelonLogger.Error($"[BattleMessage] Error patching condition removal: {ex.Message}");
+            }
+        }
+
+        private static void TrackCondition(IntPtr unitPtr, int id, string name, int type, string addAnnouncement)
+        {
+            if (!_trackedConditions.TryGetValue(unitPtr, out var byId))
+            {
+                byId = new Dictionary<int, TrackedCondition>();
+                _trackedConditions[unitPtr] = byId;
+            }
+            byId[id] = new TrackedCondition { Name = name, Type = type, AddAnnouncement = addAnnouncement };
+        }
+
+        /// <summary>Battle-end clean-up begins: its removals are never spoken.</summary>
+        public static void BattleEndRecoveryCondition_Prefix() => _battleEnding = true;
+
+        /// <summary>
+        /// A condition function was added to or removed from the unit (see the region comment). Speaks
+        /// "{unit}: {condition} removed" for every tracked condition the unit no longer has, except during
+        /// battle-end clean-up, outside battle, or for a unit that is down (KO / 0 HP: death clears the
+        /// other statuses) unless the removed condition is KO itself (revive).
+        /// </summary>
+        public static void UpdateTempParamter_Postfix(BattleUnitData __0)
+        {
+            try
+            {
+                if (__0 == null) return;
+                IntPtr unitPtr = __0.Pointer;
+                if (unitPtr == IntPtr.Zero || !_trackedConditions.TryGetValue(unitPtr, out var tracked) || tracked.Count == 0)
+                    return;
+
+                var info = __0.BattleUnitDataInfo;
+                var live = new HashSet<int>();
+                var functions = info?.BattleConditionFunction;
+                if (functions != null)
+                {
+                    for (int i = 0; i < functions.Count; i++)
+                    {
+                        var condition = functions[i]?.condition;
+                        if (condition != null)
+                            live.Add(condition.Id);
+                    }
+                }
+
+                List<int> removed = null;
+                foreach (var kv in tracked)
+                {
+                    if (!live.Contains(kv.Key))
+                        (removed ??= new List<int>()).Add(kv.Key);
+                }
+                if (removed == null) return;
+
+                bool silent = _battleEnding || !FFII_ScreenReaderMod.IsInBattle;
+                bool unitDown = IsUnitDown(info);
+                int frame = UnityEngine.Time.frameCount;
+                string unitName = null;
+
+                foreach (int id in removed)
+                {
+                    var entry = tracked[id];
+                    tracked.Remove(id);
+
+                    // A re-application must be announced again.
+                    if (_lastConditionByUnit.TryGetValue(unitPtr, out var lastAdd) && lastAdd == entry.AddAnnouncement)
+                        _lastConditionByUnit.Remove(unitPtr);
+
+                    if (silent)
+                        continue;
+                    if (unitDown && entry.Type != CONDITION_TYPE_UNABLE_FIGHT)
+                        continue;
+                    if (unitPtr == _lastRemovalUnit && id == _lastRemovalId && frame == _lastRemovalFrame)
+                        continue;
+                    _lastRemovalUnit = unitPtr;
+                    _lastRemovalId = id;
+                    _lastRemovalFrame = frame;
+
+                    unitName ??= GetTargetName(__0);
+                    FFII_ScreenReaderMod.SpeakText(string.Format(T("{0}: {1} removed"), unitName, entry.Name), interrupt: false);
+                }
+            }
+            catch { }
+        }
+
+        /// <summary>KO'd or at 0 HP: the unit's statuses are being cleared by its death.</summary>
+        private static bool IsUnitDown(BattleUnitDataInfo info)
+        {
+            try
+            {
+                var parameter = info?.Parameter;
+                if (parameter == null)
+                    return false;
+                if (parameter.CurrentHP <= 0)
+                    return true;
+                var current = parameter.CurrentConditionList;
+                if (current != null)
+                {
+                    for (int i = 0; i < current.Count; i++)
+                    {
+                        var c = current[i];
+                        if (c != null && c.ConditionType == CONDITION_TYPE_UNABLE_FIGHT)
+                            return true;
+                    }
+                }
+            }
+            catch { }
+            return false;
         }
 
         #endregion
@@ -774,6 +951,7 @@ namespace FFII_ScreenReader.Patches
             {
                 FFII_ScreenReaderMod.SetBattleActive();
                 BattleResultPatches.ResetForNewBattle();
+                _battleEnding = false;
             }
             catch { }
         }
@@ -859,6 +1037,7 @@ namespace FFII_ScreenReader.Patches
         public static void ResetState()
         {
             ResetConditionDedup();
+            _battleEnding = false;
             _pendingActorName = null;
             _pendingActorFrame = -1;
             _lastMessageText = null;

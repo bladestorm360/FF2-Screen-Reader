@@ -90,8 +90,8 @@ namespace FFII_ScreenReader.Patches
     /// </summary>
     public static class WordsMenuState
     {
-        // Words SetDescriptionText/UpdateView fire on open and can repeat for the same
-        // focused keyword; a local single-slot index guard announces once per keyword.
+        // SetCommandSelectCursor fires on open (SetDefaultCursor) and on every move and can repeat
+        // for the same focused keyword; a local single-slot index guard announces once per keyword.
         private static int _lastIndex = -1;
 
         private static readonly MenuStateHelper _helper = new(MenuStateRegistry.WORDS_MENU);
@@ -211,15 +211,24 @@ namespace FFII_ScreenReader.Patches
                     MelonLogger.Error("[Keyword] Could not find WordsContentListController.SetCommandSelectCursor method");
                 }
 
-                // Patch WordsContentListController.UpdateView (KeyInput) — fires when menu opens
-                // with the keyword list, so we can announce the first keyword on entry.
-                var wordsUpdateViewMethod = AccessTools.Method(
-                    typeof(KeyInputWordsContentListController),
-                    "UpdateView");
-                if (wordsUpdateViewMethod != null)
+                // The open read is SetCommandSelectCursor too: WordsWindowController.InitializeSelect calls
+                // listController.UpdateView and then SetDefaultCursor, which always ends in
+                // SetCommandSelectCursor (GameAssembly). The old two-frame UpdateView read was therefore
+                // always deduplicated and is gone (round 2).
+                //
+                // WordsWindowController.ExitSelect (Select-state exit, unique RVA 0x65F620) calls
+                // SetDefaultCursor when cursor memory is off, i.e. SetCommandSelectCursor on the first
+                // keyword while the menu is closing: bracket it so that read stays silent.
+                var exitSelectMethod = AccessTools.Method(typeof(KeyInputWordsWindowController), "ExitSelect", Type.EmptyTypes);
+                if (exitSelectMethod != null)
                 {
-                    var postfix = AccessTools.Method(typeof(KeywordPatches), nameof(WordsUpdateView_KeyInput_Postfix));
-                    harmony.Patch(wordsUpdateViewMethod, postfix: new HarmonyMethod(postfix));
+                    harmony.Patch(exitSelectMethod,
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(KeywordPatches), nameof(WordsExitSelect_Prefix))),
+                        postfix: new HarmonyMethod(AccessTools.Method(typeof(KeywordPatches), nameof(WordsExitSelect_Postfix))));
+                }
+                else
+                {
+                    MelonLogger.Error("[Keyword] Could not find WordsWindowController.ExitSelect method");
                 }
 
                 // Also try Touch version with SetSelectContent
@@ -368,17 +377,20 @@ namespace FFII_ScreenReader.Patches
                 if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
                     return;
 
+                if (_wordsExitInProgress)
+                    return;   // SetDefaultCursor from ExitSelect: the menu is closing
+
                 int index = GetWordsContentCursorIndex(__instance);
                 if (index < 0)
-                    return;
-
-                if (!WordsMenuState.IsNewIndex(index))
                     return;
 
                 // Get keyword name and description from keyWordContentDictionary
                 // This uses the same data source as the Ask menu
                 string keywordAnnouncement = GetWordsKeywordFromDictionary(__instance, index, out int count);
                 if (string.IsNullOrEmpty(keywordAnnouncement))
+                    return;
+
+                if (!WordsMenuState.IsNewIndex(index))
                     return;
 
                 WordsMenuState.SetActive();
@@ -388,52 +400,12 @@ namespace FFII_ScreenReader.Patches
             catch { }
         }
 
-        /// <summary>
-        /// Postfix for Words menu UpdateView (KeyInput). Fires when the menu opens with
-        /// the keyword list populated — announces the default-focused first keyword.
-        /// </summary>
-        public static void WordsUpdateView_KeyInput_Postfix(KeyInputWordsContentListController __instance)
-        {
-            try
-            {
-                var menuManager = MenuManager.Instance;
-                if (menuManager == null || !menuManager.IsOpen)
-                    return;
+        // True while WordsWindowController.ExitSelect runs (its SetDefaultCursor must not speak).
+        private static bool _wordsExitInProgress = false;
 
-                CoroutineManager.StartManaged(AnnounceWordsFirstKeyword_KeyInput(__instance));
-            }
-            catch { }
-        }
+        public static void WordsExitSelect_Prefix() => _wordsExitInProgress = true;
 
-        private static IEnumerator AnnounceWordsFirstKeyword_KeyInput(KeyInputWordsContentListController controller)
-        {
-            yield return null;
-            yield return null;
-
-            string announcement = null;
-            int count = -1;
-            int focusIndex = -1;
-            try
-            {
-                if (controller == null || controller.gameObject == null || !controller.gameObject.activeInHierarchy)
-                    yield break;
-
-                // Skip if the cursor hook already announced this keyword this open.
-                focusIndex = GetWordsContentCursorIndex(controller);
-                if (focusIndex < 0 || !WordsMenuState.IsNewIndex(focusIndex))
-                    yield break;
-
-                announcement = GetWordsKeywordFromDictionary(controller, focusIndex, out count);
-            }
-            catch { }
-
-            if (!string.IsNullOrEmpty(announcement))
-            {
-                WordsMenuState.SetActive();
-                announcement = MenuPosition.Format(announcement, focusIndex, count);
-                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-            }
-        }
+        public static void WordsExitSelect_Postfix() => _wordsExitInProgress = false;
 
         /// <summary>
         /// Postfix for Words menu UpdateView (Touch). Same role as the KeyInput variant.

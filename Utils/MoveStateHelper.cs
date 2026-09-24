@@ -26,13 +26,12 @@ namespace FFII_ScreenReader.Utils
         public const int MOVE_STATE_UNIQUE = 7;
         // FF2's game MoveState enum has no canoe (slot 5 is Chocobo), so the canoe rides a
         // mod-internal state, entered by boarding TRANSPORT_CONTENT (FF1 parity). Value chosen
-        // outside the game's 0-6 range so the backup ChangeMoveState hook never produces it.
+        // outside the game's 0-6 range so it never collides with a game MoveState.
         public const int MOVE_STATE_CANOE = 8;
 
         // Cached state tracking (event-driven, no timeouts)
         private static int cachedMoveState = MOVE_STATE_WALK;
         private static int cachedTransportationType = 0;
-        private static int lastAnnouncedState = -1;
 
         /// <summary>
         /// Set vehicle state when boarding (called from GetOn/ChangeTransportation patches).
@@ -51,21 +50,6 @@ namespace FFII_ScreenReader.Utils
         {
             cachedTransportationType = 0;
             cachedMoveState = MOVE_STATE_WALK;
-        }
-
-        /// <summary>
-        /// Update cached move state directly (called from ChangeMoveState patch as backup).
-        /// </summary>
-        public static void UpdateCachedMoveState(int newState)
-        {
-            int previousState = cachedMoveState;
-            cachedMoveState = newState;
-
-            // Announce state changes
-            if (newState != previousState)
-            {
-                AnnounceStateChange(previousState, newState);
-            }
         }
 
         /// <summary>
@@ -96,46 +80,6 @@ namespace FFII_ScreenReader.Utils
             return state == MOVE_STATE_SHIP || state == MOVE_STATE_CHOCOBO ||
                    state == MOVE_STATE_AIRSHIP || state == MOVE_STATE_LOWFLYING ||
                    state == MOVE_STATE_CANOE;
-        }
-
-        /// <summary>
-        /// Announce movement state changes. Backup path for the ChangeMoveState hook (reads the
-        /// game's MoveState); the canoe is announced from the GetOn/GetOff path since it has no
-        /// game MoveState of its own.
-        /// </summary>
-        public static void AnnounceStateChange(int previousState, int newState)
-        {
-            string announcement = null;
-
-            if (newState == MOVE_STATE_SHIP)
-            {
-                announcement = T("On ship");
-            }
-            else if (newState == MOVE_STATE_CANOE)
-            {
-                announcement = T("On canoe");
-            }
-            else if (newState == MOVE_STATE_CHOCOBO)
-            {
-                announcement = T("On chocobo");
-            }
-            else if (newState == MOVE_STATE_AIRSHIP || newState == MOVE_STATE_LOWFLYING)
-            {
-                announcement = T("On airship");
-            }
-            else if ((previousState == MOVE_STATE_SHIP || previousState == MOVE_STATE_CHOCOBO ||
-                      previousState == MOVE_STATE_AIRSHIP || previousState == MOVE_STATE_LOWFLYING) &&
-                     (newState == MOVE_STATE_WALK || newState == MOVE_STATE_DUSH))
-            {
-                announcement = T("On foot");
-            }
-
-            if (announcement != null)
-            {
-                if (newState == lastAnnouncedState) return;
-                lastAnnouncedState = newState;
-                FFII_ScreenReaderMod.SpeakText(announcement, interrupt: true);
-            }
         }
 
         /// <summary>
@@ -265,7 +209,6 @@ namespace FFII_ScreenReader.Utils
         {
             cachedMoveState = MOVE_STATE_WALK;
             cachedTransportationType = 0;
-            lastAnnouncedState = -1;
         }
 
         /// <summary>

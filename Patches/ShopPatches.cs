@@ -179,7 +179,6 @@ namespace FFII_ScreenReader.Patches
             try
             {
                 PatchSetDescription(harmony);
-                PatchListSetCursor(harmony);
                 PatchCommandSetCursor(harmony);
                 PatchTradeWindow(harmony);
 
@@ -195,6 +194,12 @@ namespace FFII_ScreenReader.Patches
         // item list regardless of affordability (unlike ShopListItemContentController.SetFocus,
         // which never fires for greyed/unaffordable items). Use it as the cursor-moved signal
         // and read the focused item from ShopListMainContentController.
+        // ShopListMainContentController.SelectContent (all list focus changes: UpdateView on entry, the
+        // key / click lambdas, AsyncSelected) invokes OnSelected (→ ShopController.<InitSelectProduct>
+        // b__40_1 → SetDescription) for the focused row whether or not it can be bought (canSelect@0x40
+        // only picks SetFocusContent(true/false)), so this one signal covers greyed items. The list's own
+        // SetCursor (0x663740) was a second signal for the same event — its only live caller is that same
+        // SelectContent (ResetCursor has no callers) — and was removed (round 2).
         private static void PatchSetDescription(HarmonyLib.Harmony harmony)
         {
             try
@@ -213,32 +218,6 @@ namespace FFII_ScreenReader.Patches
             catch (Exception ex)
             {
                 MelonLogger.Error($"[Shop] Failed to patch SetDescription: {ex.Message}");
-            }
-        }
-
-        // ShopListMainContentController.SetCursor(bool, WithinRangeType) (private, unique RVA 0x663740):
-        // SelectContent (every focus change, affordable or not — it runs after the OnSelected →
-        // SetDescription callback) and ResetCursor. A second, delegate-independent "focus moved" signal
-        // for the buy/sell list, so a greyed (unaffordable) item never depends on the OnSelected
-        // callback alone. Deduplicated with SetDescription by list index.
-        private static void PatchListSetCursor(HarmonyLib.Harmony harmony)
-        {
-            try
-            {
-                var method = AccessTools.Method(typeof(ShopListMainContentController), "SetCursor");
-                if (method != null)
-                {
-                    harmony.Patch(method,
-                        postfix: new HarmonyMethod(typeof(ShopPatches), nameof(ListSetCursor_Postfix)));
-                }
-                else
-                {
-                    MelonLogger.Warning("[Shop] Could not find ShopListMainContentController.SetCursor");
-                }
-            }
-            catch (Exception ex)
-            {
-                MelonLogger.Error($"[Shop] Failed to patch list SetCursor: {ex.Message}");
             }
         }
 
@@ -354,29 +333,8 @@ namespace FFII_ScreenReader.Patches
         }
 
         /// <summary>
-        /// Postfix for ShopListMainContentController.SetCursor — the list's own focus-moved signal
-        /// (see PatchListSetCursor). Same state gate and index dedup as SetDescription_Postfix.
-        /// </summary>
-        public static void ListSetCursor_Postfix(ShopListMainContentController __instance)
-        {
-            try
-            {
-                if (__instance == null || __instance.gameObject == null || !__instance.gameObject.activeInHierarchy)
-                    return;
-
-                int state = ShopMenuTracker.GetState();
-                if (state != IL2CppOffsets.Shop.STATE_SELECT_PRODUCT && state != IL2CppOffsets.Shop.STATE_SELECT_SELL_ITEM)
-                    return;
-
-                _cachedMainList = __instance;
-                AnnounceFocusedFromList(__instance);
-            }
-            catch { }
-        }
-
-        /// <summary>
         /// Reads the focused buy/sell row from the list (selectCursor.Index into productContentList) and
-        /// announces it once per index. Shared by the SetDescription and list SetCursor signals.
+        /// announces it once per index (SetDescription also fires on a stats/description panel toggle).
         /// </summary>
         private static void AnnounceFocusedFromList(ShopListMainContentController mainList)
         {

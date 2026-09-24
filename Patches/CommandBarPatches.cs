@@ -88,6 +88,8 @@ namespace FFII_ScreenReader.Patches
         {
             try
             {
+                // Back on the command bar: drop a list / target entry read that is still retrying.
+                FieldItemReannouncePatches.CancelPending();
                 if (__instance != null)
                     CoroutineManager.StartManaged(DeferredItemRead(__instance, ++_itemGen));
             }

@@ -171,9 +171,7 @@ namespace FFII_ScreenReader.Core
             // the existing input loop, not a new per-frame Harmony patch.
             MovementSoundPatches.PollFootsteps();
 
-            // Light per-frame poll for walk/run (auto-dash) — announces on change so F1, L3,
-            // the config menu and cheat menu all surface through the screen reader. Read-only.
-            Handlers.GameToggleAnnouncer.Poll();
+            // Walk/run (F1 / L3) is announced by GameToggleAnnouncer's ConfigClient.SetIsAutoDash hook.
 
             if (GamepadManager.AnyKeyboardKeyDown())
                 ControllerRouter.NotifyKeyboardInput();
@@ -352,8 +350,8 @@ namespace FFII_ScreenReader.Core
                 return;
             }
 
-            // F1 walk/run is announced by GameToggleAnnouncer.Poll() (handles F1 + config menu);
-            // F3 encounters by GameToggleAnnouncer's CheatSettingsClient.SetIsEnableEncount hook.
+            // F1 walk/run and F3 encounters are the game's own keys, announced by GameToggleAnnouncer's
+            // ConfigClient.SetIsAutoDash / CheatSettingsClient.SetIsEnableEncount hooks.
 
             // F5 cycles enemy HP display. Enemy HP Display is a battle feature, so gate on
             // in-battle (not IsFieldActive, which is false during battle).

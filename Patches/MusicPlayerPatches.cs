@@ -21,6 +21,8 @@ namespace FFII_ScreenReader.Patches
         public static bool IsInMusicPlayer { get; set; } = false;
         public static bool SuppressContentChange { get; set; } = false;
         public static IntPtr CachedFocusedPtr { get; set; } = IntPtr.Zero;
+        // Entry title spoken before the focused song was known: the next SetFocus speaks the song.
+        public static bool PendingEntryRead { get; set; } = false;
 
         // ExtraSoundListController field offsets
         public const int OFFSET_CURRENT_LIST_TYPE = 0xC0;  // currentListType (AudioManager.BgmType)
@@ -30,6 +32,7 @@ namespace FFII_ScreenReader.Patches
             IsInMusicPlayer = false;
             SuppressContentChange = false;
             CachedFocusedPtr = IntPtr.Zero;
+            PendingEntryRead = false;
             MenuStateRegistry.Reset(MenuStateRegistry.MUSIC_PLAYER);
         }
     }
@@ -67,43 +70,36 @@ namespace FFII_ScreenReader.Patches
             }
         }
 
+        /// <summary>
+        /// Entry read, event-driven (CLAUDE.md rule 3; replaces a 2-second poll of CachedFocusedPtr):
+        /// one frame after the View state, the title; then the focused song if its SetFocus already came
+        /// (cached by the suppressed SetFocus path), otherwise the next SetFocus speaks it
+        /// (PendingEntryRead).
+        /// </summary>
         private static IEnumerator AnnounceMusicPlayerEntry()
         {
             yield return null;
+            if (!MusicPlayerStateTracker.IsInMusicPlayer) yield break;
             FFII_ScreenReaderMod.SpeakText(T("Music Player"), true);
 
-            // Poll CachedFocusedPtr — SetFocus fires during entry with correct pointer,
-            // cached by the suppression path in the SetFocus patch.
-            float elapsed = 0f;
-
-            while (elapsed < 2f)
+            try
             {
-                yield return null;
-                elapsed += Time.deltaTime;
-
-                try
+                IntPtr focusedPtr = MusicPlayerStateTracker.CachedFocusedPtr;
+                if (focusedPtr != IntPtr.Zero && ExtraSoundListContentController_SetFocus_Patch.SpeakSong(focusedPtr, interrupt: false))
                 {
-                    IntPtr focusedPtr = MusicPlayerStateTracker.CachedFocusedPtr;
-                    if (focusedPtr != IntPtr.Zero &&
-                        MusicPlayerReader.ReadContentFromPointer(focusedPtr, out string name, out int bgmId, out int idx, out int playTime))
-                    {
-                        string entry = MusicPlayerReader.ReadSongEntry(name, bgmId, idx, playTime);
-                        if (!string.IsNullOrEmpty(entry))
-                            FFII_ScreenReaderMod.SpeakText(entry, false);
-                        // Success — clear suppression and exit
-                        MusicPlayerStateTracker.SuppressContentChange = false;
-                        yield break;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    MelonLogger.Warning($"[MusicPlayer] Error announcing entry song: {ex.Message}");
-                    break;
+                    MusicPlayerStateTracker.SuppressContentChange = false;
+                    yield break;
                 }
             }
+            catch (Exception ex)
+            {
+                MelonLogger.Warning($"[MusicPlayer] Error announcing entry song: {ex.Message}");
+                MusicPlayerStateTracker.SuppressContentChange = false;
+                yield break;
+            }
 
-            // Timeout or error — still clear suppression
-            MusicPlayerStateTracker.SuppressContentChange = false;
+            // Focus not set yet: the entry's SetFocus speaks it (and lifts the suppression).
+            MusicPlayerStateTracker.PendingEntryRead = true;
         }
     }
 
@@ -129,6 +125,14 @@ namespace FFII_ScreenReader.Patches
                     {
                         if (__instance != null)
                             MusicPlayerStateTracker.CachedFocusedPtr = __instance.Pointer;
+
+                        // The entry title is already spoken: this is the entry's focused song.
+                        if (MusicPlayerStateTracker.PendingEntryRead && __instance != null)
+                        {
+                            MusicPlayerStateTracker.PendingEntryRead = false;
+                            MusicPlayerStateTracker.SuppressContentChange = false;
+                            SpeakSong(__instance.Pointer, interrupt: false);
+                        }
                     }
                     catch { }
                     return;
@@ -143,19 +147,26 @@ namespace FFII_ScreenReader.Patches
                 catch { return; }
                 if (ptr == IntPtr.Zero) return;
 
-                if (!MusicPlayerReader.ReadContentFromPointer(ptr, out string musicName, out int bgmId, out int index, out int playTime))
-                    return;
-
-                string entry = MusicPlayerReader.ReadSongEntry(musicName, bgmId, index, playTime);
-                if (!string.IsNullOrEmpty(entry))
-                {
-                    FFII_ScreenReaderMod.SpeakText(entry);
-                }
+                SpeakSong(ptr, interrupt: true);
             }
             catch (Exception ex)
             {
                 MelonLogger.Warning($"[MusicPlayer] Error in SetFocus patch: {ex.Message}");
             }
+        }
+
+        /// <summary>Speaks the song of a list content pointer. Returns true when something was spoken.</summary>
+        internal static bool SpeakSong(IntPtr contentPtr, bool interrupt)
+        {
+            if (contentPtr == IntPtr.Zero ||
+                !MusicPlayerReader.ReadContentFromPointer(contentPtr, out string musicName, out int bgmId, out int index, out int playTime))
+                return false;
+
+            string entry = MusicPlayerReader.ReadSongEntry(musicName, bgmId, index, playTime);
+            if (string.IsNullOrEmpty(entry))
+                return false;
+            FFII_ScreenReaderMod.SpeakText(entry, interrupt);
+            return true;
         }
     }
 
@@ -231,6 +242,7 @@ namespace FFII_ScreenReader.Patches
             finally
             {
                 MusicPlayerStateTracker.SuppressContentChange = false;
+                MusicPlayerStateTracker.PendingEntryRead = false;
             }
         }
     }

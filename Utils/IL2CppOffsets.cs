@@ -76,16 +76,6 @@ namespace FFII_ScreenReader.Utils
         }
 
         /// <summary>
-        /// BattlePauseController / BattleUIManager offsets.
-        /// </summary>
-        internal static class BattlePause
-        {
-            public const int OFFSET_SELECT_CURSOR = 0x68;
-            public const int OFFSET_COMMAND_LIST = 0x70;
-            public const int OFFSET_COMMAND_TEXT = 0x18;
-        }
-
-        /// <summary>
         /// EquipmentWindowController state values.
         /// </summary>
         internal static class Equipment

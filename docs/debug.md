@@ -1,5 +1,135 @@
 # Implementation Details
 
+## Round 2 (2026-09-24)
+
+Status-removal announcements, a sweep of the remaining per-frame / polling hooks, and an audit of
+double paths between the 2026-09-23 fixes and older code. RVAs checked in `dump.cs` (count 1 unless
+stated), callers with `tools/hitscan.py` / capstone. **Not verified in game.**
+
+**Status removal — "X: Poison removed"** (`BattleMessagePatches`, key `{0}: {1} removed`)
+- `Last.Battle.BattleConditionController.Remove(unit, id, isNegate)` exists (0x6BAB70, unique) but is not
+  FF2's removal path: its only callers are `InterruptRemoveCondition` ×2 (from `BattleConditionFunction.
+  Init`, `RampageConditionFunction.Start`, `BattleProgressATB.UpdateAlwaysEscape`),
+  `BattleEndRecoveryCondition` and `ActSelectSpSwordSky`. `Recovery(unit, untilType)` → `BattleCondition
+  Function.Recovery` → `NaturalRemove` (0x38D7B0), which does `CurrentConditionList.Remove(condition)`
+  itself; `Cancellation` / `ConflictCondition` edit the list inline; cures and revive are the calc
+  functions' `UpdateParameter` (`RecoveryConditionFunction` 0x8C3BD0, `RecoveryConditionMultiFunction`,
+  `DispelFunction`, `UniqueFunction.DefaultUpdateParameter`, `UserRecoveryConditionFunction.FixedParameter`,
+  …), all writing `Parameter.CurrentConditionList` directly. `isNegate` in `Remove` only chooses "remove
+  every stacked instance" vs "remove one".
+- What every path has in common: `CheckConditionFunction` → `RemoveConditionFunction` (0x6BA610) drops the
+  unit's `BattleConditionFunction` object for a condition no longer in the list — `LastOrDefault`, virtual
+  `fn.Remove()` (vtable +0x210, slot 14), `List.Remove(fn)`, then `BattleStatusControl.UpdateTempParamter
+  (unit)` (0x90C4C0, unique). The function list (`BattleUnitDataInfo.BattleConditionFunction` @0x28) is
+  changed only there and in `BattleConditionController.Add` (list.Add, then `UpdateTempParamter`)
+  (`List<BattleConditionFunction>.Add/Remove` MethodInfo references, capstone); `Clear` only in the
+  finalizer. `CheckConditionFunction` itself runs every frame from `UpdateStatusInPlayController`, so it is
+  not hooked; `UpdateTempParamter(unit)` only runs on a real add/remove (callers: `Add`,
+  `RemoveConditionFunction`, `AttackSpeedConflict`, `AfterAttackSpeedConflict`).
+- Mechanism: the existing `Add` postfix records each condition it resolves a name for (unit pointer → id →
+  name, `ConditionType`, the Add text). `UpdateTempParamter_Postfix(__0)` compares the unit's live function
+  ids with that record; a recorded id that is gone was just removed → `"{unit}: {condition} removed"`,
+  `interrupt: false`, same unit name (`GetTargetName`) and condition name as the Add. The Add dedup entry
+  is dropped so a re-application is announced again.
+- Silent: battle-end clean-up (`BattleEndRecoveryCondition` prefix sets a flag, 0x6B77D0, callers
+  `StartWinResult` / `EndEscapeFadeOut`; cleared at the next `StartPreeMptiveMes` and by `ResetState`) and
+  anything outside `IsInBattle`; a unit that is down (`CurrentHP <= 0` or a `ConditionType` 5 = UnableFight
+  in `CurrentConditionList` — `RemoveConditionFunction` runs before `AddConditionFunction`, so death's
+  clean-up sees KO already in the list) unless the removed condition is KO itself (revive); conditions whose
+  Add never resolved a name (hidden / "None" MesId, not in `ConfirmedConditionList`) or never got a
+  function object (negated before the reconcile) — they are never recorded; the same (unit, id) twice in
+  one frame. Records are cleared by `ResetConditionDedup` (battle end).
+- Removed the `[Battle] value-0 view:` diagnostic log. FF2 never had the value-0 `"{0}: cured"` branch;
+  `HitType.Zero` still reads "0 damage".
+
+**Per-frame / polling sweep** (FF2 CLAUDE.md rule 3)
+- *Battle popups* — KeyInput `CommonPopup.UpdateFocus` (0x2D50B0) postfix (`BattlePausePatches`, file
+  deleted): `CommonPopup.UpdateSelect` calls `UpdateFocus` every frame, and `UpdateCommand` → `UpdateSelect`
+  runs every frame for the pause menu's Return to Title popup. The popup moves with `Cursor.NextIndex/
+  PrevIndex` (`<UpdateSelect>` lambdas), so `CursorNavigation_Postfix` now routes a cursor move to
+  `PopupPatches.ReadCurrentButton` in battle when the cursor is the registered popup's own selectCursor
+  (`PopupPatches.IsActivePopupCursor`: `ActivePopupPtr + SelectCursorOffset`), before the pause-menu and
+  battle checks. Its open read stays `Popup.Open` → `DelayedPopupRead`. Also a double fixed: in battle the
+  old hook spoke "Yes" on the popup's first frame and the open read then spoke "Title. Message. Yes". No
+  shop code creates a KeyInput CommonPopup (`PopupManager.GetOrCreate<CommonPopup>` references), so the
+  old out-of-battle fallback lost nothing. `IL2CppOffsets.BattlePause` removed.
+- *Config rows* — `ConfigCommandController.SetFocus` (0x5F9D00) postfix: its only caller is
+  `ConfigActualDetailsControllerBase.UpdateFocus`, which `UpdateController` calls every frame on every row
+  (and it re-took the config state every frame). Replaced by:
+  - navigation: `ConfigActualDetailsControllerBase.SelectCommand(Cursor, WithinRangeType)` (0x2D99F0)
+    postfix. It stores `commandList[cursor.Index]` into `SelectedCommand` (@0x20, `lea rcx,[rbx+0x20]`).
+    Callers: `Initialize`, `ResetCursor`, `SetDefaultSelect`, the click lambda and the navigation callbacks
+    `<UpdateController>b__1/3/5` (0x60BB40, one body) / `b__7`, which `Cursor.NextIndex/PrevIndex/
+    SkipNextIndex/SkipPrevIndex` invoke synchronously (`Action<int>.Invoke`). The generic cursor hooks now
+    have a prefix that sets `ManualPatches.NavigatingCursor`; `SelectCommand_Postfix` speaks only when its
+    cursor is that cursor, because `OptionController.SetActive(true)` (0x2FA840) runs `ResetCursor` on all
+    four title sections. It runs inside `NextIndex`, before the generic reader's postfix, and takes the
+    config state, so the generic reader stays suppressed.
+  - entry reads (what the first per-frame SetFocus gave): `ConfigController.InitializeSelect` (0x5FC0C0,
+    `detailsController` @0x48) and `InitializeGameBoosterSetting` (0x5FBF70, `cheatSettingsController`
+    @0x50), title `OptionController.InitConfig` (0x2F7340) and `InitSelectSoundSettings` (0x2F9490) — state
+    Inits registered in `CreateState` — arm the existing deferred focused-row read (now able to target a
+    given list; `_lastDetails` = the list last entered/navigated, used by the popup-close and
+    bestiary-return re-reads so the Boost list is re-read, not the main list). `ConfigController.SetActive`
+    activates the object before `Change`, so the entry gate (`activeInHierarchy`) holds.
+- *Bestiary minimap* — `LibraryMenuController.UpdateController` (0x9738E0) postfix polled `selectState`
+  (@0x44). `ChangeState` is inlined; its key-help setups mark the change: `SetupEnlargedMapKeyHelp`
+  (0x972270; list-input lambda, map-click lambda) and `SetupKeyHelp` (0x9725E0; enlarged-map lambda, `Show`,
+  `InitSetup`, `OnContentSelected`) run before the caller stores the new state, so the postfix reads the
+  old one: 0 → enlarged = "Minimap open: X", 1 → list = "Minimap closed. X". Side effect: the return
+  from the full map no longer adds "Minimap closed" after "Map closed. X" (`Show` runs before the list
+  state is set).
+- *Bestiary formation* — `AnnounceFormation` polled `FindObjectOfType<ArBattleTopController>` for up to
+  3 s. Now `FormationAnnouncer`: ArTop `ChangeState` tries once a frame later; otherwise
+  `ArBattleTopController.InitMonsterPartyList` (0x52FF60, caller `SetActive`) postfix reads it a frame
+  after the list is filled. The 3-second "Formation view" timeout is gone (an empty list reads "No
+  formations available").
+- *Gallery / Music Player entry* — 2-second polls of the cached focus pointer. Now the title is spoken a
+  frame after the View state; the cached entry is read at once if its focus came first, otherwise
+  `PendingEntryRead` makes the next `SetFocusContent` / `SetFocus` speak it (queued) and lift the
+  suppression.
+- *Walk / run* — `GameToggleAnnouncer.Poll()` read `Config.IsAutoDash` every frame from `InputManager.
+  Update`. Now `ConfigClient.SetIsAutoDash(int)` (0x8AF7E0) prefix/postfix, like the encounter toggle:
+  callers `FieldMap.UpdatePlayerStatePlay` (F1 / L3), `ConfigActualDetailsControllerBase.SetIsAutoDash` and
+  `SwitchArrowSelectTypeProcess`; `Config.set_IsAutoDash` is only called from it. Speaks on the field only.
+- *Vehicle backup hook* — `FieldPlayer.ChangeMoveState` (0xC502B0) postfix: its callers are
+  `FieldPlayerKeyController` / `FieldPlayerTouchBaseController.OnTouchPadCallback` (every movement frame,
+  passing only Walk/Dash) and touch route moves. Removed; `ChangeTransportation` / `GetOn` / `GetOff` speak
+  the vehicle changes (FF1 has no such hook). It used a separate dedup from theirs, so it could repeat "On
+  ship". `MoveStateHelper.UpdateCachedMoveState` / `AnnounceStateChange` (only callers gone) removed.
+- Kept, with reasons: `InputPassthroughPatches` (input), `MovementSoundPatches` incl. its 0.08 s wall-bump
+  wait, `MapTransitionPatches`, `AudioLoopManager` (allowed core); `ConfirmationDialog` 0.1 s and
+  `TextInputWindow` 0.3 s `WaitForSeconds` (the mod's own dialogs, opened by mod keys — no game event);
+  `DelayedInitialScan` 0.5 s after scene load (no single confirmed "entities spawned" event; FF1 same);
+  `SpeakScrollLinesWithTiming` (paces lines to the linear scroll; `ScrollMessageManager.Play` is the only
+  event); the config deferred re-read (≤120 frames, event-started, the menu reappears asynchronously after
+  the bestiary scene); the item / equip / magic / item-list deferred reads (≤30 frames, state Inits);
+  one-/two-frame event-started reads (popup open reads, `WaitAndReadCursor`, field menu, save list, status,
+  initial battle target, controls help, bestiary list open/map/formation re-read, Words Touch).
+  `MapUIManager.SwitchLandable` runs per tile step (`FieldController.UpdateStateSwitchLandable` ←
+  `OnPlayerFootMonitoringFinished` / `OnScriptFinished`), not per frame.
+
+**Double-path audit (2026-09-23 changes vs older paths)**
+- *Shop*: `ShopListMainContentController.SelectContent` (every focus change: `UpdateView` ×2, key / click
+  lambdas, `AsyncSelected`) invokes `OnSelected` → `SetDescription` for the focused row whatever its
+  `canSelect`, then calls `SetCursor`; `ResetCursor` has no callers. So yesterday's `SetCursor` (0x663740)
+  signal always followed `SetDescription` for the same row and was always deduplicated — removed.
+- *Item / Equip*: the `SetNextState` postfixes (bodies 0x4A9B40 folded ×8, no callers; 0x38E930 folded
+  ×15, called only from `BattlePlayController.ActDecisionDelegate`) never saw a window transition — removed;
+  the menu states clear themselves in `ShouldSuppress` and on `SetActive(false)`. `ItemMenuState.
+  GetItemCommandName` (unused duplicate of `CommandBarReader`'s) removed. `CommandSelectInit` now cancels a
+  still-retrying item-list / item-target entry read, which could otherwise speak after the command read.
+- *Words*: `WordsWindowController.InitializeSelect` calls `UpdateView` then `SetDefaultCursor` →
+  `SetCommandSelectCursor` (unconditional), so the KeyInput `UpdateView` two-frame read was always
+  deduplicated — removed. `ExitSelect` (0x65F620) calls `SetDefaultCursor` when cursor memory is off, which
+  spoke the first keyword while the menu closed — now bracketed and silent. The index guard is consumed
+  only when there is text to speak.
+- *Magic menu, game-over popups, title prompt, language picker, naming screen*: one reader each, no overlap
+  found. `GameOverPopupController.InitCommandSelect` opens the select popup itself (virtual `Open`, slot 4),
+  so `DelayedPopupRead` (1 frame) always sets `LastButtonIndex` before `DelayedGameOverSelectReturn`
+  (2 frames) checks it. No scene-load title path remains. `SelectedCommand` is set by `SelectCommand`, so
+  the language picker's deferred read has a row to read.
+
 ## Open-issues pass (2026-09-23, session 2)
 
 Remaining OPEN_ISSUES items for FF2. All hooks below were checked in `dump.cs` (RVA count 1 unless

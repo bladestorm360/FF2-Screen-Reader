@@ -2,6 +2,11 @@
 
 Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is fully playable.**
 
+**Landed (2026-09-24, round 2):** see `docs/debug.md` ("Round 2"). Status removal ("X: Poison removed")
+for cures, wear-off and revive; the remaining per-frame / polling hooks replaced (config rows, battle
+popups, bestiary minimap and formation, gallery / music entry, walk/run, vehicle backup hook); double paths
+removed (shop list SetCursor, Words UpdateView read, dead SetNextState hooks). **Not yet verified in game.**
+
 **Landed (2026-09-23, session 2):** open-issues pass — see `docs/debug.md` ("Open-issues pass").
 "Press any button" on return to title (InitNone arms, the prompt's own SystemIndicator.Hide speaks),
 language-picker open read, naming-screen generic-reader suppression, config Return-to-Title/Quit guard,
@@ -30,13 +35,13 @@ confirmation.
 | Item Menu | ✓ | Item list, character target with MP |
 | Status Menu | ✓ | All stats, weapon skills (UI read), combat stats |
 | Magic Menu | ✓ | Spell list with level/percent, Use/Forget commands; entry reads from state Inits, no per-frame hooks (not yet verified in game) |
-| Config Menu | ✓ | Options with values and "(X of Y)", I key tooltip, Boost submenu, re-read after bestiary/popup, controls list navigation; language screen reads its row on open; no re-read after a confirmed Return to Title / Quit (not yet verified in game) |
-| Shop Menu | ✓ | Buy/sell with prices/stats; "Quantity: N, Total: X" from UpdateArrowImage (no per-frame hook); greyed items also via the list's SetCursor (not yet verified in game) |
+| Config Menu | ✓ | Options with values and "(X of Y)", I key tooltip, Boost submenu, re-read after bestiary/popup, controls list navigation; language screen reads its row on open; no re-read after a confirmed Return to Title / Quit; rows read from SelectCommand + list-entry hooks, no per-frame SetFocus (not yet verified in game) |
+| Shop Menu | ✓ | Buy/sell with prices/stats; "Quantity: N, Total: X" from UpdateArrowImage (no per-frame hook); greyed items read through SetDescription like the others (not yet verified in game) |
 | Equipment Menu | ✓ | Slot/item selection, stat comparison |
 | Dialogue | ✓ | NPC dialogue, multi-line pages, fade/scroll messages |
 | Battle Commands | ✓ | Turn, command (per-turn/page dedup, back-out re-read), targets with statuses, ally initial target |
 | Battle Items/Magic | ✓ | Item and spell selection; descriptions with AutoDetail or the I key |
-| Battle Messages | ✓ | Damage, healing, status, "Actor: Action" |
+| Battle Messages | ✓ | Damage, healing, status, "Actor: Action"; "X: Poison removed" on cure / wear-off / revive (not yet verified in game) |
 | Battle Results | ✓ | Phased: gil + weapon skills, spell level-ups, stat gains per page, items (unverified in game) |
 | Field Navigation | ✓ | Entity scan, pathfinding, wall bump, vehicles, wall tones, footsteps, audio beacons |
 | Waypoint System | ✓ | Add/rename/delete waypoints, category filtering, single-confirm clear all (FF1 model) |
@@ -46,8 +51,9 @@ confirmation.
 | Naming Screen | ✓ | Character slots and suggested names by their own readers; generic reader suppressed there, start popup still read by it (not yet verified in game) |
 | Popup Dialogs | ✓ | All types: confirmations, game over (read through PopupState, no per-frame hooks — not yet verified in game), title screen |
 | Save/Load | ✓ | Slot info, confirmations, quicksave |
-| Battle Pause | ✓ | Spacebar menu commands |
-| Keyword System | ✓ | NPC dialogue works; Words menu reads name + description (Auto Detail / I key) via SetCommandSelectCursor (not yet verified in game) |
+| Battle Pause | ✓ | Spacebar menu commands; its Return to Title popup read through PopupState, no per-frame hook (not yet verified in game) |
+| Keyword System | ✓ | NPC dialogue works; Words menu reads name + description (Auto Detail / I key) via SetCommandSelectCursor, silent when the menu closes (not yet verified in game) |
+| Extras | ✓ | Bestiary minimap / formation, gallery and music player entry reads event-driven, no polling (not yet verified in game) |
 
 ## Recent Fixes (2026-06-14)
 
@@ -65,9 +71,9 @@ confirmation.
 
 1. **No EXP counter / "Battle Results" mod-menu section** - FF2 has no EXP, and no result counting
    animation was confirmed
-2. **Value-0 battle events** - a status cure (e.g. Antidote) is silent; `HitType.Zero` reads "0
-   damage". Which HitType buffs / cures / real 0-damage hits carry is not provable offline; the
-   `[Battle] value-0 view:` log line settles it in one test (see debug.md, open-issues pass)
+2. **Status removal** - announced from the condition-function reconcile as "X: Poison removed" (cures,
+   wear-off, revive); silent at battle end and for a unit that is down. Not yet verified in game.
+   `HitType.Zero` still reads "0 damage"; the value-0 diagnostic log is gone.
 3. Fixed 2026-09-23 session 2, not yet verified in game: Words menu description, unaffordable shop
    items, "Press any button" on return to title
 
@@ -99,8 +105,18 @@ confirmation.
 - Naming screen: suggested names read once each; the start popup's Yes/No still read.
 - Words menu: "keyword: description (X of Y)" with Auto Detail on; the name only with it off, I reads the
   description.
-- `[Battle] value-0 view:` log lines for a buff (Protect), a cure (Antidote on a poisoned ally) and a
-  0-damage hit.
+
+## Needs in-game confirmation (2026-09-24, round 2)
+
+- "X: Poison removed" after Antidote / Basuna, after a status wears off, "X: KO removed" (the game's KO
+  name) after Life / Phoenix Down; nothing at victory / escape, nothing when a unit dies.
+- Config: arrows read each row once; entering config, Boost, the title Configuration list and Sound
+  settings reads the focused row once; leaving config is silent; no generic-reader double.
+- Battle pause → Return to Title popup: open read once, arrows read Yes / No once.
+- Bestiary: "Minimap open: X" / "Minimap closed. X"; formation view read once on entry.
+- Gallery / Music Player: title then first entry once.
+- F1 / L3 on the field: "Run" / "Walk" once; vehicles still announced on boarding / leaving.
+- Words menu: nothing spoken when closing it; shop items read once each.
 
 ## FF2-Specific
 
