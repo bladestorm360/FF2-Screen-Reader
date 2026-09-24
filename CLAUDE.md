@@ -10,6 +10,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster (MelonLoader
 4. **Update docs after changes** - debug.md for implementation, plan.md for status
 5. **Check logs**: Glob `*.log` in `D:\Games\steamlibrary\steamapps\common\FINAL FANTASY II PR\MelonLoader\Logs`
 6. **Game-specific translations** - Translations are game-specific; NEVER copy or look up translation strings from another FF mod (phrasing and presentation differ per game, and are not likely to repeat). When a string has no existing translation, translate it live yourself and add a self-contained entry to this mod's `translation.json`.
+7. **Git: commit and push allowed** - It is OK for Claude to commit and push to this repo's remote (`ff2-screen-reader`, github.com/bladestorm360/FF2-Screen-Reader, branch `master`) without asking first (user, 2026-09-24).
 
 ## Documentation
 
