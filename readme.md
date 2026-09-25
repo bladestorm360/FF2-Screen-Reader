@@ -139,6 +139,9 @@ Button names are shown Xbox (PlayStation). Nintendo Pro / Joy-Con labels are als
 
 #### Stick-click mod actions (preference-controlled in the Mod Menu)
 
+- L3 + R3 together, on the field: toggle stick-click normalization, whichever way it is set. Press both sticks in at once; nothing else happens.
+- On the field a single stick click acts when you let go of it, so that it can be part of the L3 + R3 chord.
+
 ##### When stick-click normalization is OFF (default)
 
 - L3 (Left Stick Click): toggle audio beacons.

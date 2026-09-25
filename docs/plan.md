@@ -2,6 +2,9 @@
 
 Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is fully playable.**
 
+**Landed (2026-09-25):** L3+R3 chord on the field toggles Stick Click Normalization (FF1 port); field
+stick clicks now act on release. See `docs/debug.md` ("L3+R3 chord"). **Not yet verified in game.**
+
 **Landed (2026-09-24, round 2):** see `docs/debug.md` ("Round 2"). Status removal ("X: Poison removed")
 for cures, wear-off and revive; the remaining per-frame / polling hooks replaced (config rows, battle
 popups, bestiary minimap and formation, gallery / music entry, walk/run, vehicle backup hook); double paths
