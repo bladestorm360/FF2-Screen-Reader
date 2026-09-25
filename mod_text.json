@@ -1315,6 +1315,34 @@
     "th": "สัญญาณเสียง {0}",
     "pt": "Sinais de áudio {0}"
   },
+  "Beacon navigation {0}": {
+    "en": "Beacon navigation {0}",
+    "ja": "ビーコンナビゲーション {0}",
+    "fr": "Navigation par balise {0}",
+    "it": "Navigazione a segnale {0}",
+    "de": "Signal-Navigation {0}",
+    "es": "Navegación por baliza {0}",
+    "ko": "비콘 내비게이션 {0}",
+    "zht": "信標導航 {0}",
+    "zhc": "信标导航 {0}",
+    "ru": "Навигация по маяку {0}",
+    "th": "การนำทางด้วยสัญญาณเสียง {0}",
+    "pt": "Navegação por sinal {0}"
+  },
+  "Stick click normalization {0}": {
+    "en": "Stick click normalization {0}",
+    "ja": "スティック押し込みの正規化 {0}",
+    "fr": "Normalisation du clic des sticks {0}",
+    "it": "Normalizzazione clic levette {0}",
+    "de": "Stick-Klick-Normalisierung {0}",
+    "es": "Normalización del clic de sticks {0}",
+    "ko": "스틱 클릭 정규화 {0}",
+    "zht": "搖桿按壓標準化 {0}",
+    "zhc": "摇杆按压标准化 {0}",
+    "ru": "Нормализация нажатия стиков {0}",
+    "th": "การปรับมาตรฐานการกดสติ๊ก {0}",
+    "pt": "Normalização do clique dos analógicos {0}"
+  },
   "Encounters on": {
     "en": "Encounters on",
     "ja": "エンカウント オン",

@@ -802,18 +802,18 @@ namespace FFII_ScreenReader.Core
                 audioLoopManager.StopBeaconLoop();
 
             string status = newValue ? T("on") : T("off");
-            SpeakText(string.Format(T("Audio beacons {0}"), status));
+            SpeakText(string.Format(T("Beacon navigation {0}"), status));
         }
 
         /// <summary>
-        /// Controller L3+R3 chord. Spoken the way the mod menu reads the row
-        /// ("Stick Click Normalization: On"); the menu's own toggle stays silent.
+        /// Controller L3+R3 chord: "Stick click normalization on/off", as in every other mod.
+        /// The mod menu's own toggle stays silent and re-reads its row instead.
         /// </summary>
         internal void ToggleStickClickNormalization()
         {
             bool newValue = !PreferencesManager.StickClickNormalization;
             PreferencesManager.SaveStickClickNormalization(newValue);
-            SpeakText($"{T("Stick Click Normalization")}: {(newValue ? T("On") : T("Off"))}");
+            SpeakText(string.Format(T("Stick click normalization {0}"), newValue ? T("on") : T("off")));
         }
 
         internal void ToggleAutoDetail()

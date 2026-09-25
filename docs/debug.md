@@ -10,10 +10,13 @@ functions and the game functions without opening the mod menu.
   the old L3/R3 block in `HandleNormalField`. A click that starts in NORMAL on the active field is tracked
   in `stickClickButton`. Both stick buttons are consumed from that press until both are up.
 - **Both held** → `FFII_ScreenReaderMod.ToggleStickClickNormalization` once per press (`stickChordFired`).
-  It speaks "Stick Click Normalization: On/Off", the same words the mod menu reads for the row (existing
-  keys only). The mod menu's own `ModMenu.ToggleStickClickNormalization` stays silent because the menu
-  re-reads the row. Releasing afterwards does nothing.
-- **A lone click resolves on release.** With normalization off, L3 toggles audio beacons and R3 the
+  It speaks "Stick click normalization on/off" (key `Stick click normalization {0}`), the same words as
+  FF1 and the other mods. The mod menu's own `ModMenu.ToggleStickClickNormalization` stays silent because
+  the menu re-reads the row. Releasing afterwards does nothing.
+- **Parity wording (2026-09-25):** `ToggleAudioBeacons` now says "Beacon navigation on/off" (key
+  `Beacon navigation {0}`, translated from this mod's own "Beacon Navigation" menu label), as in FF1 and
+  FF4. The old `Audio beacons {0}` key is unused.
+- **A lone click resolves on release.** With normalization off, L3 toggles beacon navigation and R3 the
   pathfinding filter, as before but on release instead of press. With it on, the router hands the game a
   synthetic press: `IsStickPulseDown` for one frame (`GetKeyDown` and `GetKey`), then `IsStickPulseUp` for
   one frame (`GetKeyUp`). `InputPassthroughPatches.GetSDLKey*` OR these in for `ACTION_STICK_L`/`_R`
@@ -21,20 +24,20 @@ functions and the game functions without opening the mod menu.
   (L3) or encounters (R3) in the game.
 - A tracked click acts only if the player is still on the field in NORMAL when it resolves: Back (mod
   mode) or a menu or battle opening mid-press cancels it. Mod mode keeps its own Back + L3/R3
-  (normalization on). Off the field, stick clicks go to the game unchanged. Field dialogue counts as
-  field in FF2 (see the mod-mode comment), so a click during a message window is tracked like any other,
-  as the old L3/R3 block did.
+  (normalization on). Off the field, stick clicks go to the game unchanged. An open message window does
+  not leave the field (`IsFieldActive` is defined the same way in all five mods), so a click during
+  dialogue is tracked like any other, as the old L3/R3 block did.
 - The no-gamepad branch of `ControllerRouter.Update` clears the tracked click and any pending pulse.
 - No new Harmony hooks; the work sits in the existing per-frame router and passthrough postfixes.
 
 In-game checks:
-1. Field, normalization off: L3 → "Audio beacons on/off"; R3 → "Pathfinding filter on/off", each on
-   release.
-2. L3 + R3 together → "Stick Click Normalization: On". Beacons and the filter do not change. Again →
-   "… Off".
+1. Field, normalization off: L3 → "Beacon navigation on/off"; R3 → "Pathfinding filter on/off", each
+   on release.
+2. L3 + R3 together → "Stick click normalization on". Beacons and the filter do not change. Again →
+   "… off".
 3. Normalization on: L3 alone and R3 alone still toggle the game's walk/run and encounters (one toggle
    per click, spoken by the walk/run and encounter announcements).
-4. Normalization on: L3 + R3 → "Stick Click Normalization: Off", with no walk/run or encounter toggle.
+4. Normalization on: L3 + R3 → "Stick click normalization off", with no walk/run or encounter toggle.
 5. Back, then L3 or R3 with normalization on → the mod-mode toggles still work.
 
 ## Round 2 (2026-09-24)

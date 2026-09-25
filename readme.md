@@ -113,7 +113,7 @@ Button names are shown Xbox (PlayStation). Nintendo Pro / Joy-Con labels are als
 - LB / RB (L1 / R1): Tab switching in menus.
 - LT (L2): Page up in non-field menus. On the field, LT is reserved by the mod for pathfinding (see Mod controller).
 - RT (R2): Open the pause menu on the field and in battle. In non-field menus, page down.
-- L3 (Left Stick Click): the game's walk/run (auto-dash) toggle. R3 (Right Stick Click): the game's random-encounter toggle. Only when Stick-click normalization is enabled in the Mod Menu.
+- L3 and R3 (stick clicks): see Stick clicks (L3 and R3) below.
 
 ### Mod controller
 
@@ -137,21 +137,15 @@ Button names are shown Xbox (PlayStation). Nintendo Pro / Joy-Con labels are als
 
 - X (Square): repeat the current message (keyboard R equivalent).
 
-#### Stick-click mod actions (preference-controlled in the Mod Menu)
+#### Stick clicks (L3 and R3)
 
-- L3 + R3 together, on the field: toggle stick-click normalization, whichever way it is set. Press both sticks in at once; nothing else happens.
-- On the field a single stick click acts when you let go of it, so that it can be part of the L3 + R3 chord.
+Stick Click Normalization in the mod menu decides what the stick clicks do. It is off by default.
 
-##### When stick-click normalization is OFF (default)
-
-- L3 (Left Stick Click): toggle audio beacons.
-- R3 (Right Stick Click): toggle pathfinding filter.
-
-##### When stick-click normalization is ON
-
-- Back + L3: toggle audio beacons.
-- Back + R3: toggle pathfinding filter.
-- (L3 / R3 alone become game functions: L3 toggles walk/run, R3 toggles random encounters.)
+- L3 + R3 together, on the field: turn Stick Click Normalization on or off, whichever way it is set. Press both sticks in at once. You hear "Stick click normalization on" or "off", and nothing else happens.
+- On the field, a single stick click acts when you let go of it, so that it can be part of the L3 + R3 chord.
+- Normalization off: L3 toggles beacon navigation and R3 toggles the pathfinding filter.
+- Normalization on: L3 and R3 go to the game. L3 toggles walk/run and R3 toggles random encounters. The mod toggles move to mod mode: press Back/Select, then L3 for beacon navigation or R3 for the pathfinding filter.
+- Off the field, a stick click goes straight to the game.
 
 #### Normal-state mod actions (no Mod button needed)
 
