@@ -10,6 +10,8 @@ Not yet verified in game. Testers reported missing events across FF2–FF5.
 
 **Scenery removed.** `FieldEntityState.IsScenery`: an Event, Entity, AnimEntity or TransportationEventAction whose `PropertyEvent` has `ActionId` 0, `ScriptId` 0 and no `PropertyTalk.MessageKey` does nothing when checked or touched; it is skipped right before the event-trigger branch, after exits, warp tiles, chests, save points, vehicles and layer changes are classified. Vehicle map objects (`PropertyTransportation`) are never scenery. In FF2 this drops 94 objects (warp-zone colour tiles, fences, speech bubbles, collision helpers). User decision, 2026-10-03, for all five mods.
 
+**One entry per vehicle pad** (user, 2026-10-03, for the FF4 Underworld pads; applied to every vehicle pad for parity). FF2's one pad, the Palamecia infiltration point (`パラメキア城潜入`, 3×3 TransportationEventAction tiles), listed nine times. `ApplyFilter` now runs `DeduplicateVehiclePads` (always on) right after the distance sort: it keeps the first, so nearest, entry of each TransportationEventAction name. In the map data every such name is one place per map (`FFPR/tools/mapdump`).
+
 **Not done: Leon in a secret passage** (user: skip for now). Leon reappears on the Castle Palamecia 8F throne (`ev_e_0085`, reachable on the collision grid) and rejoins in an automatic scene at Castle Fynn (`sc_e_0086_2`).
 
 In-game checks:

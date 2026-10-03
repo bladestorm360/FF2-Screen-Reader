@@ -307,6 +307,10 @@ namespace FFII_ScreenReader.Field
                     e => e.Position);
             }
 
+            // One entry per vehicle trigger pad (always on, user 2026-10-03).
+            // List is already distance-sorted, so the first tile of each pad is closest.
+            filteredEntities = DeduplicateVehiclePads(filteredEntities);
+
             // Collapse multiple exits to the same destination into the nearest one.
             // List is already distance-sorted, so the first of each destination is closest.
             if (PreferencesManager.MapExitFilterEnabled)
@@ -326,6 +330,42 @@ namespace FFII_ScreenReader.Field
             {
                 currentIndex = 0;
             }
+        }
+
+        /// <summary>
+        /// Keeps the nearest tile of each vehicle trigger pad. A TransportationEventAction covers
+        /// a pad of tiles (the Palamecia infiltration point is 3×3), each its own map object with
+        /// the same name; in the map data every such name is one place per map
+        /// (FFPR/tools/mapdump). List must already be sorted by distance (closest first).
+        /// </summary>
+        private static List<NavigableEntity> DeduplicateVehiclePads(List<NavigableEntity> source)
+        {
+            var result = new List<NavigableEntity>(source.Count);
+            var seenPads = new HashSet<string>();
+
+            foreach (var entity in source)
+            {
+                string pad = VehiclePadName(entity);
+                if (pad != null && !seenPads.Add(pad))
+                    continue;
+                result.Add(entity);
+            }
+            return result;
+        }
+
+        private static string VehiclePadName(NavigableEntity entity)
+        {
+            if (!(entity is EventEntity))
+                return null;
+            try
+            {
+                var property = (entity.GameEntity as FieldEntity)?.Property;
+                if (property == null ||
+                    property.ObjectType != (int)Il2Cpp.MapConstants.ObjectType.TransportationEventAction)
+                    return null;
+                return string.IsNullOrEmpty(property.Name) ? null : property.Name;
+            }
+            catch { return null; } // destroyed entity
         }
 
         /// <summary>

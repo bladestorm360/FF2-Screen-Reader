@@ -5,7 +5,7 @@ Screen reader accessibility mod for Final Fantasy II Pixel Remaster. **Game is f
 **Landed (2026-10-03):** event coverage. Offline audit of every map object (`FFPR/tools/audit_events.py`):
 every playable event and interactive object is listed. Scenery (no action, no script, no message) is no
 longer listed (94 objects). Objects the game hides only because the player is in another vehicle (the Jade
-entrances) stay listed. See `docs/debug.md` ("Event coverage (2026-10-03)"). **Not yet verified in game.**
+entrances) stay listed. The Palamecia infiltration pad is one entry instead of nine. See `docs/debug.md` ("Event coverage (2026-10-03)"). **Not yet verified in game.**
 
 **Landed (2026-09-25):** L3+R3 chord on the field toggles Stick Click Normalization (FF1 port); field
 stick clicks now act on release. See `docs/debug.md` ("L3+R3 chord"). **Not yet verified in game.**
