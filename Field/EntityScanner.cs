@@ -570,10 +570,11 @@ namespace FFII_ScreenReader.Field
                 return null;
             }
 
-            // Skip inactive objects
+            // Skip inactive objects, except vehicle-only triggers the game hides while the
+            // player is in another vehicle (FieldEntityState.IsHiddenByVehicle)
             try
             {
-                if (!fieldEntity.gameObject.activeInHierarchy)
+                if (!FieldEntityState.IsPresent(fieldEntity))
                     return null;
             }
             catch { }
@@ -660,6 +661,10 @@ namespace FFII_ScreenReader.Field
                 if (string.IsNullOrEmpty(layerName)) layerName = goName;
                 return new EventEntity(fieldEntity, position, layerName, "ToLayer");
             }
+
+            // Scenery: events and map objects with no action, script or message
+            if (FieldEntityState.IsScenery(fieldEntity))
+                return null;
 
             // 6. Check for EventTriggerEntity by type casting
             var eventTrigger = fieldEntity.TryCast<EventTriggerEntity>();

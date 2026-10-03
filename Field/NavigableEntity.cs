@@ -64,9 +64,8 @@ namespace FFII_ScreenReader.Field
                 {
                     var fe = GameEntity as FieldEntity;
                     if (fe == null) return false;
-                    var go = fe.gameObject;
-                    if (go == null) return false;
-                    return go.activeInHierarchy;
+                    // Vehicle-only triggers stay listed while the game hides them for another vehicle
+                    return FieldEntityState.IsPresent(fe);
                 }
                 catch { return false; }
             }

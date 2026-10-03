@@ -1,5 +1,21 @@
 # Implementation Details
 
+## Event coverage (2026-10-03)
+
+Not yet verified in game. Testers reported missing events across FF2–FF5.
+
+**Offline audit.** `FFPR/tools/dump_map_objects.py ff2` dumps every object of every map (6598 objects on 349 sub-maps, all `ev_*` groups, 553 scripts, collision and tile grids) to `FFPR/tools/mapdump/`; `FFPR/tools/audit_events.py ff2` mirrors this scanner over it. Every event that runs a script and every object that runs a script or shows a message is listed. FF2 has no hidden-passage layers (its secret passages are opened by events such as the Fynn keyword passage), so the hidden-passage routing added to FF3–FF5 does not apply.
+
+**Vehicle-hidden entities.** `FieldController.ChangeTransportationSwitchEntity` runs for every entity on each `SetEventEntityGroup` and `ChangeTransportation`; for an entity whose `Property.TargetTransportationIdList` lacks the current transportation it calls `CacheActive(4)` (bit 4 of `cacheActiveEnable` / `cacheActiveFlag` records the object's own active state) and `Hide(0)`, which is `GameObject.SetActive(false)`. Decompiled from the FF5 project; the same call sequence and cache index are in FF2. FF2's affected triggers are the entrances to Jade on the world map (`ジェイドへの入口①–④`, on foot only), which disappeared while the player rode a vehicle. New `Field/FieldEntityState`: `IsHiddenByVehicle` (inactive, parent active, target list non-empty, cache bit 4 set with the cached state active) and `IsPresent`. `ConvertToNavigableEntity`, `NavigableEntity.IsAlive` and the pathfinding filter use them; the filter lets a vehicle-hidden entity through.
+
+**Scenery removed.** `FieldEntityState.IsScenery`: an Event, Entity, AnimEntity or TransportationEventAction whose `PropertyEvent` has `ActionId` 0, `ScriptId` 0 and no `PropertyTalk.MessageKey` does nothing when checked or touched; it is skipped right before the event-trigger branch, after exits, warp tiles, chests, save points, vehicles and layer changes are classified. Vehicle map objects (`PropertyTransportation`) are never scenery. In FF2 this drops 94 objects (warp-zone colour tiles, fences, speech bubbles, collision helpers). User decision, 2026-10-03, for all five mods.
+
+**Not done: Leon in a secret passage** (user: skip for now). Leon reappears on the Castle Palamecia 8F throne (`ev_e_0085`, reachable on the collision grid) and rejoins in an automatic scene at Castle Fynn (`sc_e_0086_2`).
+
+In-game checks:
+1. Riding the ship or airship near Jade: the Jade entrance is still listed.
+2. Decorative objects are gone from Events; anything that reacts when checked is still there.
+
 ## L3+R3 chord (2026-09-25)
 
 Ported from FF1 (ff1 commit 2e76464). Not yet verified in game. Pressing both stick clicks on the field
